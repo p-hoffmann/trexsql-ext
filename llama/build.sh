@@ -12,12 +12,6 @@ make configure
 make
 
 echo "Moving extension binary..."
-if [ -f build/release/llama.duckdb_extension ]; then
-    cp build/release/llama.duckdb_extension ./llama.duckdb_extension
-    echo "Extension copied successfully"
-else
-    echo "Extension file not found, looking for alternatives..."
-    find build -name "*llama*.duckdb_extension" -exec cp {} ./llama.duckdb_extension \;
-fi
+mv build/release/extension/*/*.trex .
 
 echo "Build complete."

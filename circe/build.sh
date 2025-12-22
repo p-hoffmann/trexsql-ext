@@ -35,6 +35,6 @@ make circe-native
 make release
 
 echo "Moving extension binary..."
-mv build/release/extension/*/circe*_extension .
+mv build/release/extension/*/*.trex .
 
 echo "Build complete."
