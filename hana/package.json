@@ -3,7 +3,7 @@
     "version": "0.5.0",
     "description": "hana",
     "scripts": {
-      "prepack": "make configure && make release && mv build/release/extension/*/*_extension ."
+      "prepack": "make configure && make release && mv build/release/extension/*/*.trex ."
     },
     "author": "",
     "license": "Apache-2.0",
