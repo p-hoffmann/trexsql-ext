@@ -1,4 +1,5 @@
 node_modules/
+lib/
 .nrepl-port
 .shadow-cljs/
 .cpcache/

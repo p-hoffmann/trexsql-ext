@@ -1,0 +1,22 @@
+#!/bin/bash
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+JAR_FILE="$PROJECT_DIR/lib/trexsql.jar"
+
+if [[ ! -f "$JAR_FILE" ]]; then
+    echo "Error: trexsql.jar not found at $JAR_FILE"
+    echo "Run 'npm run build' to download it."
+    exit 1
+fi
+
+# Check for Java
+if ! command -v java &> /dev/null; then
+    echo "Error: Java is required to run trex"
+    echo "Please install JDK 17 or later"
+    exit 1
+fi
+
+# Pass all arguments to the JAR
+exec java -jar "$JAR_FILE" "$@"
