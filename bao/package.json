@@ -14,6 +14,7 @@
   ],
   "scripts": {
     "build": "./bin/build.sh",
+    "postinstall": "./bin/build.sh",
     "prepack": "npm run build",
     "start": "mkdir -p /usr/src/cert && echo \"$TLS__INTERNAL__CRT\" > /usr/src/cert/cert.pem && echo \"$TLS__INTERNAL__KEY\" > /usr/src/cert/key.pem && trex serve --tls-cert /usr/src/cert/cert.pem --tls-key /usr/src/cert/key.pem --tls-port 33000 --trexas-port 33001 --pgwire-port 5432 --main-path /usr/src/core/server --event-worker-path /usr/src/core/event",
     "startdev": "mkdir -p /usr/src/cert && echo \"$TLS__INTERNAL__CRT\" > /usr/src/cert/cert.pem && echo \"$TLS__INTERNAL__KEY\" > /usr/src/cert/key.pem && trex serve --tls-cert /usr/src/cert/cert.pem --tls-key /usr/src/cert/key.pem --tls-port 33000 --trexas-port 33001 --pgwire-port 5432 --main-path /usr/src/core/server --event-worker-path /usr/src/core/event --enable-inspector --inspector-host 0.0.0.0 --inspector-port 9229",
