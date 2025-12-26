@@ -4,15 +4,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TREX_CMD="$SCRIPT_DIR/trex"
 
-if [[ -z "$1" ]]; then
-    echo "Usage: tbuild <project-path>"
-    echo "  Builds eszip bundles for a TREX project"
-    echo ""
-    echo "  The project must contain a package.org.json with trex.functions defined."
-    exit 1
+if [[ -z "$1" ]] || [[ "$1" == "." ]] || [[ "$1" =~ node_modules/@(data2evidence|trex) ]]; then
+    PROJECT_PATH="$(pwd)"
+else
+    PROJECT_PATH="$1"
 fi
-
-PROJECT_PATH="$1"
 
 if [[ ! -d "$PROJECT_PATH" ]]; then
     echo "Error: Project path does not exist: $PROJECT_PATH"
@@ -27,8 +23,6 @@ fi
 
 echo "Building TREX project: $PROJECT_PATH"
 
-# Read package.org.json and extract function paths
-# Using node/deno to parse JSON and call bundle for each function
 if command -v node &> /dev/null; then
     node -e "
 const fs = require('fs');
