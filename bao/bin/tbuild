@@ -44,7 +44,32 @@ function buildFunctions(functions) {
 
             let args = ['bundle', '-e', entrypoint, '-o', output];
 
-            console.log('Bundling:', f.function);
+            console.log('\\n=== Bundling:', f.function, '===');
+            console.log('  Project path:', projectPath);
+            console.log('  Function path (stripped):', funcPath);
+            console.log('  Entrypoint:', entrypoint);
+            console.log('  Output:', output);
+            console.log('  Entrypoint exists:', fs.existsSync(entrypoint));
+            console.log('  Command:', [trexCmd, ...args].join(' '));
+
+            // Check for deno.json in function directory
+            const funcDir = path.dirname(entrypoint);
+            const denoJson = path.join(funcDir, 'deno.json');
+            const sharedDir = path.join(projectPath, '_shared');
+            const nodeModules = path.join(funcDir, 'node_modules');
+            console.log('  Function dir:', funcDir);
+            console.log('  deno.json exists:', fs.existsSync(denoJson));
+            console.log('  _shared dir exists:', fs.existsSync(sharedDir));
+            console.log('  node_modules exists:', fs.existsSync(nodeModules));
+
+            // List contents of function dir
+            try {
+                const contents = fs.readdirSync(funcDir);
+                console.log('  Function dir contents:', contents.join(', '));
+            } catch (e) {
+                console.log('  Function dir contents: ERROR -', e.message);
+            }
+
             try {
                 execSync([trexCmd, ...args].join(' '), { stdio: 'inherit' });
                 f.eszip = f.function + '/index.eszip';
@@ -90,7 +115,32 @@ function buildFunctions(functions: any[]) {
 
             let args = ['bundle', '-e', entrypoint, '-o', output];
 
-            console.log('Bundling:', f.function);
+            console.log('\\n=== Bundling:', f.function, '===');
+            console.log('  Project path:', projectPath);
+            console.log('  Function path (stripped):', funcPath);
+            console.log('  Entrypoint:', entrypoint);
+            console.log('  Output:', output);
+            console.log('  Entrypoint exists:', fs.existsSync(entrypoint));
+            console.log('  Command:', [trexCmd, ...args].join(' '));
+
+            // Check for deno.json in function directory
+            const funcDir = path.dirname(entrypoint);
+            const denoJson = path.join(funcDir, 'deno.json');
+            const sharedDir = path.join(projectPath, '_shared');
+            const nodeModules = path.join(funcDir, 'node_modules');
+            console.log('  Function dir:', funcDir);
+            console.log('  deno.json exists:', fs.existsSync(denoJson));
+            console.log('  _shared dir exists:', fs.existsSync(sharedDir));
+            console.log('  node_modules exists:', fs.existsSync(nodeModules));
+
+            // List contents of function dir
+            try {
+                const contents = fs.readdirSync(funcDir);
+                console.log('  Function dir contents:', contents.join(', '));
+            } catch (e) {
+                console.log('  Function dir contents: ERROR -', e.message);
+            }
+
             try {
                 execSync([trexCmd, ...args].join(' '), { stdio: 'inherit' });
                 f.eszip = f.function + '/index.eszip';
