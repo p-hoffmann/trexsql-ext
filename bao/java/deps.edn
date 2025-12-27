@@ -1,0 +1,25 @@
+{:paths ["src" "resources"]
+
+ :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
+
+ :deps {org.clojure/clojure {:mvn/version "1.11.1"}
+        com.github.p-hoffmann/trexsql-java {:mvn/version "v0.1.1"}
+        org.clojure/tools.cli {:mvn/version "1.1.230"}}
+
+ :aliases {:dev {:extra-paths ["test"]
+                 :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}}}
+
+           :run {:main-opts ["-m" "trexsql.core"]}
+
+           :test {:extra-paths ["test"]
+                  :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}}
+                  :main-opts ["-m" "clojure.test" "trexsql.core-test"]}
+
+           :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.5"}}
+                   :ns-default build}
+
+           :uberjar {:replace-deps {com.github.seancorfield/depstar {:mvn/version "2.1.303"}}
+                     :exec-fn hf.depstar/uberjar
+                     :exec-args {:aot true
+                                 :main-class trexsql.core
+                                 :jar "target/trexsql-standalone.jar"}}}}

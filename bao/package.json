@@ -10,6 +10,7 @@
     "bin/trex",
     "bin/tbuild",
     "bin/build.sh",
+    "java/",
     "lib/"
   ],
   "scripts": {
