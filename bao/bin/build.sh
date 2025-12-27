@@ -11,13 +11,21 @@ JAR_FILE="$LIB_DIR/trexsql.jar"
 
 mkdir -p "$LIB_DIR"
 
-if [[ -f "$JAR_FILE" ]]; then
-    echo "JAR already exists: $JAR_FILE"
-    exit 0
+VERSION_FILE="$LIB_DIR/.version"
+
+if [[ -f "$JAR_FILE" && -f "$VERSION_FILE" ]]; then
+    CURRENT_VERSION=$(cat "$VERSION_FILE")
+    if [[ "$CURRENT_VERSION" == "$TREXSQL_VERSION" ]]; then
+        echo "JAR already exists at version $TREXSQL_VERSION: $JAR_FILE"
+        exit 0
+    fi
+    echo "Upgrading from $CURRENT_VERSION to $TREXSQL_VERSION"
 fi
 
 echo "Downloading trexsql v${TREXSQL_VERSION}..."
 curl -L -o "$JAR_FILE" "$JAR_URL"
+
+echo "$TREXSQL_VERSION" > "$VERSION_FILE"
 
 echo "Downloaded: $JAR_FILE"
 ls -lh "$JAR_FILE"
