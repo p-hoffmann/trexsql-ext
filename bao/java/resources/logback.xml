@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Logback configuration for trexsql (T4.1.3) -->
+<configuration>
+  <!-- Console appender with colored output -->
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <!-- File appender for persistent logs -->
+  <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>logs/trexsql.log</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+      <fileNamePattern>logs/trexsql.%d{yyyy-MM-dd}.log</fileNamePattern>
+      <maxHistory>30</maxHistory>
+      <totalSizeCap>100MB</totalSizeCap>
+    </rollingPolicy>
+    <encoder>
+      <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <!-- Trexsql namespace logging -->
+  <logger name="trexsql" level="INFO"/>
+  <logger name="trexsql.db" level="INFO"/>
+  <logger name="trexsql.datamart" level="INFO"/>
+  <logger name="trexsql.vocab" level="INFO"/>
+  <logger name="trexsql.circe" level="INFO"/>
+
+  <!-- Reduce noise from DuckDB JDBC -->
+  <logger name="org.duckdb" level="WARN"/>
+
+  <!-- Root logger -->
+  <root level="INFO">
+    <appender-ref ref="CONSOLE"/>
+  </root>
+</configuration>
