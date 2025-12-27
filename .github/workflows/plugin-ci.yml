@@ -114,6 +114,12 @@ jobs:
           else
             jq --arg v "-$(date +%s)-$GITHUB_SHA" '.version+=$v' package.json > tmppkg; mv tmppkg package.json
           fi
+      - name: Install Leiningen
+        if: matrix.PKGPATH == './bao'
+        run: |
+          curl -sL https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein -o /usr/local/bin/lein
+          chmod +x /usr/local/bin/lein
+          lein version
       - name: Install dependencies
         run: |
           cd ${{ matrix.PKGPATH }}
