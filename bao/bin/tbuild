@@ -37,8 +37,10 @@ function buildFunctions(functions) {
     if (!functions) return [];
     return functions.map(f => {
         if (f.function) {
-            const entrypoint = path.join(projectPath, f.function, 'index.ts');
-            const output = path.join(projectPath, f.function, 'index.eszip');
+            // Strip leading slash to prevent path.join from treating it as absolute
+            const funcPath = f.function.replace(/^\\//, '');
+            const entrypoint = path.join(projectPath, funcPath, 'index.ts');
+            const output = path.join(projectPath, funcPath, 'index.eszip');
 
             let args = ['bundle', '-e', entrypoint, '-o', output];
 
@@ -81,8 +83,10 @@ function buildFunctions(functions: any[]) {
     if (!functions) return [];
     return functions.map(f => {
         if (f.function) {
-            const entrypoint = path.join(projectPath, f.function, 'index.ts');
-            const output = path.join(projectPath, f.function, 'index.eszip');
+            // Strip leading slash to prevent path.join from treating it as absolute
+            const funcPath = f.function.replace(/^\\//, '');
+            const entrypoint = path.join(projectPath, funcPath, 'index.ts');
+            const output = path.join(projectPath, funcPath, 'index.eszip');
 
             let args = ['bundle', '-e', entrypoint, '-o', output];
 
