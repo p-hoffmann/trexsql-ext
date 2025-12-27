@@ -42,11 +42,6 @@ function buildFunctions(functions) {
 
             let args = ['bundle', '-e', entrypoint, '-o', output];
 
-            if (f.imports) {
-                const importMap = path.join(projectPath, f.imports);
-                args.push('-i', importMap);
-            }
-
             console.log('Bundling:', f.function);
             try {
                 execSync([trexCmd, ...args].join(' '), { stdio: 'inherit' });
@@ -90,11 +85,6 @@ function buildFunctions(functions: any[]) {
             const output = path.join(projectPath, f.function, 'index.eszip');
 
             let args = ['bundle', '-e', entrypoint, '-o', output];
-
-            if (f.imports) {
-                const importMap = path.join(projectPath, f.imports);
-                args.push('-i', importMap);
-            }
 
             console.log('Bundling:', f.function);
             try {
