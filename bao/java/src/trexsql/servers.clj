@@ -103,6 +103,11 @@
             (throw (RuntimeException. (str "Failed to start pgwire server: " result))))
           result)
         "Started"))
+    (catch clojure.lang.ExceptionInfo e
+      (let [msg (ex-message e)]
+        (if (check-port-in-use-error msg)
+          (throw (RuntimeException. (str "Error: Failed to start pgwire server: Address already in use (port " pgwire-port ")")))
+          (throw (RuntimeException. (str "Error: Failed to start pgwire server on " pgwire-host ":" pgwire-port))))))
     (catch RuntimeException e
       (let [msg (.getMessage e)]
         (if (check-port-in-use-error msg)
