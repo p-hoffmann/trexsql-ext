@@ -50,8 +50,13 @@
    Returns a java.sql.Connection to an in-memory database."
   []
   (let [props (doto (Properties.)
-                (.setProperty "allow_unsigned_extensions" "true"))]
-    (DriverManager/getConnection "jdbc:trex:" props)))
+                (.setProperty "allow_unsigned_extensions" "true"))
+        conn (DriverManager/getConnection "jdbc:trex:" props)]
+    (try
+      (with-open [stmt (.createStatement conn)]
+        (.execute stmt "CALL disable_logging()"))
+      (catch SQLException _))
+    conn))
 
 (defrecord TrexsqlDatabase [^Connection connection
                             extensions-loaded  ; atom of set
