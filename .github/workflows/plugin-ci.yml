@@ -146,8 +146,11 @@ jobs:
       - name: Sign extensions
         env:
           SIGNING_KEY: ${{ secrets.DUCKDB_EXTENSION_SIGNING_KEY }}
-        if: ${{ secrets.DUCKDB_EXTENSION_SIGNING_KEY != '' }}
         run: |
+          if [[ -z "$SIGNING_KEY" ]]; then
+            echo "::warning::DUCKDB_EXTENSION_SIGNING_KEY not set, skipping extension signing"
+            exit 0
+          fi
           echo "$SIGNING_KEY" > /tmp/signing_key.pem
           chmod 600 /tmp/signing_key.pem
           find ${{ matrix.DESTPATH || matrix.PKGPATH }} \( -name "*.duckdb_extension" -o -name "*.trex" \) ! -name "Dockerfile*" -type f | while read ext; do
