@@ -47,7 +47,7 @@
   [{:keys [trexas-host trexas-port main-path event-worker-path
            tls-cert tls-key tls-port
            enable-inspector inspector-type inspector-host inspector-port
-           allow-main-inspector]}]
+           allow-main-inspector worker-policy max-parallelism]}]
   (let [config (cond-> {:host trexas-host
                         :port trexas-port
                         :main_service_path main-path}
@@ -67,7 +67,13 @@
                  (assoc :tls_port tls-port)
 
                  event-worker-path
-                 (assoc :event_worker_path event-worker-path))]
+                 (assoc :event_worker_path event-worker-path)
+
+                 worker-policy
+                 (assoc :user_worker_policy worker-policy)
+
+                 max-parallelism
+                 (assoc :max_parallelism max-parallelism))]
     (str "{"
          (->> config
               (map (fn [[k v]]
@@ -157,7 +163,8 @@
   "Print server listening status."
   [{:keys [trexas-host trexas-port pgwire-host pgwire-port
            tls-cert tls-port enable-inspector inspector-type
-           inspector-host inspector-port event-worker-path]}]
+           inspector-host inspector-port event-worker-path
+           worker-policy max-parallelism]}]
   (println)
   (println "\u2705 Servers started successfully")
   (println (str "Trexas listening on "
@@ -168,6 +175,11 @@
                 (if event-worker-path
                   " (with event worker)"
                   " (without event worker)")))
+  (when (or worker-policy max-parallelism)
+    (println (str "  Worker config: "
+                  (when worker-policy (str "policy=" worker-policy))
+                  (when (and worker-policy max-parallelism) ", ")
+                  (when max-parallelism (str "max-parallelism=" max-parallelism)))))
   (println (str "PgWire listening on " pgwire-host ":" pgwire-port))
   (println)
   (println "Press Ctrl+C to stop"))

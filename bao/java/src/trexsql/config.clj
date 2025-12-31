@@ -20,7 +20,9 @@
    :inspector-type "inspect"
    :inspector-host "0.0.0.0"
    :inspector-port 9229
-   :allow-main-inspector false})
+   :allow-main-inspector false
+   :worker-policy nil
+   :max-parallelism nil})
 
 (def cli-options
   "CLI options matching bao interface."
@@ -56,6 +58,14 @@
     :parse-fn #(Integer/parseInt %)]
    [nil "--allow-main-inspector" "Allow inspector in main worker"
     :default false]
+   [nil "--worker-policy POLICY" "Worker policy (per_worker, per_request, oneshot)"
+    :default nil
+    :validate [#(contains? #{"per_worker" "per_request" "oneshot"} %)
+               "Must be per_worker, per_request, or oneshot"]]
+   [nil "--max-parallelism COUNT" "Max workers per service path (1-9999)"
+    :default nil
+    :parse-fn #(Integer/parseInt %)
+    :validate [#(<= 1 % 9999) "Must be between 1 and 9999"]]
    ["-h" "--help" "Show this help message"]])
 
 (defn parse-args
@@ -113,4 +123,6 @@ Options:
   --inspector-host HOST     Inspector host (default: 0.0.0.0)
   --inspector-port PORT     Inspector port (default: 9229)
   --allow-main-inspector    Allow inspector in main worker
+  --worker-policy POLICY    Worker policy: per_worker (default), per_request, oneshot
+  --max-parallelism COUNT   Max workers per service path (1-9999, default: CPU cores)
   -h, --help                Show this help message")
