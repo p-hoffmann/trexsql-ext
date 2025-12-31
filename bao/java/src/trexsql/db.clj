@@ -4,7 +4,7 @@
             [clojure.tools.logging :as log]
             [trexsql.errors :as errors])
   (:import [java.sql Connection DriverManager ResultSet ResultSetMetaData SQLException]
-           [java.util Properties ArrayList HashMap]))
+           [java.util ArrayList HashMap]))
 
 (def ^:private identifier-pattern
   "Valid SQL identifier pattern: starts with letter/underscore,
@@ -46,12 +46,10 @@
   (str "\"" (str/replace s "\"" "\"\"") "\""))
 
 (defn create-connection
-  "Create a DuckDB connection with unsigned extensions enabled.
+  "Create a DuckDB connection.
    Returns a java.sql.Connection to an in-memory database."
   []
-  (let [props (doto (Properties.)
-                (.setProperty "allow_unsigned_extensions" "true"))
-        conn (DriverManager/getConnection "jdbc:trex:" props)]
+  (let [conn (DriverManager/getConnection "jdbc:trex:")]
     (try
       (with-open [stmt (.createStatement conn)]
         (.execute stmt "CALL disable_logging()"))
