@@ -146,7 +146,7 @@ jobs:
       - name: Sign extensions
         env:
           SIGNING_KEY: ${{ secrets.DUCKDB_EXTENSION_SIGNING_KEY }}
-        if: ${{ env.SIGNING_KEY != '' }}
+        if: ${{ secrets.DUCKDB_EXTENSION_SIGNING_KEY != '' }}
         run: |
           echo "$SIGNING_KEY" > /tmp/signing_key.pem
           chmod 600 /tmp/signing_key.pem
