@@ -14,4 +14,7 @@ make
 echo "Moving extension binary..."
 mv build/release/extension/*/*.trex .
 
+echo "Signing extension (if key available)..."
+../extension-ci-tools/extension_signing/sign-if-key.sh
+
 echo "Build complete."
