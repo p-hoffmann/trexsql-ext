@@ -3,7 +3,7 @@
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
 
  :deps {org.clojure/clojure {:mvn/version "1.11.1"}
-        com.github.p-hoffmann/trexsql-java {:mvn/version "v0.1.1"}
+        com.github.p-hoffmann/trexsql-java {:mvn/version "v0.1.2"}
         org.clojure/tools.cli {:mvn/version "1.1.230"}}
 
  :aliases {:dev {:extra-paths ["test"]

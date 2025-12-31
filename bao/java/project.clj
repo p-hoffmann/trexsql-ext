@@ -7,7 +7,7 @@
   :repositories [["jitpack" "https://jitpack.io"]]
 
   :dependencies [[org.clojure/clojure "1.11.1"]
-                 [com.github.p-hoffmann/trexsql-java "v0.1.1"]
+                 [com.github.p-hoffmann/trexsql-java "v0.1.2"]
                  [org.clojure/tools.cli "1.1.230"]
                  [org.clojure/data.json "2.5.0"]
                  ;; HoneySQL for SQL generation (005-jdbc-batch-cache)
