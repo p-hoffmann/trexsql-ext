@@ -1,4 +1,4 @@
-(defproject com.trex/trexsql "0.1.1"
+(defproject org.trex/trexsql "0.1.1"
   :description "Clojure DuckDB library for TREX - replaces bao with JVM implementation"
   :url "https://github.com/p-hoffmann/trex-java"
   :license {:name "Apache License 2.0"
