@@ -1,11 +1,12 @@
 (ns trexsql.webapi
-  "WebAPI integration handlers."
+  "WebAPI integration handlers with Reitit routing."
   (:require [trexsql.datamart :as datamart]
             [trexsql.jobs :as jobs]
             [trexsql.vocab :as vocab]
             [trexsql.circe :as circe]
             [clojure.string :as str]
-            [clojure.data.json :as json])
+            [clojure.data.json :as json]
+            [reitit.ring :as ring])
   (:import [java.util HashMap ArrayList Map]
            [java.io File]))
 
@@ -378,3 +379,145 @@
 
 (defn response->java-map [resp]
   (clj->java resp))
+
+;; =============================================================================
+;; Ring/Reitit Handlers
+;; =============================================================================
+
+(defn- list-cache-jobs-handler
+  "Ring handler for GET /cache/jobs"
+  [{:keys [db query-params]}]
+  (handle-list-cache-jobs db query-params))
+
+(defn- create-cache-handler
+  "Ring handler for POST /:source-key/cache"
+  [{:keys [db path-params body-params query-params]}]
+  (let [source-key (:source-key path-params)]
+    ;; body-params is already parsed by wrap-json-body middleware
+    (let [source (find-source-by-key source-key)]
+      (if-not source
+        (not-found (str "Source not found: " source-key))
+        (if (str/blank? (:schemaName body-params))
+          (bad-request "schemaName is required")
+          (let [database-code (or (:databaseCode body-params) source-key)]
+            (if-let [validation-error (validate-database-code database-code)]
+              (bad-request validation-error)
+              (try
+                (let [cache-path (or (:cachePath query-params) "./data/cache")
+                      credentials (source->credentials source)
+                      config-map (build-datamart-config database-code (:schemaName body-params)
+                                                        cache-path credentials body-params)
+                      validated-config (datamart/java-map->datamart-config config-map)]
+                  (when-let [error (datamart/validate-config validated-config)]
+                    (throw (IllegalArgumentException. error)))
+                  (let [result (datamart/create-cache db validated-config nil)
+                        java-result (datamart/result->java-map result)]
+                    (ok (java-map->clj java-result))))
+                (catch IllegalArgumentException e
+                  (bad-request (.getMessage e)))
+                (catch Exception e
+                  (internal-error (.getMessage e)))))))))))
+
+(defn- get-cache-status-handler
+  "Ring handler for GET /:source-key/cache/status"
+  [{:keys [db path-params query-params]}]
+  (let [source-key (:source-key path-params)]
+    (handle-get-cache-status db source-key query-params)))
+
+(defn- delete-cache-handler
+  "Ring handler for DELETE /:source-key/cache"
+  [{:keys [db path-params query-params]}]
+  (let [source-key (:source-key path-params)]
+    (handle-delete-cache db source-key query-params)))
+
+(defn- cancel-cache-job-handler
+  "Ring handler for DELETE /:source-key/cache/job"
+  [{:keys [db path-params query-params]}]
+  (let [source-key (:source-key path-params)]
+    (handle-cancel-cache-job db source-key query-params)))
+
+(defn- execute-circe-handler
+  "Ring handler for POST /:source-key/circe/execute"
+  [{:keys [db path-params body-params]}]
+  (let [source-key (:source-key path-params)
+        source (find-source-by-key source-key)]
+    (if-not source
+      (not-found (str "Source not found: " source-key))
+      (let [{:keys [circeJson cdmSchema resultSchema cohortId targetTable generateStats]} body-params]
+        (cond
+          (str/blank? circeJson) (bad-request "circeJson is required")
+          (str/blank? cdmSchema) (bad-request "cdmSchema is required")
+          (str/blank? resultSchema) (bad-request "resultSchema is required")
+          (nil? cohortId) (bad-request "cohortId is required")
+          :else
+          (try
+            (let [options-map (build-circe-options cdmSchema resultSchema cohortId targetTable generateStats)
+                  clj-options (circe/java-map->circe-options options-map)
+                  result (circe/execute-circe db circeJson clj-options)
+                  java-result (circe/circe-result->java-map result)]
+              (ok (java-map->clj java-result)))
+            (catch Exception e
+              (internal-error (.getMessage e)))))))))
+
+(defn- render-circe-handler
+  "Ring handler for POST /:source-key/circe/render"
+  [{:keys [db path-params body-params]}]
+  (let [source-key (:source-key path-params)
+        source (find-source-by-key source-key)]
+    (if-not source
+      (not-found (str "Source not found: " source-key))
+      (let [{:keys [circeJson cdmSchema resultSchema cohortId targetTable generateStats]} body-params]
+        (cond
+          (str/blank? circeJson) (bad-request "circeJson is required")
+          (str/blank? cdmSchema) (bad-request "cdmSchema is required")
+          (str/blank? resultSchema) (bad-request "resultSchema is required")
+          (nil? cohortId) (bad-request "cohortId is required")
+          :else
+          (try
+            (let [options-map (build-circe-options cdmSchema resultSchema cohortId targetTable generateStats)
+                  clj-options (circe/java-map->circe-options options-map)
+                  sql (circe/render-circe-to-sql db circeJson clj-options)]
+              (ok {:success true :sql sql}))
+            (catch Exception e
+              (internal-error (.getMessage e)))))))))
+
+(defn- search-vocab-handler
+  "Ring handler for GET /:source-key/vocab/search"
+  [{:keys [db path-params query-params]}]
+  (let [source-key (:source-key path-params)]
+    (handle-search-vocab db source-key query-params)))
+
+;; =============================================================================
+;; Reitit Router
+;; =============================================================================
+
+(def routes
+  "Reitit route definitions for WebAPI endpoints."
+  [["/cache/jobs"
+    {:get {:handler list-cache-jobs-handler}}]
+
+   ["/:source-key"
+    ["/cache"
+     {:post {:handler create-cache-handler}
+      :delete {:handler delete-cache-handler}}]
+    ["/cache/status"
+     {:get {:handler get-cache-status-handler}}]
+    ["/cache/job"
+     {:delete {:handler cancel-cache-job-handler}}]
+    ["/circe/execute"
+     {:post {:handler execute-circe-handler}}]
+    ["/circe/render"
+     {:post {:handler render-circe-handler}}]
+    ["/vocab/search"
+     {:get {:handler search-vocab-handler}}]]])
+
+(defn create-router
+  "Create Reitit Ring router for WebAPI endpoints.
+   Returns a Ring handler function."
+  []
+  (ring/ring-handler
+    (ring/router routes)
+    (ring/create-default-handler
+      {:not-found (constantly (not-found "Endpoint not found"))
+       :method-not-allowed (constantly (response 405 {:error "METHOD_NOT_ALLOWED"
+                                                       :message "Method not allowed"}))})))
