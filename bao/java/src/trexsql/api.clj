@@ -11,7 +11,7 @@
             [clojure.string :as str])
   (:import [java.util Map List ArrayList HashMap])
   (:gen-class
-   :name com.trex.Trexsql
+   :name org.trex.Trexsql
    :methods [^:static [init [java.util.Map] Object]
              ^:static [initWithServers [java.util.Map] Object]
              ^:static [query [Object String] java.util.List]

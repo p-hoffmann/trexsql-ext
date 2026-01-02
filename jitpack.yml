@@ -8,7 +8,7 @@ before_install:
 install:
   - |
     VER_NUM=$(echo "$VERSION" | sed 's/^v//')
-    URL="https://github.com/p-hoffmann/trexsql-java/releases/download/${VERSION}/trexsql-${VER_NUM}.jar"
+    URL="https://github.com/p-hoffmann/trexsql-ext/releases/download/${VERSION}/trexsql-${VER_NUM}.jar"
     echo "Waiting for release artifact: $URL"
     for i in $(seq 1 40); do
       if curl -sfL -o /tmp/trexsql.jar "$URL"; then

@@ -10,7 +10,7 @@
             [clojure.tools.logging :as log])
   (:import [jakarta.servlet.http HttpServletRequest HttpServletResponse])
   (:gen-class
-   :name com.trex.TrexServlet
+   :name org.trex.TrexServlet
    :extends jakarta.servlet.http.HttpServlet
    :state state
    :init init-state
