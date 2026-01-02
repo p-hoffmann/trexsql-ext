@@ -16,7 +16,15 @@
                  [com.zaxxer/HikariCP "5.1.0"]
                  ;; Logging (T4.1.1-T4.1.2)
                  [org.clojure/tools.logging "1.2.4"]
-                 [ch.qos.logback/logback-classic "1.4.11"]]
+                 [ch.qos.logback/logback-classic "1.4.11"]
+                 ;; Ring for HTTP/Servlet integration
+                 [ring/ring-core "1.14.1"]
+                 [org.ring-clojure/ring-jakarta-servlet "1.14.1"]
+                 [ring/ring-json "0.5.1"]
+                 ;; Jakarta Servlet API (provided at runtime by container)
+                 [jakarta.servlet/jakarta.servlet-api "6.0.0" :scope "provided"]
+                 ;; Reitit for routing
+                 [metosin/reitit-ring "0.7.2"]]
 
   :source-paths ["src"]
   :test-paths ["test"]
@@ -24,7 +32,7 @@
 
   :main trexsql.core
 
-  :aot [trexsql.api trexsql.core]
+  :aot [trexsql.api trexsql.core trexsql.servlet]
 
   :profiles {:dev {:dependencies [[org.clojure/test.check "1.1.1"]]}
              :uberjar {:aot :all
