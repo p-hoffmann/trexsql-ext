@@ -260,7 +260,7 @@ impl VTab for TpmInstallVTab {
     bind: &BindInfo,
   ) -> Result<Self::BindData, Box<dyn std::error::Error>> {
     bind.add_result_column(
-      "install_result",
+      "install_results",
       LogicalTypeHandle::from(LogicalTypeId::Varchar),
     );
     let package_spec = bind.get_parameter(0).to_string();
