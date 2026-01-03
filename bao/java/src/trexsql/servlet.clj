@@ -14,15 +14,17 @@
    :extends jakarta.servlet.http.HttpServlet
    :state state
    :init init-state
-   :methods [[initTrex [Object Object] void]]))
+   :methods [[initTrex [Object Object] void]
+             [initTrex [Object Object java.util.Map] void]]))
 
-;; State: {:db atom, :source-repo atom, :handler atom}
+;; State: {:db atom, :source-repo atom, :handler atom, :config atom}
 (defn -init-state
-  "Initialize servlet state with atoms for db, source-repo, and handler."
+  "Initialize servlet state with atoms for db, source-repo, handler, and config."
   []
   [[] {:db (atom nil)
        :source-repo (atom nil)
-       :handler (atom nil)}])
+       :handler (atom nil)
+       :config (atom {})}])
 
 (defn- wrap-strip-context
   "Middleware to strip /WebAPI/trexsql prefix from URI for Reitit routing."
@@ -33,10 +35,12 @@
       (handler (assoc request :uri (if (str/blank? stripped) "/" stripped))))))
 
 (defn- wrap-db
-  "Middleware to inject db into request."
-  [handler db-atom]
+  "Middleware to inject db and config into request."
+  [handler db-atom config-atom]
   (fn [request]
-    (handler (assoc request :db @db-atom))))
+    (handler (assoc request
+                    :db @db-atom
+                    :trex-config @config-atom))))
 
 (defn- wrap-exception-handler
   "Middleware to catch exceptions and return proper JSON error responses."
@@ -51,12 +55,23 @@
          :body {:error "INTERNAL_ERROR"
                 :message (.getMessage e)}}))))
 
+(defn- wrap-reitit-params
+  "Middleware to copy :params to :query-params and :body-params for Reitit handlers."
+  [handler]
+  (fn [request]
+    (let [params (:params request)
+          body-params (:body request)]
+      (handler (assoc request
+                      :query-params params
+                      :body-params (if (map? body-params) body-params {}))))))
+
 (defn- create-app
   "Create Ring app with middleware stack."
-  [db-atom]
+  [db-atom config-atom]
   (-> (webapi/create-router)
-      (wrap-db db-atom)
+      (wrap-db db-atom config-atom)
       wrap-exception-handler
+      wrap-reitit-params
       wrap-keyword-params
       wrap-params
       (wrap-json-body {:keywords? true})
@@ -66,15 +81,21 @@
 (defn -initTrex
   "Initialize servlet with DuckDB instance and SourceRepository.
    Called from Spring Boot during servlet registration."
-  [this db source-repo]
-  (log/info "Initializing TrexServlet with DuckDB instance")
-  (let [state (.state this)]
-    (reset! (:db state) db)
-    (reset! (:source-repo state) source-repo)
-    (webapi/set-source-repository! source-repo)
-    ;; Pre-create handler for performance
-    (reset! (:handler state) (create-app (:db state)))
-    (log/info "TrexServlet initialized successfully")))
+  ([this db source-repo]
+   (-initTrex this db source-repo nil))
+  ([this db source-repo config]
+   (log/info "Initializing TrexServlet with DuckDB instance")
+   (let [state (.state this)
+         config-map (when config
+                      {:cache-path (get config "cache-path")})]
+     (reset! (:db state) db)
+     (reset! (:source-repo state) source-repo)
+     (reset! (:config state) (or config-map {}))
+     (webapi/set-source-repository! source-repo)
+     (webapi/set-config! config-map)
+     ;; Pre-create handler for performance
+     (reset! (:handler state) (create-app (:db state) (:config state)))
+     (log/info "TrexServlet initialized successfully"))))
 
 (defn -service
   "Handle HTTP request via Ring adapter.
@@ -82,8 +103,10 @@
   [this ^HttpServletRequest request ^HttpServletResponse response]
   (let [handler @(:handler (.state this))]
     (if handler
-      ((servlet/make-service-method handler) request response)
+      (let [request-map (servlet/build-request-map request)
+            response-map (handler request-map)]
+        (servlet/update-servlet-response response response-map))
       (do
         (.setStatus response 503)
-        (.getWriter response)
+        (.setContentType response "application/json")
         (.write (.getWriter response) "{\"error\":\"SERVICE_UNAVAILABLE\",\"message\":\"Servlet not initialized\"}")))))
