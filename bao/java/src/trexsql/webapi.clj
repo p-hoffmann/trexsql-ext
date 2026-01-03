@@ -11,9 +11,17 @@
            [java.io File]))
 
 (defonce ^:private source-repository (atom nil))
+(defonce ^:private global-config (atom {:cache-path "./data/cache"}))
 
 (defn set-source-repository! [repo]
   (reset! source-repository repo))
+
+(defn set-config! [config]
+  (when config
+    (swap! global-config merge config)))
+
+(defn get-cache-path-from-config []
+  (:cache-path @global-config))
 
 (defn get-source-repository []
   @source-repository)
@@ -25,15 +33,53 @@
       (catch Exception e
         nil))))
 
+(defn- parse-jdbc-url
+  "Parse PostgreSQL JDBC URL to extract connection components.
+   Format: jdbc:postgresql://host:port/database?user=xxx&password=xxx"
+  [jdbc-url]
+  (when jdbc-url
+    (try
+      (let [;; Remove jdbc:postgresql:// prefix
+            url-part (str/replace jdbc-url #"^jdbc:postgresql://" "")
+            ;; Split host:port/database?params
+            [host-port-db params-str] (str/split url-part #"\?" 2)
+            [host-port db] (str/split host-port-db #"/" 2)
+            [host port-str] (str/split host-port #":" 2)
+            port (when port-str (try (Integer/parseInt port-str) (catch Exception _ 5432)))
+            ;; Parse params
+            params (when params-str
+                     (into {}
+                       (for [param (str/split params-str #"&")]
+                         (let [[k v] (str/split param #"=" 2)]
+                           [(keyword k) v]))))]
+        {:host host
+         :port (or port 5432)
+         :database-name db
+         :user (:user params)
+         :password (:password params)})
+      (catch Exception _ nil))))
+
 (defn- source->credentials [source]
   (when source
-    (let [dialect (.getSourceDialect source)]
-      {:dialect dialect
-       :connection-string (.getSourceConnection source)
-       :user (.getUsername source)
-       :password (.getPassword source)
-       :jdbc-url (when (datamart/jdbc-dialect? dialect)
-                   (.getSourceConnection source))})))
+    (let [dialect (.getSourceDialect source)
+          conn-str (.getSourceConnection source)
+          explicit-user (.getUsername source)
+          explicit-pass (.getPassword source)]
+      (if (= "postgres" dialect)
+        ;; For PostgreSQL, parse JDBC URL to get host/port/database
+        (let [parsed (parse-jdbc-url conn-str)]
+          (merge parsed
+                 {:dialect dialect
+                  :connection-string conn-str
+                  ;; Prefer explicit user/password over URL params
+                  :user (or explicit-user (:user parsed))
+                  :password (or explicit-pass (:password parsed))}))
+        ;; For other dialects
+        {:dialect dialect
+         :connection-string conn-str
+         :user explicit-user
+         :password explicit-pass
+         :jdbc-url (when (datamart/jdbc-dialect? dialect) conn-str)}))))
 
 (defn response
   ([status body]
@@ -111,8 +157,12 @@
             (.put "connection-string" (:connection-string credentials))
             (.put "user" (:user credentials))
             (.put "password" (:password credentials)))]
-    (when (:jdbc-url credentials)
-      (.put m "jdbc-url" (:jdbc-url credentials)))
+    ;; Add PostgreSQL-specific fields
+    (when (:host credentials) (.put m "host" (:host credentials)))
+    (when (:port credentials) (.put m "port" (:port credentials)))
+    (when (:database-name credentials) (.put m "database-name" (:database-name credentials)))
+    ;; Add JDBC URL for JDBC dialects
+    (when (:jdbc-url credentials) (.put m "jdbc-url" (:jdbc-url credentials)))
     m))
 
 (defn- build-datamart-config [database-code schema-name cache-path credentials request]
@@ -157,7 +207,7 @@
               (if-let [validation-error (validate-database-code database-code)]
                 (bad-request validation-error)
                 (try
-                  (let [cache-path (or (:cachePath params) "./data/cache")
+                  (let [cache-path (or (:cachePath params) (get-cache-path-from-config))
                         credentials (source->credentials source)
                         config-map (build-datamart-config database-code (:schemaName request)
                                                           cache-path credentials request)
@@ -179,7 +229,7 @@
       (let [database-code (or (:databaseCode params) source-key)]
         (if-let [validation-error (validate-database-code database-code)]
           (bad-request validation-error)
-          (let [cache-path (or (:cachePath params) "./data/cache")
+          (let [cache-path (or (:cachePath params) (get-cache-path-from-config))
                 cache-file (File. (get-cache-path cache-path database-code))
                 exists? (.exists cache-file)
                 attached? (try (datamart/is-attached? db database-code) (catch Exception _ false))
@@ -248,7 +298,7 @@
     (if-not source
       (not-found (str "Source not found: " source-key))
       (let [database-code (or (:databaseCode params) source-key)
-            cache-path (or (:cachePath params) "./data/cache")
+            cache-path (or (:cachePath params) (get-cache-path-from-config))
             cache-file (File. (get-cache-path cache-path database-code))]
         (if-not (.exists cache-file)
           (not-found (str "Cache not found for source: " source-key))
@@ -403,7 +453,7 @@
             (if-let [validation-error (validate-database-code database-code)]
               (bad-request validation-error)
               (try
-                (let [cache-path (or (:cachePath query-params) "./data/cache")
+                (let [cache-path (or (:cachePath query-params) (get-cache-path-from-config))
                       credentials (source->credentials source)
                       config-map (build-datamart-config database-code (:schemaName body-params)
                                                         cache-path credentials body-params)
