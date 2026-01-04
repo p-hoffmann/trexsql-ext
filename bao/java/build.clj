@@ -17,8 +17,12 @@
   (b/compile-clj {:basis basis
                   :src-dirs ["src"]
                   :class-dir class-dir
-                  :ns-compile '[trexsql.api trexsql.core]})
+                  :ns-compile '[trexsql.api trexsql.core trexsql.servlet]})
   (b/uber {:class-dir class-dir
            :uber-file uber-file
            :basis basis
-           :main 'trexsql.core}))
+           :main 'trexsql.core
+           ;; Exclude SLF4J implementation to avoid conflicts with WebAPI's logback
+           :exclude ["org/slf4j/impl/.*"
+                     "org/slf4j/simple/.*"
+                     "simplelogger.properties"]}))

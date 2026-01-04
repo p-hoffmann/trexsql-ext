@@ -13,44 +13,19 @@
            [java.io File]))
 
 (defrecord SourceCredentials
-  [dialect        ; "postgres" or "bigquery"
-   host           ; hostname or project ID (for BigQuery)
-   port           ; PostgreSQL port (nil for BigQuery)
-   database-name  ; database name or dataset (for BigQuery)
-   user           ; username (nil for BigQuery)
-   password])     ; password (nil for BigQuery)
+  [dialect host port database-name user password])
 
 (defrecord DatamartConfig
-  [database-code       ; unique identifier for the database
-   schema-name         ; source schema to copy
-   target-schema-name  ; destination schema name (defaults to schema-name)
-   source-credentials  ; SourceCredentials record
-   table-filter        ; map of table-name -> columns to copy, nil for all
-   patient-filter      ; list of patient IDs to include, nil for all
-   timestamp-filter    ; ISO 8601 timestamp cutoff, nil for no filter
-   fts-tables          ; list of tables needing FTS index (default: ["concept"])
-   cache-path          ; base directory for cache files (default: "./data/cache")
-   parallel-copy])     ; enable parallel table copying (default: false) (T5.1.2)
+  [database-code schema-name target-schema-name source-credentials table-filter patient-filter timestamp-filter fts-tables cache-path parallel-copy])
 
 (defrecord TableResult
-  [table-name       ; name of the table
-   rows-copied      ; number of rows copied
-   indexes-created]) ; number of indexes recreated
+  [table-name rows-copied indexes-created])
 
 (defrecord TableError
-  [table-name  ; name of the table
-   error       ; error message
-   phase])     ; "copy", "index", or "fts"
+  [table-name error phase])
 
 (defrecord CacheResult
-  [success?            ; overall success (true if no fatal errors)
-   database-code       ; identifier of processed database
-   schema-name         ; schema that was copied
-   tables-copied       ; list of TableResult records
-   tables-failed       ; list of TableError records
-   fts-indexes-created ; list of table names with FTS index
-   duration-ms         ; total operation time in milliseconds
-   error])             ; fatal error message or nil
+  [success? database-code schema-name tables-copied tables-failed fts-indexes-created duration-ms error])
 
 (def valid-dialects #{"postgres" "bigquery" "sql server" "oracle" "mysql" "mariadb"})
 
@@ -298,9 +273,10 @@
                              (or where-clause ""))]
       (db/execute! db create-sql)
       (db/execute! db insert-sql)
-      ;; Use changes() for O(1) row count instead of COUNT(*) scan
-      (let [changes-result (db/query db "SELECT changes() as cnt")
-            row-count (or (some-> changes-result first (.get "cnt")) 0)]
+      ;; Get row count from target table (changes() not available in all DuckDB contexts)
+      (let [count-sql (format "SELECT COUNT(*) as cnt FROM %s" target-table)
+            count-result (db/query db count-sql)
+            row-count (or (some-> count-result first (.get "cnt")) 0)]
         (->TableResult table-name row-count 0)))
     (catch Exception e
       (->TableError table-name (.getMessage e) "copy"))))

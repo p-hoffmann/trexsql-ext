@@ -47,14 +47,22 @@
 
 (defn create-connection
   "Create a DuckDB connection.
-   Returns a java.sql.Connection to an in-memory database."
-  []
-  (let [conn (DriverManager/getConnection "jdbc:trex:")]
-    (try
-      (with-open [stmt (.createStatement conn)]
-        (.execute stmt "CALL disable_logging()"))
-      (catch SQLException _))
-    conn))
+   Returns a java.sql.Connection to an in-memory database.
+   Config options:
+   - :allow-unsigned-extensions - enable loading unsigned extensions"
+  ([]
+   (create-connection {}))
+  ([config]
+   (let [props (java.util.Properties.)]
+     ;; Set allow_unsigned_extensions via connection properties (must be set at connection time)
+     (when (:allow-unsigned-extensions config)
+       (.setProperty props "allow_unsigned_extensions" "true"))
+     (let [conn (DriverManager/getConnection "jdbc:trex:" props)]
+       (try
+         (with-open [stmt (.createStatement conn)]
+           (.execute stmt "CALL disable_logging()"))
+         (catch SQLException _))
+       conn))))
 
 (defrecord TrexsqlDatabase [^Connection connection
                             extensions-loaded  ; atom of set

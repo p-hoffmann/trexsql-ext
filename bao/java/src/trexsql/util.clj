@@ -41,15 +41,21 @@
       false)))
 
 (defn load-circe-extension!
-  "Install and load the circe extension using cached extension loading.
-   Returns true on success, false on failure."
+  "Load the circe extension with a direct-path fallback."
   [db]
   (try
     (db/load-extension! db "circe")
     true
     (catch Exception e
-      (log/warn "Failed to load circe extension" e)
-      false)))
+      (log/debug "circe load failed; trying direct path" e)
+      (try
+        (let [ext-path "/data/.duckdb/extensions/v1.4.0/linux_amd64/circe.duckdb_extension"]
+          (db/execute! db (format "LOAD '%s'" ext-path))
+          (swap! (:extensions-loaded db) conj "circe")
+          true)
+        (catch Exception e2
+          (log/warn "Failed to load circe" e2)
+          false)))))
 
 (defn valid-database-code?
   "Check if database-code is valid for filesystem and SQL naming.
