@@ -4,8 +4,10 @@
             [trexsql.jobs :as jobs]
             [trexsql.vocab :as vocab]
             [trexsql.circe :as circe]
+            [trexsql.db :as db]
             [clojure.string :as str]
             [clojure.data.json :as json]
+            [clojure.tools.logging :as log]
             [reitit.ring :as ring])
   (:import [java.util HashMap ArrayList Map]
            [java.io File]))
@@ -430,9 +432,7 @@
 (defn response->java-map [resp]
   (clj->java resp))
 
-;; =============================================================================
-;; Ring/Reitit Handlers
-;; =============================================================================
+;; HTTP handlers
 
 (defn- list-cache-jobs-handler
   "Ring handler for GET /cache/jobs"
@@ -488,12 +488,13 @@
 
 (defn- execute-circe-handler
   "Ring handler for POST /:source-key/circe/execute"
-  [{:keys [db path-params body-params]}]
+  [{:keys [db path-params body-params trex-config]}]
   (let [source-key (:source-key path-params)
         source (find-source-by-key source-key)]
     (if-not source
       (not-found (str "Source not found: " source-key))
-      (let [{:keys [circeJson cdmSchema resultSchema cohortId targetTable generateStats]} body-params]
+      (let [{:keys [circeJson cdmSchema resultSchema cohortId targetTable generateStats]} body-params
+            cache-path (or (:cache-path trex-config) (get-cache-path-from-config))]
         (cond
           (str/blank? circeJson) (bad-request "circeJson is required")
           (str/blank? cdmSchema) (bad-request "cdmSchema is required")
@@ -501,7 +502,15 @@
           (nil? cohortId) (bad-request "cohortId is required")
           :else
           (try
-            (let [options-map (build-circe-options cdmSchema resultSchema cohortId targetTable generateStats)
+            ;; Attach cache for this source if not already attached
+            (when-not (db/is-attached? db source-key)
+              (log/info (format "Attaching cache for %s from %s" source-key cache-path))
+              (db/attach-cache-file! db source-key cache-path))
+            ;; Qualify schema names and target table with source-key (database alias)
+            (let [qualified-cdm (str source-key "." cdmSchema)
+                  qualified-results (str source-key "." resultSchema)
+                  qualified-target (str qualified-results "." (or targetTable "cohort"))
+                  options-map (build-circe-options qualified-cdm qualified-results cohortId qualified-target generateStats)
                   clj-options (circe/java-map->circe-options options-map)
                   result (circe/execute-circe db circeJson clj-options)
                   java-result (circe/circe-result->java-map result)]
@@ -537,29 +546,19 @@
   (let [source-key (:source-key path-params)]
     (handle-search-vocab db source-key query-params)))
 
-;; =============================================================================
-;; Reitit Router
-;; =============================================================================
+;; Router
 
 (def routes
-  "Reitit route definitions for WebAPI endpoints."
-  [["/cache/jobs"
-    {:get {:handler list-cache-jobs-handler}}]
-
+  "WebAPI routes."
+  [["/cache/jobs" {:get {:handler list-cache-jobs-handler}}]
    ["/:source-key"
-    ["/cache"
-     {:post {:handler create-cache-handler}
-      :delete {:handler delete-cache-handler}}]
-    ["/cache/status"
-     {:get {:handler get-cache-status-handler}}]
-    ["/cache/job"
-     {:delete {:handler cancel-cache-job-handler}}]
-    ["/circe/execute"
-     {:post {:handler execute-circe-handler}}]
-    ["/circe/render"
-     {:post {:handler render-circe-handler}}]
-    ["/vocab/search"
-     {:get {:handler search-vocab-handler}}]]])
+    ["/cache" {:post {:handler create-cache-handler}
+               :delete {:handler delete-cache-handler}}]
+    ["/cache/status" {:get {:handler get-cache-status-handler}}]
+    ["/cache/job" {:delete {:handler cancel-cache-job-handler}}]
+    ["/circe/execute" {:post {:handler execute-circe-handler}}]
+    ["/circe/render" {:post {:handler render-circe-handler}}]
+    ["/vocab/search" {:get {:handler search-vocab-handler}}]]])
 
 (defn create-router
   "Create Reitit Ring router for WebAPI endpoints.

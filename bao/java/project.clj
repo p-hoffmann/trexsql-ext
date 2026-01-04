@@ -6,6 +6,11 @@
 
   :repositories [["jitpack" "https://jitpack.io"]]
 
+  ;; Global exclusions for logging - let the container provide these
+  :exclusions [ch.qos.logback/logback-classic
+               ch.qos.logback/logback-core
+               org.slf4j/slf4j-api]
+
   :dependencies [[org.clojure/clojure "1.11.1"]
                  [com.github.p-hoffmann/trexsql-java "v0.1.4"]
                  [org.clojure/tools.cli "1.1.230"]
@@ -14,9 +19,8 @@
                  [com.github.seancorfield/honeysql "2.6.1196"]
                  ;; HikariCP for connection pooling (005-jdbc-batch-cache)
                  [com.zaxxer/HikariCP "5.1.0"]
-                 ;; Logging (T4.1.1-T4.1.2)
+                 ;; Logging (T4.1.1-T4.1.2) - provided by container
                  [org.clojure/tools.logging "1.2.4"]
-                 [ch.qos.logback/logback-classic "1.4.11"]
                  ;; Ring for HTTP/Servlet integration
                  [ring/ring-core "1.14.1"]
                  [org.ring-clojure/ring-jakarta-servlet "1.14.1"]

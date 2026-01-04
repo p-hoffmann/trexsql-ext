@@ -25,18 +25,16 @@
   (reset! current-database nil))
 
 (defn init
-  "Initialize DuckDB database with extensions loaded.
-   Config map can include :extensions-path to override default.
-   Returns TrexsqlDatabase record."
+  "Initialize DuckDB with extensions."
   ([]
    (init {}))
   ([config]
    (let [merged-config (merge config/default-config config)
          extensions-path (config/get-extensions-path merged-config)
-         conn (db/create-connection)
+         conn (db/create-connection merged-config)
          loaded (ext/load-extensions conn extensions-path)
-         database (-> (db/make-database conn merged-config)
-                      (assoc :extensions-loaded loaded))]
+         database (db/make-database conn merged-config)]
+     (reset! (:extensions-loaded database) loaded)
      (reset! current-database database)
      database)))
 
