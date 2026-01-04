@@ -43,15 +43,40 @@ using circe_sql_translate_fn = char *(*)(graal_isolatethread_t *, char *sql, cha
 using circe_sql_render_translate_fn = char *(*)(graal_isolatethread_t *, char *sql_template, char *target_dialect, char *parameters_json);
 using circe_check_cohort_fn = char *(*)(graal_isolatethread_t *, char *expr_json);
 using graal_create_isolate_fn = int (*)(void *params, graal_isolate_t **isolate, graal_isolatethread_t **thread);
+using graal_attach_thread_fn = int (*)(graal_isolate_t *isolate, graal_isolatethread_t **thread);
+using graal_detach_thread_fn = int (*)(graal_isolatethread_t *thread);
 static circe_convert_fn circe_convert = nullptr;
 static circe_sql_render_fn circe_sql_render = nullptr;
 static circe_sql_translate_fn circe_sql_translate = nullptr;
 static circe_sql_render_translate_fn circe_sql_render_translate = nullptr;
 static circe_check_cohort_fn circe_check_cohort = nullptr;
 static graal_create_isolate_fn graal_create_isolate_ptr = nullptr;
+static graal_attach_thread_fn graal_attach_thread_ptr = nullptr;
+static graal_detach_thread_fn graal_detach_thread_ptr = nullptr;
 static void *circe_lib_handle = nullptr;
 static graal_isolate_t *circe_isolate = nullptr;
-static graal_isolatethread_t *circe_thread = nullptr;
+static graal_isolatethread_t *circe_thread = nullptr;  // Initial thread from isolate creation
+
+// Thread-local storage for per-thread isolate contexts
+static thread_local graal_isolatethread_t *tls_circe_thread = nullptr;
+
+// Get or attach the current thread to the Graal isolate
+static graal_isolatethread_t* GetCirceThread() {
+    // If this thread already has an attached context, use it
+    if (tls_circe_thread) {
+        return tls_circe_thread;
+    }
+    // If we have attach capability and an isolate, attach this thread
+    if (graal_attach_thread_ptr && circe_isolate) {
+        int rc = graal_attach_thread_ptr(circe_isolate, &tls_circe_thread);
+        if (rc == 0 && tls_circe_thread) {
+            return tls_circe_thread;
+        }
+        // Attachment failed, fall back to original thread
+    }
+    // Fall back to the original thread (may work if same native thread)
+    return circe_thread;
+}
 
 #ifdef CIRCE_EMBEDDED_NATIVE_LIB
 static void *LoadEmbeddedCirceLibrary() {
@@ -112,12 +137,18 @@ static void EnsureCirceLoaded() {
     if (!sym_check) throw IOException("circe_check_cohort: symbol not found");
     auto sym_create = dlsym(circe_lib_handle, "graal_create_isolate");
     if (!sym_create) throw IOException("circe: graal_create_isolate symbol not found");
+    auto sym_attach = dlsym(circe_lib_handle, "graal_attach_thread");
+    // graal_attach_thread is optional - we fall back to original behavior if not found
+    auto sym_detach = dlsym(circe_lib_handle, "graal_detach_thread");
+    // graal_detach_thread is optional
     circe_convert = reinterpret_cast<circe_convert_fn>(sym_build);
     circe_sql_render = reinterpret_cast<circe_sql_render_fn>(sym_render);
     circe_sql_translate = reinterpret_cast<circe_sql_translate_fn>(sym_translate);
     circe_sql_render_translate = reinterpret_cast<circe_sql_render_translate_fn>(sym_render_translate);
     circe_check_cohort = reinterpret_cast<circe_check_cohort_fn>(sym_check);
     graal_create_isolate_ptr = reinterpret_cast<graal_create_isolate_fn>(sym_create);
+    graal_attach_thread_ptr = sym_attach ? reinterpret_cast<graal_attach_thread_fn>(sym_attach) : nullptr;
+    graal_detach_thread_ptr = sym_detach ? reinterpret_cast<graal_detach_thread_fn>(sym_detach) : nullptr;
     int rc = graal_create_isolate_ptr(nullptr, &circe_isolate, &circe_thread);
     if (rc != 0 || !circe_thread) throw IOException("circe: failed to create Graal isolate (rc=" + std::to_string(rc) + ")");
 }
@@ -134,7 +165,7 @@ inline void CirceJsonBase64ToSqlScalar(DataChunk &args, ExpressionState &state, 
             throw IOException("circe_json_to_sql: base64 decode failed: " + std::string(ex.what()));
         }
         if (decoded.empty()) throw IOException("circe_json_to_sql: decoded JSON empty");
-        char *sql_c = circe_convert(circe_thread, const_cast<char *>(decoded.c_str()), const_cast<char *>(opts.GetData()));
+        char *sql_c = circe_convert(GetCirceThread(), const_cast<char *>(decoded.c_str()), const_cast<char *>(opts.GetData()));
         if (!sql_c) throw IOException("circe_json_to_sql: native function returned null");
         return StringVector::AddString(result, sql_c);
     });
@@ -147,7 +178,7 @@ inline void CirceSqlRenderScalar(DataChunk &args, ExpressionState &state, Vector
     BinaryExecutor::Execute<string_t, string_t, string_t>(template_vec, params_vec, result, args.size(), [&](string_t sql_template, string_t params_json) {
         std::string template_str = sql_template.GetString();
         std::string params_str = params_json.GetString();
-        char *rendered_c = circe_sql_render(circe_thread, const_cast<char *>(template_str.c_str()), const_cast<char *>(params_str.c_str()));
+        char *rendered_c = circe_sql_render(GetCirceThread(), const_cast<char *>(template_str.c_str()), const_cast<char *>(params_str.c_str()));
         if (!rendered_c) throw IOException("circe_sql_render: native function returned null");
         return StringVector::AddString(result, rendered_c);
     });
@@ -160,7 +191,7 @@ inline void CirceSqlTranslateScalar(DataChunk &args, ExpressionState &state, Vec
     BinaryExecutor::Execute<string_t, string_t, string_t>(sql_vec, dialect_vec, result, args.size(), [&](string_t sql, string_t target_dialect) {
         std::string sql_str = sql.GetString();
         std::string dialect_str = target_dialect.GetString();
-        char *translated_c = circe_sql_translate(circe_thread, const_cast<char *>(sql_str.c_str()), const_cast<char *>(dialect_str.c_str()));
+        char *translated_c = circe_sql_translate(GetCirceThread(), const_cast<char *>(sql_str.c_str()), const_cast<char *>(dialect_str.c_str()));
         if (!translated_c) throw IOException("circe_sql_translate: native function returned null");
         return StringVector::AddString(result, translated_c);
     });
@@ -175,7 +206,7 @@ inline void CirceSqlRenderTranslateScalar(DataChunk &args, ExpressionState &stat
         std::string template_str = sql_template.GetString();
         std::string dialect_str = target_dialect.GetString();
         std::string params_str = params_json.GetString();
-        char *result_c = circe_sql_render_translate(circe_thread, const_cast<char *>(template_str.c_str()), const_cast<char *>(dialect_str.c_str()), const_cast<char *>(params_str.c_str()));
+        char *result_c = circe_sql_render_translate(GetCirceThread(), const_cast<char *>(template_str.c_str()), const_cast<char *>(dialect_str.c_str()), const_cast<char *>(params_str.c_str()));
         if (!result_c) throw IOException("circe_sql_render_translate: native function returned null");
         return StringVector::AddString(result, result_c);
     });
@@ -192,7 +223,7 @@ inline void CirceCheckCohortScalar(DataChunk &args, ExpressionState &state, Vect
             throw IOException("circe_check_cohort: base64 decode failed: " + std::string(ex.what()));
         }
         if (decoded.empty()) throw IOException("circe_check_cohort: decoded JSON empty");
-        char *warnings_json = circe_check_cohort(circe_thread, const_cast<char *>(decoded.c_str()));
+        char *warnings_json = circe_check_cohort(GetCirceThread(), const_cast<char *>(decoded.c_str()));
         if (!warnings_json) throw IOException("circe_check_cohort: native function returned null");
         return StringVector::AddString(result, warnings_json);
     });

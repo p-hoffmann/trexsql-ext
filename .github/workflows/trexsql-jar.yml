@@ -46,6 +46,30 @@ jobs:
             echo "version=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           fi
 
+      - name: Set up Node.js for extension download
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+          registry-url: 'https://pkgs.dev.azure.com/data2evidence/d2e/_packaging/d2e/npm/registry/'
+          scope: '@trex'
+
+      - name: Download and embed circe extension
+        run: |
+          mkdir -p resources/extensions
+          cd resources/extensions
+          npm pack @trex/circe 2>/dev/null || echo "Warning: Could not download @trex/circe"
+          if ls trex-circe-*.tgz 1>/dev/null 2>&1; then
+            tar -xzf trex-circe-*.tgz
+            if [ -f package/circe.trex ]; then
+              cp package/circe.trex .
+              echo "Embedded circe.trex ($(du -h circe.trex | cut -f1))"
+            fi
+            rm -rf package trex-circe-*.tgz
+          fi
+          ls -la
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PROJECT_TOKEN }}
+
       - name: Build uberjar
         run: lein uberjar
 
