@@ -336,16 +336,35 @@
     (if parallel-copy
       (copy-tables-parallel db source-alias cache-alias schema-name target-schema tables-to-copy config)
       (copy-tables-sequential db source-alias cache-alias schema-name target-schema tables-to-copy config))))
-;; FTS Index Functions
-(defn create-fts-index
-  "Create FTS index on a table. Returns table name on success, nil on failure."
+
+(defn get-document-identifier
+  "Get document identifier column name for a table.
+   Looks for columns ending with _id or integer columns."
   [db cache-alias schema-name table-name]
   (try
-    (db/validate-identifier! cache-alias "cache-alias")
-    (db/validate-identifier! schema-name "schema-name")
-    (db/validate-identifier! table-name "table-name")
+    (let [[query-sql & params] (sql/format
+                                 {:select [:column_name]
+                                  :from [:information_schema.columns]
+                                  :where [:and
+                                          [:= :table_catalog cache-alias]
+                                          [:= :table_schema schema-name]
+                                          [:= :table_name table-name]
+                                          [:or
+                                           [:like :column_name "%_id"]
+                                           [:in :data_type ["INTEGER" "BIGINT"]]]]
+                                  :order-by [[:column_name :asc]]
+                                  :limit 1})
+          results (db/query-with-params db query-sql (vec params))]
+      (when (seq results)
+        (.get ^HashMap (first results) "column_name")))
+    (catch Exception e
+      (log/warn (format "Failed to get document identifier for %s: %s" table-name (.getMessage e)))
+      nil)))
 
-    (log/info (format "Creating FTS index on %s" table-name))
+(defn get-text-columns
+  "Get text/varchar columns from a table for FTS indexing."
+  [db cache-alias schema-name table-name]
+  (try
     (let [[query-sql & params] (sql/format
                                  {:select [:column_name]
                                   :from [:information_schema.columns]
@@ -354,20 +373,49 @@
                                           [:= :table_schema schema-name]
                                           [:= :table_name table-name]
                                           [:in :data_type ["VARCHAR" "TEXT"]]]})
-          columns (mapv #(.get ^HashMap % "column_name") (db/query-with-params db query-sql (vec params)))]
-      (when (seq columns)
-        (doseq [col columns]
-          (db/validate-identifier! col "column-name"))
-        ;; PRAGMA uses string literals, must escape
-        (let [escaped-alias (str/replace cache-alias "'" "''")
-              escaped-schema (str/replace schema-name "'" "''")
-              escaped-table (str/replace table-name "'" "''")
-              escaped-columns (map #(str/replace % "'" "''") columns)
-              fts-sql (format "PRAGMA create_fts_index('%s', '%s', '%s', '%s')"
-                              escaped-alias escaped-schema escaped-table
-                              (str/join "', '" escaped-columns))]
-          (db/execute! db fts-sql)
-          table-name)))
+          results (db/query-with-params db query-sql (vec params))]
+      (mapv #(.get ^HashMap % "column_name") results))
+    (catch Exception e
+      (log/warn (format "Failed to get text columns for %s: %s" table-name (.getMessage e)))
+      [])))
+
+(defn create-fts-index
+  "Create FTS index on a table. Returns table name on success, nil on failure.
+   Dynamically discovers document ID and text columns from information_schema."
+  [db cache-alias schema-name table-name]
+  (try
+    (db/validate-identifier! cache-alias "cache-alias")
+    (db/validate-identifier! schema-name "schema-name")
+    (db/validate-identifier! table-name "table-name")
+
+    (log/info (format "Creating FTS index on %s" table-name))
+    (let [qualified-table (format "\"%s\".\"%s\".\"%s\"" cache-alias schema-name table-name)
+          id-column (get-document-identifier db cache-alias schema-name table-name)
+          text-columns (get-text-columns db cache-alias schema-name table-name)]
+
+      (cond
+        (not id-column)
+        (do
+          (log/warn (format "No document identifier found for %s, skipping FTS index" table-name))
+          nil)
+
+        (empty? text-columns)
+        (do
+          (log/warn (format "No text columns found for %s, skipping FTS index" table-name))
+          nil)
+
+        :else
+        (do
+          (doseq [col (cons id-column text-columns)]
+            (db/validate-identifier! col "column-name"))
+          (let [fts-sql (format "PRAGMA create_fts_index(%s, %s, %s, stemmer='english', stopwords='english', strip_accents=1, lower=1, overwrite=1)"
+                                qualified-table
+                                id-column
+                                (str/join ", " text-columns))]
+            (log/info (format "FTS SQL: %s" fts-sql))
+            (db/execute! db fts-sql)
+            (log/info (format "FTS index created successfully on %s" table-name))
+            table-name))))
     (catch Exception e
       (log/warn (format "Failed to create FTS index on %s: %s" table-name (.getMessage e)))
       nil)))
