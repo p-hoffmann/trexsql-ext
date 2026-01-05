@@ -35,6 +35,19 @@
       (catch Exception e
         nil))))
 
+(defn- get-cdm-schema
+  "Get CDM schema from source daimons."
+  [source]
+  (when source
+    (.getTableQualifier source SourceDaimon$DaimonType/CDM)))
+
+(defn- get-results-schema
+  "Get Results schema from source daimons, falls back to CDM schema."
+  [source]
+  (when source
+    (or (.getTableQualifierOrNull source SourceDaimon$DaimonType/Results)
+        (get-cdm-schema source))))
+
 (defn- parse-jdbc-url
   "Parse PostgreSQL JDBC URL to extract connection components.
    Format: jdbc:postgresql://host:port/database?user=xxx&password=xxx"
@@ -532,23 +545,25 @@
         source (find-source-by-key source-key)]
     (if-not source
       (not-found (str "Source not found: " source-key))
-      (let [{:keys [expression cdmSchema resultSchema]} body-params
+      (let [{:keys [expression]} body-params
+            cdm-schema (get-cdm-schema source)
+            results-schema (get-results-schema source)
             cache-path (or (:cache-path trex-config) (get-cache-path-from-config))
             start-time (System/currentTimeMillis)]
         (cond
           (str/blank? expression)
           (bad-request "expression is required")
 
-          (str/blank? cdmSchema)
-          (bad-request "cdmSchema is required")
+          (str/blank? cdm-schema)
+          (bad-request "CDM schema not configured for this source")
 
           :else
           (try
             (when-not (db/is-attached? db source-key)
               (log/info (format "Attaching cache for %s from %s" source-key cache-path))
               (db/attach-cache-file! db source-key cache-path))
-            (let [qualified-cdm (str source-key "." cdmSchema)
-                  qualified-results (str source-key "." (or resultSchema cdmSchema))
+            (let [qualified-cdm (str source-key "." cdm-schema)
+                  qualified-results (str source-key "." results-schema)
                   temp-table "temp_cohort_count"
                   qualified-target (str qualified-results "." temp-table)
                   cohort-id 999999
