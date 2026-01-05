@@ -19,4 +19,4 @@ install:
       sleep 30
     done
     test -f /tmp/trexsql.jar || exit 1
-  - mvn install:install-file -Dfile=/tmp/trexsql.jar -DgroupId=com.github.p-hoffmann -DartifactId=trexsql-java -Dversion=$VERSION -Dpackaging=jar
+  - mvn install:install-file -Dfile=/tmp/trexsql.jar -DgroupId=com.github.p-hoffmann -DartifactId=trexsql-ext -Dversion=$VERSION -Dpackaging=jar
