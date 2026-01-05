@@ -556,6 +556,7 @@
                   clj-options (circe/java-map->circe-options options-map)]
               (try
                 (db/execute! db (format "DROP TABLE IF EXISTS %s" qualified-target))
+                (db/execute! db (format "CREATE TABLE %s (cohort_definition_id INT, subject_id BIGINT, cohort_start_date DATE, cohort_end_date DATE)" qualified-target))
                 (circe/execute-circe db expression clj-options)
                 (let [cohort-sql (format "SELECT COUNT(DISTINCT subject_id) as cnt FROM %s WHERE cohort_definition_id = %d"
                                          qualified-target cohort-id)
