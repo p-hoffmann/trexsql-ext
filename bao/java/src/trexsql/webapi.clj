@@ -35,17 +35,23 @@
       (catch Exception e
         nil))))
 
+(defn- get-daimon-type
+  "Get DaimonType enum value by name at runtime."
+  [type-name]
+  (let [daimon-class (Class/forName "org.ohdsi.webapi.source.SourceDaimon$DaimonType")]
+    (Enum/valueOf daimon-class type-name)))
+
 (defn- get-cdm-schema
   "Get CDM schema from source daimons."
   [source]
   (when source
-    (.getTableQualifier source SourceDaimon$DaimonType/CDM)))
+    (.getTableQualifier source (get-daimon-type "CDM"))))
 
 (defn- get-results-schema
   "Get Results schema from source daimons, falls back to CDM schema."
   [source]
   (when source
-    (or (.getTableQualifierOrNull source SourceDaimon$DaimonType/Results)
+    (or (.getTableQualifierOrNull source (get-daimon-type "Results"))
         (get-cdm-schema source))))
 
 (defn- parse-jdbc-url
