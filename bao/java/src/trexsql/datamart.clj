@@ -339,10 +339,11 @@
 
 (defn get-document-identifier
   "Get document identifier column name for a table.
-   Looks for columns ending with _id or integer columns."
+   Prioritizes columns matching {table}_id pattern, then columns ending with _id, then integer columns."
   [db cache-alias schema-name table-name]
   (try
-    (let [[query-sql & params] (sql/format
+    (let [primary-id (str table-name "_id")
+          [query-sql & params] (sql/format
                                  {:select [:column_name]
                                   :from [:information_schema.columns]
                                   :where [:and
@@ -352,7 +353,8 @@
                                           [:or
                                            [:like :column_name "%_id"]
                                            [:in :data_type ["INTEGER" "BIGINT"]]]]
-                                  :order-by [[:column_name :asc]]
+                                  :order-by [[:raw (format "CASE WHEN column_name = '%s' THEN 0 WHEN column_name LIKE '%%_id' THEN 1 ELSE 2 END" primary-id)]
+                                             :column_name]
                                   :limit 1})
           results (db/query-with-params db query-sql (vec params))]
       (when (seq results)
