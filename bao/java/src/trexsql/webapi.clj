@@ -41,14 +41,11 @@
   [jdbc-url]
   (when jdbc-url
     (try
-      (let [;; Remove jdbc:postgresql:// prefix
-            url-part (str/replace jdbc-url #"^jdbc:postgresql://" "")
-            ;; Split host:port/database?params
+      (let [url-part (str/replace jdbc-url #"^jdbc:postgresql://" "")
             [host-port-db params-str] (str/split url-part #"\?" 2)
             [host-port db] (str/split host-port-db #"/" 2)
             [host port-str] (str/split host-port #":" 2)
             port (when port-str (try (Integer/parseInt port-str) (catch Exception _ 5432)))
-            ;; Parse params
             params (when params-str
                      (into {}
                        (for [param (str/split params-str #"&")]
@@ -68,15 +65,12 @@
           explicit-user (.getUsername source)
           explicit-pass (.getPassword source)]
       (if (= "postgres" dialect)
-        ;; For PostgreSQL, parse JDBC URL to get host/port/database
         (let [parsed (parse-jdbc-url conn-str)]
           (merge parsed
                  {:dialect dialect
                   :connection-string conn-str
-                  ;; Prefer explicit user/password over URL params
                   :user (or explicit-user (:user parsed))
                   :password (or explicit-pass (:password parsed))}))
-        ;; For other dialects
         {:dialect dialect
          :connection-string conn-str
          :user explicit-user
@@ -159,11 +153,9 @@
             (.put "connection-string" (:connection-string credentials))
             (.put "user" (:user credentials))
             (.put "password" (:password credentials)))]
-    ;; Add PostgreSQL-specific fields
     (when (:host credentials) (.put m "host" (:host credentials)))
     (when (:port credentials) (.put m "port" (:port credentials)))
     (when (:database-name credentials) (.put m "database-name" (:database-name credentials)))
-    ;; Add JDBC URL for JDBC dialects
     (when (:jdbc-url credentials) (.put m "jdbc-url" (:jdbc-url credentials)))
     m))
 
@@ -254,7 +246,6 @@
                                :error (:error-message job-status)})})))))))
 
 (defn- handle-list-cache-jobs [db params]
-  "List all cache jobs, optionally filtered by status."
   (try
     (let [status (:status params)
           jobs (if status
@@ -275,7 +266,6 @@
       (internal-error (.getMessage e)))))
 
 (defn- handle-cancel-cache-job [db source-key params]
-  "Cancel a running cache job."
   (let [source (find-source-by-key source-key)]
     (if-not source
       (not-found (str "Source not found: " source-key))
@@ -435,59 +425,52 @@
 ;; HTTP handlers
 
 (defn- list-cache-jobs-handler
-  "Ring handler for GET /cache/jobs"
   [{:keys [db query-params]}]
   (handle-list-cache-jobs db query-params))
 
 (defn- create-cache-handler
-  "Ring handler for POST /:source-key/cache"
   [{:keys [db path-params body-params query-params]}]
-  (let [source-key (:source-key path-params)]
-    ;; body-params is already parsed by wrap-json-body middleware
-    (let [source (find-source-by-key source-key)]
-      (if-not source
-        (not-found (str "Source not found: " source-key))
-        (if (str/blank? (:schemaName body-params))
-          (bad-request "schemaName is required")
-          (let [database-code (or (:databaseCode body-params) source-key)]
-            (if-let [validation-error (validate-database-code database-code)]
-              (bad-request validation-error)
-              (try
-                (let [cache-path (or (:cachePath query-params) (get-cache-path-from-config))
-                      credentials (source->credentials source)
-                      config-map (build-datamart-config database-code (:schemaName body-params)
-                                                        cache-path credentials body-params)
-                      validated-config (datamart/java-map->datamart-config config-map)]
-                  (when-let [error (datamart/validate-config validated-config)]
-                    (throw (IllegalArgumentException. error)))
-                  (let [result (datamart/create-cache db validated-config nil)
-                        java-result (datamart/result->java-map result)]
-                    (ok (java-map->clj java-result))))
-                (catch IllegalArgumentException e
-                  (bad-request (.getMessage e)))
-                (catch Exception e
-                  (internal-error (.getMessage e)))))))))))
+  (let [source-key (:source-key path-params)
+        source (find-source-by-key source-key)]
+    (if-not source
+      (not-found (str "Source not found: " source-key))
+      (if (str/blank? (:schemaName body-params))
+        (bad-request "schemaName is required")
+        (let [database-code (or (:databaseCode body-params) source-key)]
+          (if-let [validation-error (validate-database-code database-code)]
+            (bad-request validation-error)
+            (try
+              (let [cache-path (or (:cachePath query-params) (get-cache-path-from-config))
+                    credentials (source->credentials source)
+                    config-map (build-datamart-config database-code (:schemaName body-params)
+                                                      cache-path credentials body-params)
+                    validated-config (datamart/java-map->datamart-config config-map)]
+                (when-let [error (datamart/validate-config validated-config)]
+                  (throw (IllegalArgumentException. error)))
+                (let [result (datamart/create-cache db validated-config nil)
+                      java-result (datamart/result->java-map result)]
+                  (ok (java-map->clj java-result))))
+              (catch IllegalArgumentException e
+                (bad-request (.getMessage e)))
+              (catch Exception e
+                (internal-error (.getMessage e))))))))))
 
 (defn- get-cache-status-handler
-  "Ring handler for GET /:source-key/cache/status"
   [{:keys [db path-params query-params]}]
   (let [source-key (:source-key path-params)]
     (handle-get-cache-status db source-key query-params)))
 
 (defn- delete-cache-handler
-  "Ring handler for DELETE /:source-key/cache"
   [{:keys [db path-params query-params]}]
   (let [source-key (:source-key path-params)]
     (handle-delete-cache db source-key query-params)))
 
 (defn- cancel-cache-job-handler
-  "Ring handler for DELETE /:source-key/cache/job"
   [{:keys [db path-params query-params]}]
   (let [source-key (:source-key path-params)]
     (handle-cancel-cache-job db source-key query-params)))
 
 (defn- execute-circe-handler
-  "Ring handler for POST /:source-key/circe/execute"
   [{:keys [db path-params body-params trex-config]}]
   (let [source-key (:source-key path-params)
         source (find-source-by-key source-key)]
@@ -502,11 +485,10 @@
           (nil? cohortId) (bad-request "cohortId is required")
           :else
           (try
-            ;; Attach cache for this source if not already attached
             (when-not (db/is-attached? db source-key)
               (log/info (format "Attaching cache for %s from %s" source-key cache-path))
               (db/attach-cache-file! db source-key cache-path))
-            ;; Qualify schema names and target table with source-key (database alias)
+            ;; Qualify schema names with source-key database alias
             (let [qualified-cdm (str source-key "." cdmSchema)
                   qualified-results (str source-key "." resultSchema)
                   qualified-target (str qualified-results "." (or targetTable "cohort"))
@@ -519,7 +501,6 @@
               (internal-error (.getMessage e)))))))))
 
 (defn- render-circe-handler
-  "Ring handler for POST /:source-key/circe/render"
   [{:keys [db path-params body-params]}]
   (let [source-key (:source-key path-params)
         source (find-source-by-key source-key)]
@@ -541,10 +522,59 @@
               (internal-error (.getMessage e)))))))))
 
 (defn- search-vocab-handler
-  "Ring handler for GET /:source-key/vocab/search"
   [{:keys [db path-params query-params]}]
   (let [source-key (:source-key path-params)]
     (handle-search-vocab db source-key query-params)))
+
+(defn- count-patients-handler
+  [{:keys [db path-params body-params trex-config]}]
+  (let [source-key (:source-key path-params)
+        source (find-source-by-key source-key)]
+    (if-not source
+      (not-found (str "Source not found: " source-key))
+      (let [{:keys [expression cdmSchema resultSchema]} body-params
+            cache-path (or (:cache-path trex-config) (get-cache-path-from-config))
+            start-time (System/currentTimeMillis)]
+        (cond
+          (str/blank? expression)
+          (bad-request "expression is required")
+
+          (str/blank? cdmSchema)
+          (bad-request "cdmSchema is required")
+
+          :else
+          (try
+            (when-not (db/is-attached? db source-key)
+              (log/info (format "Attaching cache for %s from %s" source-key cache-path))
+              (db/attach-cache-file! db source-key cache-path))
+            (let [qualified-cdm (str source-key "." cdmSchema)
+                  qualified-results (str source-key "." (or resultSchema cdmSchema))
+                  temp-table "temp_cohort_count"
+                  qualified-target (str qualified-results "." temp-table)
+                  cohort-id 999999
+                  options-map (build-circe-options qualified-cdm qualified-results cohort-id qualified-target false)
+                  clj-options (circe/java-map->circe-options options-map)]
+              (try
+                (db/execute! db (format "DROP TABLE IF EXISTS %s" qualified-target))
+                (circe/execute-circe db expression clj-options)
+                (let [cohort-sql (format "SELECT COUNT(DISTINCT subject_id) as cnt FROM %s WHERE cohort_definition_id = %d"
+                                         qualified-target cohort-id)
+                      total-sql (format "SELECT COUNT(DISTINCT person_id) as cnt FROM %s.person" qualified-cdm)
+                      cohort-result (db/query db cohort-sql)
+                      total-result (db/query db total-sql)
+                      cohort-count (or (some-> cohort-result first (.get "cnt")) 0)
+                      total-count (or (some-> total-result first (.get "cnt")) 0)
+                      exec-time (- (System/currentTimeMillis) start-time)]
+                  (ok {:cohortPatientCount cohort-count
+                       :totalPatientCount total-count
+                       :executionTimeMs exec-time}))
+                (finally
+                  (try
+                    (db/execute! db (format "DROP TABLE IF EXISTS %s" qualified-target))
+                    (catch Exception _)))))
+            (catch Exception e
+              (log/error e "Failed to count patients")
+              (internal-error (.getMessage e)))))))))
 
 ;; Router
 
@@ -555,6 +585,7 @@
     ["/cache" {:post {:handler create-cache-handler}
                :delete {:handler delete-cache-handler}}]
     ["/cache/status" {:get {:handler get-cache-status-handler}}]
+    ["/cache/count" {:post {:handler count-patients-handler}}]
     ["/cache/job" {:delete {:handler cancel-cache-job-handler}}]
     ["/circe/execute" {:post {:handler execute-circe-handler}}]
     ["/circe/render" {:post {:handler render-circe-handler}}]
