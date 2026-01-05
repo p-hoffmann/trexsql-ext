@@ -553,7 +553,6 @@
       (not-found (str "Source not found: " source-key))
       (let [{:keys [expression]} body-params
             cdm-schema (get-cdm-schema source)
-            results-schema (get-results-schema source)
             cache-path (or (:cache-path trex-config) (get-cache-path-from-config))
             start-time (System/currentTimeMillis)]
         (cond
@@ -569,7 +568,7 @@
               (log/info (format "Attaching cache for %s from %s" source-key cache-path))
               (db/attach-cache-file! db source-key cache-path))
             (let [qualified-cdm (str source-key "." cdm-schema)
-                  qualified-results (str source-key "." results-schema)
+                  qualified-results (str source-key "." cdm-schema)
                   temp-table "temp_cohort_count"
                   qualified-target (str qualified-results "." temp-table)
                   cohort-id 999999
