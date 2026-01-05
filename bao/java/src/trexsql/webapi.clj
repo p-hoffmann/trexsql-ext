@@ -199,10 +199,23 @@
     (.put "target-table" (or target-table "cohort"))
     (.put "generate-stats" (boolean generate-stats))))
 
-(defn- build-vocab-options [database-code max-rows]
-  (doto (HashMap.)
-    (.put "database-code" database-code)
-    (.put "max-rows" max-rows)))
+(defn- get-schema-from-cache [db database-code]
+  "Get the schema name from the cache by querying for the concept table."
+  (try
+    (let [query "SELECT DISTINCT table_schema FROM information_schema.tables WHERE table_catalog = ? AND table_name = 'concept' LIMIT 1"
+          results (db/query-with-params db query [database-code])]
+      (when (seq results)
+        (.get ^HashMap (first results) "table_schema")))
+    (catch Exception e
+      (log/warn (format "Failed to get schema from cache for %s: %s" database-code (.getMessage e)))
+      nil)))
+
+(defn- build-vocab-options [db database-code max-rows]
+  (let [schema-name (or (get-schema-from-cache db database-code) database-code)]
+    (doto (HashMap.)
+      (.put "database-code" database-code)
+      (.put "schema-name" schema-name)
+      (.put "max-rows" max-rows))))
 
 (defn- get-cache-path [cache-base-path database-code]
   (str cache-base-path "/" database-code ".db"))
@@ -375,7 +388,7 @@
         (if (str/blank? query)
           (bad-request "query parameter is required")
           (try
-            (let [options-map (build-vocab-options database-code max-rows)
+            (let [options-map (build-vocab-options db database-code max-rows)
                   clj-options (vocab/java-map->search-options options-map)
                   results (vocab/search-vocab db query clj-options)
                   clj-results (mapv java-map->clj results)]

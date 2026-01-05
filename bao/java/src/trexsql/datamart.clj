@@ -353,7 +353,7 @@
                                           [:or
                                            [:like :column_name "%_id"]
                                            [:in :data_type ["INTEGER" "BIGINT"]]]]
-                                  :order-by [[:raw (format "CASE WHEN column_name = '%s' THEN 0 WHEN column_name LIKE '%%_id' THEN 1 ELSE 2 END" primary-id)]
+                                  :order-by [[[:raw (format "CASE WHEN column_name = '%s' THEN 0 WHEN column_name LIKE '%%_id' THEN 1 ELSE 2 END" primary-id)]]
                                              :column_name]
                                   :limit 1})
           results (db/query-with-params db query-sql (vec params))]
