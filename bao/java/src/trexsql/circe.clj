@@ -184,7 +184,7 @@
 
 (defn execute-circe
   "Execute Circe JSON cohort definition.
-   Returns result map with :success, :sql, :rows-affected, :error."
+    Returns result map with :success, :sql, :rows-affected, :error."
   [db json-str options]
   (try
         (let [sql (render-circe-sql db json-str options)]
