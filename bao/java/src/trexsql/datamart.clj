@@ -436,7 +436,7 @@
    Returns source alias on success."
   [db database-code credentials]
   (case (:dialect credentials)
-    "postgres" (db/attach-source-postgres! db database-code credentials)
+    ("postgres" "postgresql") (db/attach-source-postgres! db database-code credentials)
     "bigquery" (db/attach-source-bigquery! db database-code credentials)
     (throw (errors/config-error
             (str "Unsupported dialect: " (:dialect credentials))
