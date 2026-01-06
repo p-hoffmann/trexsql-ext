@@ -565,11 +565,14 @@
     (if-not source
       (not-found (str "Source not found: " source-key))
       (let [{:keys [expression]} body-params
+            expression-str (if (string? expression)
+                             expression
+                             (json/write-str expression))
             cdm-schema (get-cdm-schema source)
             cache-path (or (:cache-path trex-config) (get-cache-path-from-config))
             start-time (System/currentTimeMillis)]
         (cond
-          (str/blank? expression)
+          (or (nil? expression) (and (string? expression) (str/blank? expression)))
           (bad-request "expression is required")
 
           (str/blank? cdm-schema)
@@ -590,7 +593,7 @@
               (try
                 (db/execute! db (format "DROP TABLE IF EXISTS %s" qualified-target))
                 (db/execute! db (format "CREATE TABLE %s (cohort_definition_id INT, subject_id BIGINT, cohort_start_date DATE, cohort_end_date DATE)" qualified-target))
-                (circe/execute-circe db expression clj-options)
+                (circe/execute-circe db expression-str clj-options)
                 (let [cohort-sql (format "SELECT COUNT(DISTINCT subject_id) as cnt FROM %s WHERE cohort_definition_id = %d"
                                          qualified-target cohort-id)
                       total-sql (format "SELECT COUNT(DISTINCT person_id) as cnt FROM %s.person" qualified-cdm)
