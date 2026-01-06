@@ -118,10 +118,11 @@
   (datamart/detach-database! db database-code))
 
 (defn -searchVocab
-  "Search vocabulary concepts. Options: database-code, schema-name, max-rows."
+  "Search vocabulary concepts. Options: database-code, schema-name, max-rows.
+   Auto-detects schema from cache if not provided in options."
   [db ^String search-term ^Map options]
   (vocab/results->concept-list
-   (vocab/search-vocab db search-term (vocab/java-map->search-options options))))
+   (vocab/search-vocab db search-term (vocab/java-map->search-options db options))))
 
 (defn -executeCirce
   "Execute Circe cohort definition. Options: cdm-schema, result-schema, cohort-id."
