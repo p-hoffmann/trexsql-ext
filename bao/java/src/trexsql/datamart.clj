@@ -27,7 +27,7 @@
 (defrecord CacheResult
   [success? database-code schema-name tables-copied tables-failed fts-indexes-created duration-ms error])
 
-(def valid-dialects #{"postgres" "bigquery" "sql server" "oracle" "mysql" "mariadb"})
+(def valid-dialects #{"postgres" "postgresql" "bigquery" "sql server" "oracle" "mysql" "mariadb"})
 
 ;; JDBC-only dialects require batch transfer instead of DuckDB scanner extensions
 (def jdbc-only-dialects #{"sql server" "oracle" "mysql" "mariadb"})
@@ -47,9 +47,9 @@
     "Missing required config: source-credentials"
 
     (not (contains? valid-dialects (:dialect creds)))
-    (str "Unsupported dialect: " (:dialect creds) ". Must be 'postgres' or 'bigquery'")
+    (str "Unsupported dialect: " (:dialect creds) ". Must be 'postgres', 'postgresql', or 'bigquery'")
 
-    (= "postgres" (:dialect creds))
+    (or (= "postgres" (:dialect creds)) (= "postgresql" (:dialect creds)))
     (cond
       (str/blank? (:host creds)) "Missing required PostgreSQL config: host"
       (nil? (:port creds)) "Missing required PostgreSQL config: port"
@@ -414,7 +414,7 @@
                                 qualified-table
                                 id-column
                                 (str/join ", " text-columns))]
-            (log/info (format "FTS SQL: %s" fts-sql))
+            (log/debug (format "FTS SQL: %s" fts-sql))
             (db/execute! db fts-sql)
             (log/info (format "FTS index created successfully on %s" table-name))
             table-name))))

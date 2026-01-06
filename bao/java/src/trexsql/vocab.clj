@@ -37,16 +37,38 @@
 
     :else nil))
 
+(defn- get-schema-from-cache
+  "Get the schema name from the cache by querying for the concept table."
+  [db database-code]
+  (try
+    (let [query "SELECT DISTINCT table_schema FROM information_schema.tables WHERE table_catalog = ? AND table_name = 'concept' LIMIT 1"
+          results (db/query-with-params db query [database-code])]
+      (log/debug (format "Schema detection for %s: found %d results" database-code (count results)))
+      (when (seq results)
+        (let [schema (.get ^HashMap (first results) "table_schema")]
+          (log/info (format "Detected schema '%s' for database %s" schema database-code))
+          schema)))
+    (catch Exception e
+      (log/warn (format "Failed to get schema from cache for %s: %s" database-code (.getMessage e)) e)
+      nil)))
+
 (defn java-map->search-options
   "Convert Java Map to search options map with keyword keys.
-   Applies defaults for optional fields."
-  [^Map m]
-  (when m
-    (let [clj-map (util/java-map->clj-map m)]
-      {:database-code (:database-code clj-map)
-       :schema-name (or (:schema-name clj-map)
-                        (:database-code clj-map))
-       :max-rows (or (:max-rows clj-map) 1000)})))
+   Applies defaults for optional fields.
+   Auto-detects schema by querying information_schema if not provided."
+  ([^Map m]
+   (java-map->search-options nil m))
+  ([db ^Map m]
+   (when m
+     (let [clj-map (util/java-map->clj-map m)
+           database-code (:database-code clj-map)
+           provided-schema (:schema-name clj-map)
+           detected-schema (when (and db (not provided-schema))
+                             (get-schema-from-cache db database-code))
+           schema-name (or provided-schema detected-schema)]
+       {:database-code database-code
+        :schema-name schema-name
+        :max-rows (or (:max-rows clj-map) 1000)}))))
 
 (defn has-fts-index?
   "Check if an FTS index exists for the concept table."
@@ -121,16 +143,35 @@ LIMIT %d"
 
 (defn search-vocab
   "Search vocabulary concepts using FTS with ILIKE fallback.
-   Returns vector of concept maps."
+   Returns vector of concept maps.
+   Auto-attaches cache database if it exists but isn't attached."
   [db search-term options]
   (when (str/blank? search-term)
     (throw (errors/validation-error "Search term cannot be empty" {:field "search-term"})))
   (when-let [error (validate-search-options options)]
     (throw (errors/validation-error error {:field "options"})))
 
-  (let [{:keys [database-code schema-name max-rows]} options]
-    (or (execute-fts-search db database-code schema-name search-term max-rows)
-        (execute-fallback-search db database-code schema-name search-term max-rows))))
+  (let [{:keys [database-code schema-name max-rows cache-path]} options
+        cache-base (or cache-path "/data/cache")
+        cache-file (str cache-base "/" database-code ".db")
+        is-attached (db/is-attached? db database-code)
+        file-exists (.exists (java.io.File. cache-file))]
+    (log/debug (format "Auto-attach check for %s: cache-path=%s, cache-file=%s, is-attached=%s, file-exists=%s"
+                       database-code cache-path cache-file is-attached file-exists))
+    ;; Auto-attach cache if exists but not attached
+    (when-not is-attached
+      (when file-exists
+        (log/info (format "Auto-attaching cache for %s from %s" database-code cache-file))
+        (db/attach-cache-file! db database-code cache-base)))
+
+    ;; Detect schema AFTER attaching cache, if not provided
+    (let [detected-schema (when (not schema-name)
+                            (get-schema-from-cache db database-code))
+          final-schema (or schema-name detected-schema database-code)]
+      (log/debug (format "Using schema '%s' for search (provided=%s, detected=%s, database-code=%s)"
+                         final-schema schema-name detected-schema database-code))
+      (or (execute-fts-search db database-code final-schema search-term max-rows)
+          (execute-fallback-search db database-code final-schema search-term max-rows)))))
 
 (defn result-row->concept-map
   "Convert a single result row to concept HashMap."
