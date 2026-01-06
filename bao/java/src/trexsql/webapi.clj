@@ -83,7 +83,7 @@
           conn-str (.getSourceConnection source)
           explicit-user (.getUsername source)
           explicit-pass (.getPassword source)]
-      (if (= "postgres" dialect)
+      (if (or (= "postgres" dialect) (= "postgresql" dialect))
         (let [parsed (parse-jdbc-url conn-str)]
           (merge parsed
                  {:dialect dialect
