@@ -5,6 +5,8 @@
             [trexsql.vocab :as vocab]
             [trexsql.circe :as circe]
             [trexsql.db :as db]
+            [trexsql.proxy :as proxy]
+            [trexsql.config :as config]
             [clojure.string :as str]
             [clojure.data.json :as json]
             [clojure.tools.logging :as log]
@@ -628,13 +630,28 @@
     ["/circe/render" {:post {:handler render-circe-handler}}]
     ["/vocab/search" {:get {:handler search-vocab-handler}}]]])
 
+(defn- create-proxy-handler [target-url]
+  (fn [request]
+    (proxy/proxy-request request target-url)))
+
+(defn- build-proxy-routes [routes-map]
+  (vec
+    (mapcat
+      (fn [[path-prefix target-url]]
+        (let [handler {:handler (create-proxy-handler target-url)
+                       :no-doc true}]
+          [[(str "/" path-prefix) handler]
+           [(str "/" path-prefix "/*path") handler]]))
+      routes-map)))
+
 (defn create-router
-  "Create Reitit Ring router for WebAPI endpoints.
-   Returns a Ring handler function."
+  "Create Reitit Ring router for WebAPI endpoints."
   []
-  (ring/ring-handler
-    (ring/router routes)
-    (ring/create-default-handler
-      {:not-found (constantly (not-found "Endpoint not found"))
-       :method-not-allowed (constantly (response 405 {:error "METHOD_NOT_ALLOWED"
-                                                       :message "Method not allowed"}))})))
+  (let [proxy-routes (build-proxy-routes (config/get-proxy-routes))
+        all-routes (vec (concat routes proxy-routes))]
+    (ring/ring-handler
+      (ring/router all-routes)
+      (ring/create-default-handler
+        {:not-found (constantly (not-found "Endpoint not found"))
+         :method-not-allowed (constantly (response 405 {:error "METHOD_NOT_ALLOWED"
+                                                         :message "Method not allowed"}))}))))

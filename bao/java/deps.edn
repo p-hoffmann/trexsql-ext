@@ -13,7 +13,8 @@
         org.slf4j/slf4j-simple {:mvn/version "2.0.16"}
         jakarta.servlet/jakarta.servlet-api {:mvn/version "6.0.0"}
         org.ring-clojure/ring-jakarta-servlet {:mvn/version "1.14.1"}
-        ring/ring-json {:mvn/version "0.5.1"}}
+        ring/ring-json {:mvn/version "0.5.1"}
+        clj-http/clj-http {:mvn/version "3.12.3"}}
 
  :aliases {:dev {:extra-paths ["test"]
                  :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}}}

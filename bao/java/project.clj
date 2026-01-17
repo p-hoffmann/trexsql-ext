@@ -28,7 +28,8 @@
                  ;; Jakarta Servlet API (provided at runtime by container)
                  [jakarta.servlet/jakarta.servlet-api "6.0.0" :scope "provided"]
                  ;; Reitit for routing
-                 [metosin/reitit-ring "0.7.2"]]
+                 [metosin/reitit-ring "0.7.2"]
+                 [clj-http "3.12.3"]]
 
   :source-paths ["src"]
   :test-paths ["test"]
