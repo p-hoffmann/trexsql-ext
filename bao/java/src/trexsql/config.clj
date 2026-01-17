@@ -1,7 +1,9 @@
 (ns trexsql.config
   "Configuration management for Trexsql - CLI parsing and environment variables."
   (:require [clojure.tools.cli :refer [parse-opts]]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [clojure.data.json :as json]
+            [clojure.tools.logging :as log]))
 
 (def default-config
   "Default configuration values."
@@ -126,3 +128,19 @@ Options:
   --worker-policy POLICY    Worker policy: per_worker (default), per_request, oneshot
   --max-parallelism COUNT   Max workers per service path (1-9999, default: CPU cores)
   -h, --help                Show this help message")
+
+(defn get-proxy-routes []
+  (if-let [routes-json (System/getenv "TREX_ROUTES")]
+    (try
+      (let [parsed (json/read-str routes-json)]
+        (if (map? parsed)
+          (do
+            (log/info (str "Loaded " (count parsed) " proxy routes from TREX_ROUTES"))
+            parsed)
+          (do
+            (log/warn "TREX_ROUTES must be a JSON object, got:" (type parsed))
+            {})))
+      (catch Exception e
+        (log/warn "Failed to parse TREX_ROUTES:" (.getMessage e))
+        {}))
+    {}))
