@@ -2,10 +2,13 @@
   "Jakarta Servlet adapter for trexsql WebAPI.
    Exposes TrexServlet class that can be registered in Spring Boot."
   (:require [trexsql.webapi :as webapi]
+            [trexsql.extensions :as ext]
+            [trexsql.config :as config]
             [ring.util.jakarta.servlet :as servlet]
             [ring.middleware.params :refer [wrap-params]]
             [ring.middleware.keyword-params :refer [wrap-keyword-params]]
             [ring.middleware.json :refer [wrap-json-body wrap-json-response]]
+            [clojure.data.json :as json]
             [clojure.string :as str]
             [clojure.tools.logging :as log])
   (:import [jakarta.servlet.http HttpServletRequest HttpServletResponse])
@@ -78,9 +81,32 @@
       wrap-json-response
       wrap-strip-context))
 
+(defn- parse-trex-init []
+  (when-let [init-json (System/getenv "TREX_INIT")]
+    (try
+      (let [parsed (json/read-str init-json :key-fn keyword)]
+        (merge config/default-config parsed))
+      (catch Exception e
+        (log/warn e "Failed to parse TREX_INIT JSON, using defaults")
+        config/default-config))))
+
+(defn- run-init [db]
+  (when-let [init-config (parse-trex-init)]
+    (log/info (str "TREX_INIT config: " (pr-str init-config)))
+    (try
+      (let [conn (:connection db)]
+        (try
+          (with-open [stmt (.createStatement conn)]
+            (.execute stmt "CALL disable_logging()"))
+          (catch java.sql.SQLException _))
+        (let [extensions-path (config/get-extensions-path init-config)
+              loaded (ext/load-extensions conn extensions-path)]
+          (reset! (:extensions-loaded db) loaded)
+          (log/info (str "Loaded extensions: " (pr-str loaded)))))
+      (catch Exception e
+        (log/warn e "Failed to run init")))))
+
 (defn -initTrex
-  "Initialize servlet with DuckDB instance and SourceRepository.
-   Called from Spring Boot during servlet registration."
   ([this db source-repo]
    (-initTrex this db source-repo nil))
   ([this db source-repo config]
@@ -88,12 +114,12 @@
    (let [state (.state this)
          config-map (when config
                       {:cache-path (get config "cache-path")})]
+     (run-init db)
      (reset! (:db state) db)
      (reset! (:source-repo state) source-repo)
      (reset! (:config state) (or config-map {}))
      (webapi/set-source-repository! source-repo)
      (webapi/set-config! config-map)
-     ;; Pre-create handler for performance
      (reset! (:handler state) (create-app (:db state) (:config state)))
      (log/info "TrexServlet initialized successfully"))))
 
