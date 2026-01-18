@@ -1,5 +1,5 @@
 (ns trexsql.vocab
-  "Vocabulary search functionality using DuckDB Full-Text Search (FTS).
+  "Vocabulary search functionality using TrexSQL Full-Text Search (FTS).
    Provides search-vocab for concept lookup with FTS and ILIKE fallback."
   (:require [trexsql.db :as db]
             [trexsql.util :as util]

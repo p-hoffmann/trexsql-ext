@@ -1,5 +1,5 @@
 (ns trexsql.jdbc-types
-  "JDBC to DuckDB type mapping and value conversion."
+  "JDBC to TrexSQL type mapping and value conversion."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.tools.logging :as log])
@@ -8,8 +8,8 @@
            [java.math BigDecimal]
            [org.trex TrexSQLAppender]))
 
-(def jdbc-to-duckdb-types
-  "JDBC type codes to DuckDB type names. Loaded from jdbc-type-mappings.edn."
+(def jdbc-to-trexsql-types
+  "JDBC type codes to TrexSQL type names. Loaded from jdbc-type-mappings.edn."
   (if-let [resource (io/resource "jdbc-type-mappings.edn")]
     (edn/read-string (slurp resource))
     {Types/BIGINT     "BIGINT"
@@ -38,15 +38,15 @@
      Types/VARBINARY  "BLOB"
      Types/NULL       "VARCHAR"}))
 
-(defn get-duckdb-type
-  "Map JDBC type code to DuckDB type. Defaults to VARCHAR."
+(defn get-trexsql-type
+  "Map JDBC type code to TrexSQL type. Defaults to VARCHAR."
   [jdbc-type]
-  (let [duckdb-type (get jdbc-to-duckdb-types jdbc-type "VARCHAR")]
-    (when-not (contains? jdbc-to-duckdb-types jdbc-type)
+  (let [trexsql-type (get jdbc-to-trexsql-types jdbc-type "VARCHAR")]
+    (when-not (contains? jdbc-to-trexsql-types jdbc-type)
       (log/warn (format "Unmapped JDBC type: %d, defaulting to VARCHAR" jdbc-type)))
-    duckdb-type))
+    trexsql-type))
 
-(defrecord ColumnInfo [name jdbc-type duckdb-type precision scale nullable?])
+(defrecord ColumnInfo [name jdbc-type trexsql-type precision scale nullable?])
 
 (defn get-column-info
   "Extract column metadata from JDBC ResultSetMetaData."
@@ -58,7 +58,7 @@
          (->ColumnInfo
           (.getColumnName metadata i)
           jdbc-type
-          (get-duckdb-type jdbc-type)
+          (get-trexsql-type jdbc-type)
           (.getPrecision metadata i)
           (.getScale metadata i)
           (= (.isNullable metadata i) ResultSetMetaData/columnNullable)))))))
@@ -88,10 +88,10 @@
 
 (defn append-typed-value!
   "Append value to TrexSQL Appender with type conversion."
-  [^TrexSQLAppender appender value duckdb-type]
+  [^TrexSQLAppender appender value trexsql-type]
   (if (nil? value)
     (.appendNull appender)
-    (case duckdb-type
+    (case trexsql-type
       "BIGINT"    (.append appender (long value))
       "INTEGER"   (.append appender (int value))
       "SMALLINT"  (.append appender (short value))
@@ -114,8 +114,8 @@
 
 (defn read-typed-value
   "Read value from ResultSet with type handling. Returns nil for SQL NULL."
-  [^ResultSet rs ^long col-idx duckdb-type]
-  (let [value (case duckdb-type
+  [^ResultSet rs ^long col-idx trexsql-type]
+  (let [value (case trexsql-type
                 "BIGINT"    (.getLong rs col-idx)
                 "INTEGER"   (.getInt rs col-idx)
                 "SMALLINT"  (.getShort rs col-idx)

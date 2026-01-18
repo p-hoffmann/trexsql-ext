@@ -1,5 +1,5 @@
 (ns trexsql.integration-test
-  "Integration tests for datamart creation using in-memory DuckDB.
+  "Integration tests for datamart creation using in-memory TrexSQL.
    These tests verify the full datamart creation flow without external databases."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [trexsql.core :as core]
@@ -88,7 +88,7 @@
 ;; =============================================================================
 
 (defn create-test-source-db!
-  "Create a test source database with sample tables in the main DuckDB connection."
+  "Create a test source database with sample tables in the main TrexSQL connection."
   [db]
   ;; Create a test schema and tables
   (db/execute! db "CREATE SCHEMA IF NOT EXISTS test_schema")

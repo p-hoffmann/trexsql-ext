@@ -6,46 +6,46 @@
 
 ;; Type Mapping Tests
 
-(deftest test-jdbc-to-duckdb-types-loaded
+(deftest test-jdbc-to-trexsql-types-loaded
   (testing "Type mapping table is loaded"
-    (is (map? jdbc-types/jdbc-to-duckdb-types))
-    (is (not (empty? jdbc-types/jdbc-to-duckdb-types)))))
+    (is (map? jdbc-types/jdbc-to-trexsql-types))
+    (is (not (empty? jdbc-types/jdbc-to-trexsql-types)))))
 
-(deftest test-get-duckdb-type-numeric
+(deftest test-get-trexsql-type-numeric
   (testing "Numeric types map correctly"
-    (is (= "BIGINT" (jdbc-types/get-duckdb-type Types/BIGINT)))
-    (is (= "INTEGER" (jdbc-types/get-duckdb-type Types/INTEGER)))
-    (is (= "SMALLINT" (jdbc-types/get-duckdb-type Types/SMALLINT)))
-    (is (= "DECIMAL" (jdbc-types/get-duckdb-type Types/DECIMAL)))
-    (is (= "DOUBLE" (jdbc-types/get-duckdb-type Types/DOUBLE)))))
+    (is (= "BIGINT" (jdbc-types/get-trexsql-type Types/BIGINT)))
+    (is (= "INTEGER" (jdbc-types/get-trexsql-type Types/INTEGER)))
+    (is (= "SMALLINT" (jdbc-types/get-trexsql-type Types/SMALLINT)))
+    (is (= "DECIMAL" (jdbc-types/get-trexsql-type Types/DECIMAL)))
+    (is (= "DOUBLE" (jdbc-types/get-trexsql-type Types/DOUBLE)))))
 
-(deftest test-get-duckdb-type-string
+(deftest test-get-trexsql-type-string
   (testing "String types map correctly"
-    (is (= "VARCHAR" (jdbc-types/get-duckdb-type Types/VARCHAR)))
-    (is (= "VARCHAR" (jdbc-types/get-duckdb-type Types/CHAR)))
-    (is (= "VARCHAR" (jdbc-types/get-duckdb-type Types/NVARCHAR)))
-    (is (= "VARCHAR" (jdbc-types/get-duckdb-type Types/CLOB)))))
+    (is (= "VARCHAR" (jdbc-types/get-trexsql-type Types/VARCHAR)))
+    (is (= "VARCHAR" (jdbc-types/get-trexsql-type Types/CHAR)))
+    (is (= "VARCHAR" (jdbc-types/get-trexsql-type Types/NVARCHAR)))
+    (is (= "VARCHAR" (jdbc-types/get-trexsql-type Types/CLOB)))))
 
-(deftest test-get-duckdb-type-datetime
+(deftest test-get-trexsql-type-datetime
   (testing "Date/time types map correctly"
-    (is (= "DATE" (jdbc-types/get-duckdb-type Types/DATE)))
-    (is (= "TIME" (jdbc-types/get-duckdb-type Types/TIME)))
-    (is (= "TIMESTAMP" (jdbc-types/get-duckdb-type Types/TIMESTAMP)))))
+    (is (= "DATE" (jdbc-types/get-trexsql-type Types/DATE)))
+    (is (= "TIME" (jdbc-types/get-trexsql-type Types/TIME)))
+    (is (= "TIMESTAMP" (jdbc-types/get-trexsql-type Types/TIMESTAMP)))))
 
-(deftest test-get-duckdb-type-boolean
+(deftest test-get-trexsql-type-boolean
   (testing "Boolean types map correctly"
-    (is (= "BOOLEAN" (jdbc-types/get-duckdb-type Types/BOOLEAN)))
-    (is (= "BOOLEAN" (jdbc-types/get-duckdb-type Types/BIT)))))
+    (is (= "BOOLEAN" (jdbc-types/get-trexsql-type Types/BOOLEAN)))
+    (is (= "BOOLEAN" (jdbc-types/get-trexsql-type Types/BIT)))))
 
-(deftest test-get-duckdb-type-binary
+(deftest test-get-trexsql-type-binary
   (testing "Binary types map correctly"
-    (is (= "BLOB" (jdbc-types/get-duckdb-type Types/BLOB)))
-    (is (= "BLOB" (jdbc-types/get-duckdb-type Types/BINARY)))
-    (is (= "BLOB" (jdbc-types/get-duckdb-type Types/VARBINARY)))))
+    (is (= "BLOB" (jdbc-types/get-trexsql-type Types/BLOB)))
+    (is (= "BLOB" (jdbc-types/get-trexsql-type Types/BINARY)))
+    (is (= "BLOB" (jdbc-types/get-trexsql-type Types/VARBINARY)))))
 
-(deftest test-get-duckdb-type-unknown
+(deftest test-get-trexsql-type-unknown
   (testing "Unknown types default to VARCHAR"
-    (is (= "VARCHAR" (jdbc-types/get-duckdb-type 99999)))))
+    (is (= "VARCHAR" (jdbc-types/get-trexsql-type 99999)))))
 
 ;; ColumnInfo Record Tests
 
@@ -54,7 +54,7 @@
     (let [col (jdbc-types/->ColumnInfo "person_id" Types/BIGINT "BIGINT" 0 0 false)]
       (is (= "person_id" (:name col)))
       (is (= Types/BIGINT (:jdbc-type col)))
-      (is (= "BIGINT" (:duckdb-type col)))
+      (is (= "BIGINT" (:trexsql-type col)))
       (is (= false (:nullable? col))))))
 
 ;; Type Conversion Tests
@@ -84,22 +84,22 @@
                         Types/BOOLEAN Types/BIT
                         Types/BLOB Types/BINARY Types/VARBINARY]]
       (doseq [t common-types]
-        (is (contains? jdbc-types/jdbc-to-duckdb-types t)
+        (is (contains? jdbc-types/jdbc-to-trexsql-types t)
             (format "Type %d should be mapped" t))))))
 
 (deftest test-sql-server-specific-types
   (testing "SQL Server specific types are handled"
     ;; NTEXT, NCHAR, etc. should map to VARCHAR
-    (is (= "VARCHAR" (jdbc-types/get-duckdb-type Types/NCHAR)))
-    (is (= "VARCHAR" (jdbc-types/get-duckdb-type Types/NVARCHAR)))))
+    (is (= "VARCHAR" (jdbc-types/get-trexsql-type Types/NCHAR)))
+    (is (= "VARCHAR" (jdbc-types/get-trexsql-type Types/NVARCHAR)))))
 
 (deftest test-oracle-specific-types
   (testing "Oracle specific types are handled"
     ;; NUMBER maps to DECIMAL, CLOB to VARCHAR
-    (is (= "DECIMAL" (jdbc-types/get-duckdb-type Types/NUMERIC)))
-    (is (= "VARCHAR" (jdbc-types/get-duckdb-type Types/CLOB)))))
+    (is (= "DECIMAL" (jdbc-types/get-trexsql-type Types/NUMERIC)))
+    (is (= "VARCHAR" (jdbc-types/get-trexsql-type Types/CLOB)))))
 
 (deftest test-mysql-specific-types
   (testing "MySQL specific types are handled"
     ;; TINYINT, MEDIUMINT etc. should be covered
-    (is (= "TINYINT" (jdbc-types/get-duckdb-type Types/TINYINT)))))
+    (is (= "TINYINT" (jdbc-types/get-trexsql-type Types/TINYINT)))))

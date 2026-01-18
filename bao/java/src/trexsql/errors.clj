@@ -41,7 +41,7 @@
 
 (defn extension-error
   "Create an extension error with extension name.
-   Use for DuckDB extension loading failures."
+   Use for TrexSQL extension loading failures."
   ([msg]
    (ex-info msg {:type :extension-error}))
   ([msg ext-name]

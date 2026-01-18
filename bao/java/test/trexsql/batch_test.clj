@@ -59,8 +59,8 @@
 
 (deftest test-build-create-table-ddl-basic
   (testing "Basic CREATE TABLE DDL"
-    (let [columns [{:name "id" :duckdb-type "BIGINT" :nullable? false}
-                   {:name "name" :duckdb-type "VARCHAR" :nullable? true}]
+    (let [columns [{:name "id" :trexsql-type "BIGINT" :nullable? false}
+                   {:name "name" :trexsql-type "VARCHAR" :nullable? true}]
           ddl (batch/build-create-table-ddl "test_table" columns)]
       (is (re-find #"(?i)CREATE TABLE" ddl))
       (is (re-find #"test_table" ddl))
@@ -70,7 +70,7 @@
 
 (deftest test-build-create-table-ddl-with-decimal
   (testing "CREATE TABLE with DECIMAL precision"
-    (let [columns [{:name "amount" :duckdb-type "DECIMAL" :precision 18 :scale 2 :nullable? true}]
+    (let [columns [{:name "amount" :trexsql-type "DECIMAL" :precision 18 :scale 2 :nullable? true}]
           ddl (batch/build-create-table-ddl "amounts" columns)]
       (is (re-find #"DECIMAL\(18,2\)" ddl)))))
 
@@ -164,7 +164,7 @@
 
 (deftest test-connection-pool-creates-and-closes
   (testing "Connection pool can be created and closed"
-    ;; Use DuckDB as it's available in test environment
+    ;; Use TrexSQL as it's available in test environment
     (let [pool (batch/create-connection-pool
                  {:jdbc-url "jdbc:trex::memory:"
                   :pool-size 2
@@ -221,11 +221,11 @@
 
 ;; Transaction Support Tests
 
-(deftest test-with-duckdb-transaction-commits
+(deftest test-with-trexsql-transaction-commits
   (testing "Transaction commits on success"
     (let [test-db (core/init {:cache-path "./target/test-tx-cache"})]
       (try
-        (batch/with-duckdb-transaction [test-db]
+        (batch/with-trexsql-transaction [test-db]
           (db/execute! test-db "CREATE TABLE IF NOT EXISTS tx_test (id INTEGER)"))
         ;; Verify table exists
         (is (some? (db/query test-db "SELECT * FROM tx_test LIMIT 1")))
@@ -233,7 +233,7 @@
           (db/execute! test-db "DROP TABLE IF EXISTS tx_test")
           (core/shutdown! test-db))))))
 
-(deftest test-with-duckdb-transaction-rollback
+(deftest test-with-trexsql-transaction-rollback
   (testing "Transaction rolls back on exception"
     (let [test-db (core/init {:cache-path "./target/test-tx-cache"})]
       (try
@@ -242,7 +242,7 @@
 
         ;; Try to insert in transaction that fails
         (is (thrown? Exception
-              (batch/with-duckdb-transaction [test-db]
+              (batch/with-trexsql-transaction [test-db]
                 (db/execute! test-db "INSERT INTO tx_rollback_test VALUES (1)")
                 (throw (Exception. "Simulated failure")))))
 

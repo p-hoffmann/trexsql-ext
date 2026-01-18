@@ -1,6 +1,6 @@
 (ns trexsql.circe
   "Circe JSON to SQL conversion and execution functionality.
-   Uses DuckDB's circe extension for cohort SQL generation."
+   Uses TrexSQL's circe extension for cohort SQL generation."
   (:require [trexsql.db :as db]
             [trexsql.util :as util]
             [trexsql.errors :as errors]
@@ -141,7 +141,7 @@
 
 (defn- lowercase-schema-qualified-tables
   "Lowercase table names in schema-qualified references like 'SCHEMA.TABLE'.
-    DuckDB is case-sensitive, and the cache has lowercase table names from PostgreSQL,
+    TrexSQL is case-sensitive, and the cache has lowercase table names from PostgreSQL,
     but circe generates uppercase table names. This function lowercases them."
   [sql]
   ;; Lowercase schema-qualified tables emitted in uppercase by Circe.

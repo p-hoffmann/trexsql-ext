@@ -2,6 +2,7 @@
   "Jakarta Servlet adapter for trexsql WebAPI.
    Exposes TrexServlet class that can be registered in Spring Boot."
   (:require [trexsql.webapi :as webapi]
+            [trexsql.core :as core]
             [ring.util.jakarta.servlet :as servlet]
             [ring.middleware.params :refer [wrap-params]]
             [ring.middleware.keyword-params :refer [wrap-keyword-params]]
@@ -14,8 +15,8 @@
    :extends jakarta.servlet.http.HttpServlet
    :state state
    :init init-state
-   :methods [[initTrex [Object Object] void]
-             [initTrex [Object Object java.util.Map] void]]))
+   :methods [[initTrex [Object] void]
+             [initTrex [Object java.util.Map] void]]))
 
 ;; State: {:db atom, :source-repo atom, :handler atom, :config atom}
 (defn -init-state
@@ -79,13 +80,12 @@
       wrap-strip-context))
 
 (defn -initTrex
-  "Initialize servlet with DuckDB instance and SourceRepository.
-   Called from Spring Boot during servlet registration."
-  ([this db source-repo]
-   (-initTrex this db source-repo nil))
-  ([this db source-repo config]
-   (log/info "Initializing TrexServlet with DuckDB instance")
+  ([this source-repo]
+   (-initTrex this source-repo nil))
+  ([this source-repo config]
+   (log/info "Initializing TrexServlet")
    (let [state (.state this)
+         db (core/get-database)
          config-map (when config
                       {:cache-path (get config "cache-path")})]
      (reset! (:db state) db)
@@ -93,7 +93,6 @@
      (reset! (:config state) (or config-map {}))
      (webapi/set-source-repository! source-repo)
      (webapi/set-config! config-map)
-     ;; Pre-create handler for performance
      (reset! (:handler state) (create-app (:db state) (:config state)))
      (log/info "TrexServlet initialized successfully"))))
 

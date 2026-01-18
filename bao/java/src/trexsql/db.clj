@@ -1,5 +1,5 @@
 (ns trexsql.db
-  "DuckDB connection management and query execution."
+  "TrexSQL connection management and query execution."
   (:require [clojure.string :as str]
             [clojure.tools.logging :as log]
             [trexsql.errors :as errors])
@@ -46,7 +46,7 @@
   (str "\"" (str/replace s "\"" "\"\"") "\""))
 
 (defn create-connection
-  "Create a DuckDB connection.
+  "Create a TrexSQL connection.
    Returns a java.sql.Connection to an in-memory database.
    Config options:
    - :allow-unsigned-extensions - enable loading unsigned extensions"
@@ -105,7 +105,7 @@
   (contains? @(:extensions-loaded db) ext-name))
 
 (defn load-extension!
-  "Load a DuckDB extension if not already loaded.
+  "Load a TrexSQL extension if not already loaded.
    Caches loaded extensions to avoid redundant INSTALL/LOAD calls.
    Returns true if extension was loaded, false if already loaded."
   [^TrexsqlDatabase db ^String ext-name & {:keys [source] :or {source nil}}]
@@ -176,7 +176,7 @@
       (throw (errors/sql-error (str "SQL error: " (.getMessage e)) sql e)))))
 
 (defn attach-cache-file!
-  "Attach a DuckDB cache file using ATTACH IF NOT EXISTS.
+  "Attach a TrexSQL cache file using ATTACH IF NOT EXISTS.
    Creates the cache directory if it doesn't exist.
    Returns the database alias on success.
    Throws IllegalArgumentException if database-code is invalid.

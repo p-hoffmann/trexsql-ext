@@ -1,16 +1,25 @@
 (ns trexsql.core
-  "Main entry point for Trexsql - Clojure DuckDB library."
+  "Main entry point for Trexsql - Clojure TrexSQL library."
   (:require [trexsql.db :as db]
             [trexsql.config :as config]
             [trexsql.extensions :as ext]
-            [trexsql.servers :as servers])
+            [trexsql.servers :as servers]
+            [clojure.data.json :as json]
+            [clojure.tools.logging :as log])
   (:gen-class))
 
 (def ^:private shutdown-promise (promise))
-(def ^:private current-database (atom nil))
+(defonce current-database (atom nil))
+
+(defn- parse-trex-init []
+  (when-let [init-json (System/getenv "TREX_INIT")]
+    (try
+      (json/read-str init-json :key-fn keyword)
+      (catch Exception e
+        (log/warn e "Failed to parse TREX_INIT JSON")
+        nil))))
 
 (defn add-shutdown-hook!
-  "Register a JVM shutdown hook for graceful cleanup."
   [cleanup-fn]
   (.addShutdownHook
    (Runtime/getRuntime)
@@ -24,34 +33,54 @@
     (db/close! database))
   (reset! current-database nil))
 
+(defn- try-start-servers [database config]
+  (let [password (config/get-sql-password)]
+    (when-not password
+      (log/info "TREX_SQL_PASSWORD not set, skipping server startup"))
+    (when password
+      (try
+        (log/info "Starting PgWire server...")
+        (servers/start-pgwire-server database config password)
+        (log/info "Starting Trexas server...")
+        (servers/start-trexas-server database config)
+        (reset! (:servers-running? database) true)
+        (log/info "Servers started successfully")
+        (catch Exception e
+          (log/warn e "Failed to start servers"))))))
+
 (defn init
-  "Initialize DuckDB with extensions."
   ([]
    (init {}))
   ([config]
-   (let [merged-config (merge config/default-config config)
+   (let [env-config (parse-trex-init)
+         merged-config (merge config/default-config (or env-config {}) config)
          extensions-path (config/get-extensions-path merged-config)
          conn (db/create-connection merged-config)
          loaded (ext/load-extensions conn extensions-path)
          database (db/make-database conn merged-config)]
      (reset! (:extensions-loaded database) loaded)
      (reset! current-database database)
+     (when env-config
+       (try-start-servers database merged-config))
      database)))
 
+(defn get-database []
+  (or @current-database (init)))
+
 (defn init-with-servers
-  "Initialize DuckDB database and start Trexas/PgWire servers.
-   Requires TREX_SQL_PASSWORD environment variable.
-   Config map can override server ports, paths, etc.
-   Returns TrexsqlDatabase record with servers running."
   ([]
    (init-with-servers {}))
   ([config]
    (let [database (init config)
-         merged-config (merge config/default-config config)
-         database-with-servers (servers/start-servers! database merged-config)]
-     (reset! current-database database-with-servers)
-     (servers/print-server-status merged-config)
-     database-with-servers)))
+         merged-config (merge config/default-config config)]
+     (if @(:servers-running? database)
+       (do
+         (servers/print-server-status merged-config)
+         database)
+       (let [database-with-servers (servers/start-servers! database merged-config)]
+         (reset! current-database database-with-servers)
+         (servers/print-server-status merged-config)
+         database-with-servers)))))
 
 (defn is-running?
   "Check if servers are currently running."
@@ -80,7 +109,7 @@
 
 Commands:
   serve      Start Trexas and PgWire servers (default)
-  cache      Manage DuckDB caches from source databases
+  cache      Manage TrexSQL caches from source databases
   bundle     Create an eszip bundle from TypeScript/JavaScript
 
 Use 'trexsql <command> --help' for more information about a command.
