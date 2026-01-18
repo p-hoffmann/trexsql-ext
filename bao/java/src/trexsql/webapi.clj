@@ -648,9 +648,9 @@
   "Create Reitit Ring router for WebAPI endpoints."
   []
   (let [proxy-routes (build-proxy-routes (config/get-proxy-routes))
-        all-routes (vec (concat routes proxy-routes))]
+        all-routes (vec (concat proxy-routes routes))]
     (ring/ring-handler
-      (ring/router all-routes)
+      (ring/router all-routes {:conflicts nil})
       (ring/create-default-handler
         {:not-found (constantly (not-found "Endpoint not found"))
          :method-not-allowed (constantly (response 405 {:error "METHOD_NOT_ALLOWED"
