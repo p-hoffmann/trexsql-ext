@@ -1,5 +1,5 @@
 (ns trexsql.http
-  "HTTP request functions for trex_http_request DuckDB scalar."
+  "HTTP request functions for trex_http_request TrexSQL scalar."
   (:require [trexsql.db :as db]
             [trexsql.errors :as errors]
             [clojure.data.json :as json])

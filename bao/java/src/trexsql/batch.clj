@@ -1,6 +1,6 @@
 (ns trexsql.batch
   "JDBC batch transfer for cache creation.
-   Implements streaming data transfer from JDBC sources to DuckDB cache files
+   Implements streaming data transfer from JDBC sources to TrexSQL cache files
    with progress reporting and resume capability."
   (:require [trexsql.db :as db]
             [trexsql.jobs :as jobs]
@@ -124,10 +124,10 @@
   "Generate CREATE TABLE DDL from column metadata using HoneySQL.
    Returns SQL string."
   [table-name columns]
-  (let [col-defs (for [{:keys [name duckdb-type nullable? precision scale]} columns]
-                   (let [type-str (if (and (= duckdb-type "DECIMAL") precision (pos? precision))
+  (let [col-defs (for [{:keys [name trexsql-type nullable? precision scale]} columns]
+                   (let [type-str (if (and (= trexsql-type "DECIMAL") precision (pos? precision))
                                     (format "DECIMAL(%d,%d)" precision (or scale 0))
-                                    duckdb-type)
+                                    trexsql-type)
                          null-str (if nullable? "" " NOT NULL")]
                      (format "\"%s\" %s%s" name type-str null-str)))]
     (format "CREATE TABLE IF NOT EXISTS \"%s\" (%s)"
@@ -170,7 +170,7 @@
         (throw (:error result))))))
 
 (defn create-table-schema!
-  "Create table in DuckDB cache from JDBC column metadata."
+  "Create table in TrexSQL cache from JDBC column metadata."
   [trexsql-db cache-alias table-name columns]
   (let [full-table-name (format "%s.%s" cache-alias table-name)
         ddl (build-create-table-ddl full-table-name columns)]
@@ -191,8 +191,8 @@
           (do
             (.beginRow appender)
             (doseq [[idx col] (map-indexed vector columns)]
-              (let [value (jdbc-types/read-typed-value rs (inc idx) (:duckdb-type col))]
-                (jdbc-types/append-typed-value! appender value (:duckdb-type col))))
+              (let [value (jdbc-types/read-typed-value rs (inc idx) (:trexsql-type col))]
+                (jdbc-types/append-typed-value! appender value (:trexsql-type col))))
             (.endRow appender)
             (when (zero? (mod (inc total) batch-size))
               (.flush appender))
@@ -208,12 +208,12 @@
 
 (declare copy-table-jdbc-impl)
 
-(defmacro with-duckdb-transaction
-  "Execute body within a DuckDB transaction.
+(defmacro with-trexsql-transaction
+  "Execute body within a TrexSQL transaction.
    Commits on success, rolls back on exception.
 
    Usage:
-   (with-duckdb-transaction [trexsql-db]
+   (with-trexsql-transaction [trexsql-db]
      (do-work ...))"
   [[db-sym] & body]
   `(let [conn# (db/get-raw-connection ~db-sym)
@@ -233,15 +233,15 @@
          (.setAutoCommit conn# auto-commit#)))))
 
 (defn copy-table-with-transaction
-  "Copy a table within a DuckDB transaction.
+  "Copy a table within a TrexSQL transaction.
    Creates table and copies all rows atomically.
    On failure, rolls back to leave cache in consistent state."
   [trexsql-db source-conn cache-alias table-name config progress-fn]
-  (with-duckdb-transaction [trexsql-db]
+  (with-trexsql-transaction [trexsql-db]
     (copy-table-jdbc-impl trexsql-db source-conn cache-alias table-name config progress-fn)))
 
 (defn copy-table-jdbc-impl
-  "Copy a single table from JDBC source to DuckDB cache.
+  "Copy a single table from JDBC source to TrexSQL cache.
    Uses cursor-based streaming with configurable fetch size.
    Returns {:success? true :rows-copied N :duration-ms M} or {:success? false :error E}"
   [trexsql-db source-conn cache-alias table-name config progress-fn]
@@ -284,9 +284,9 @@
            :duration-ms duration-ms})))))
 
 (defn copy-table-jdbc
-  "Copy a single table from JDBC source to DuckDB cache with transaction support.
+  "Copy a single table from JDBC source to TrexSQL cache with transaction support.
    Uses cursor-based streaming with configurable fetch size.
-   Wraps copy operation in a DuckDB transaction for atomicity.
+   Wraps copy operation in a TrexSQL transaction for atomicity.
    Returns {:success? true :rows-copied N :duration-ms M} or {:success? false :error E}"
   [trexsql-db source-conn cache-alias table-name config progress-fn]
   (let [use-transactions? (get config :use-transactions true)]

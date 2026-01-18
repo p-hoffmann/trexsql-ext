@@ -2,13 +2,11 @@
   "Jakarta Servlet adapter for trexsql WebAPI.
    Exposes TrexServlet class that can be registered in Spring Boot."
   (:require [trexsql.webapi :as webapi]
-            [trexsql.extensions :as ext]
-            [trexsql.config :as config]
+            [trexsql.core :as core]
             [ring.util.jakarta.servlet :as servlet]
             [ring.middleware.params :refer [wrap-params]]
             [ring.middleware.keyword-params :refer [wrap-keyword-params]]
             [ring.middleware.json :refer [wrap-json-body wrap-json-response]]
-            [clojure.data.json :as json]
             [clojure.string :as str]
             [clojure.tools.logging :as log])
   (:import [jakarta.servlet.http HttpServletRequest HttpServletResponse])
@@ -17,8 +15,8 @@
    :extends jakarta.servlet.http.HttpServlet
    :state state
    :init init-state
-   :methods [[initTrex [Object Object] void]
-             [initTrex [Object Object java.util.Map] void]]))
+   :methods [[initTrex [Object] void]
+             [initTrex [Object java.util.Map] void]]))
 
 ;; State: {:db atom, :source-repo atom, :handler atom, :config atom}
 (defn -init-state
@@ -81,40 +79,15 @@
       wrap-json-response
       wrap-strip-context))
 
-(defn- parse-trex-init []
-  (when-let [init-json (System/getenv "TREX_INIT")]
-    (try
-      (let [parsed (json/read-str init-json :key-fn keyword)]
-        (merge config/default-config parsed))
-      (catch Exception e
-        (log/warn e "Failed to parse TREX_INIT JSON, using defaults")
-        config/default-config))))
-
-(defn- run-init [db]
-  (when-let [init-config (parse-trex-init)]
-    (log/info (str "TREX_INIT config: " (pr-str init-config)))
-    (try
-      (let [conn (:connection db)]
-        (try
-          (with-open [stmt (.createStatement conn)]
-            (.execute stmt "CALL disable_logging()"))
-          (catch java.sql.SQLException _))
-        (let [extensions-path (config/get-extensions-path init-config)
-              loaded (ext/load-extensions conn extensions-path)]
-          (reset! (:extensions-loaded db) loaded)
-          (log/info (str "Loaded extensions: " (pr-str loaded)))))
-      (catch Exception e
-        (log/warn e "Failed to run init")))))
-
 (defn -initTrex
-  ([this db source-repo]
-   (-initTrex this db source-repo nil))
-  ([this db source-repo config]
-   (log/info "Initializing TrexServlet with DuckDB instance")
+  ([this source-repo]
+   (-initTrex this source-repo nil))
+  ([this source-repo config]
+   (log/info "Initializing TrexServlet")
    (let [state (.state this)
+         db (core/get-database)
          config-map (when config
                       {:cache-path (get config "cache-path")})]
-     (run-init db)
      (reset! (:db state) db)
      (reset! (:source-repo state) source-repo)
      (reset! (:config state) (or config-map {}))

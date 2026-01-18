@@ -1,5 +1,5 @@
 (ns trexsql.datamart
-  "Datamart creation functionality for caching source database schemas in DuckDB.
+  "Datamart creation functionality for caching source database schemas in TrexSQL.
    Supports PostgreSQL, BigQuery, and JDBC sources (SQL Server, Oracle, MySQL, MariaDB)
    with filtering, FTS indexing, and progress reporting."
   (:require [trexsql.db :as db]
@@ -29,7 +29,7 @@
 
 (def valid-dialects #{"postgres" "postgresql" "bigquery" "sql server" "oracle" "mysql" "mariadb"})
 
-;; JDBC-only dialects require batch transfer instead of DuckDB scanner extensions
+;; JDBC-only dialects require batch transfer instead of TrexSQL scanner extensions
 (def jdbc-only-dialects #{"sql server" "oracle" "mysql" "mariadb"})
 
 (defn- valid-database-code?
@@ -273,7 +273,7 @@
                              (or where-clause ""))]
       (db/execute! db create-sql)
       (db/execute! db insert-sql)
-      ;; Get row count from target table (changes() not available in all DuckDB contexts)
+      ;; Get row count from target table (changes() not available in all TrexSQL contexts)
       (let [count-sql (format "SELECT COUNT(*) as cnt FROM %s" target-table)
             count-result (db/query db count-sql)
             row-count (or (some-> count-result first (.get "cnt")) 0)]
@@ -492,7 +492,7 @@
             (->CacheResult false database-code schema-name [] [] [] duration-ms error-msg)))))))
 
 (defn jdbc-dialect?
-  "Check if dialect requires JDBC batch transfer (not native DuckDB extension)."
+  "Check if dialect requires JDBC batch transfer (not native TrexSQL extension)."
   [dialect]
   (contains? jdbc-only-dialects (str/lower-case (or dialect ""))))
 
@@ -517,7 +517,7 @@
 
 (defn create-cache
   "Unified cache creation - routes automatically based on dialect.
-   For PostgreSQL/BigQuery: uses native DuckDB scanner extensions.
+   For PostgreSQL/BigQuery: uses native TrexSQL scanner extensions.
    For SQL Server/Oracle/MySQL/MariaDB: uses JDBC batch transfer.
 
    Returns CacheResult record with operation results.

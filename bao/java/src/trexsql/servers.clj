@@ -1,5 +1,5 @@
 (ns trexsql.servers
-  "Server startup for Trexas and PgWire via DuckDB extension SQL functions."
+  "Server startup for Trexas and PgWire via TrexSQL extension SQL functions."
   (:require [trexsql.db :as db]
             [trexsql.config :as config]
             [clojure.java.io :as io]

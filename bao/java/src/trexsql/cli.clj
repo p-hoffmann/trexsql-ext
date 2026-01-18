@@ -37,7 +37,7 @@
    ["-h" "--help" "Show this help message"]])
 
 (defn cache-create-help []
-  "cache create - Create a DuckDB cache from a source database
+  "cache create - Create a TrexSQL cache from a source database
 
 Usage: trexsql cache create [options]
 
@@ -315,12 +315,12 @@ Examples:
 ;; Cache Help
 
 (defn cache-help []
-  "cache - Manage DuckDB caches from source databases
+  "cache - Manage TrexSQL caches from source databases
 
 Usage: trexsql cache <command> [options]
 
 Commands:
-  create     Create a DuckDB cache from a source database
+  create     Create a TrexSQL cache from a source database
   status     Get status of a cache and any running job
   cancel     Cancel a running cache job
 

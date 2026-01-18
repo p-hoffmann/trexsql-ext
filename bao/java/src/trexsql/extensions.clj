@@ -1,5 +1,5 @@
 (ns trexsql.extensions
-  "DuckDB extension discovery and loading."
+  "TrexSQL extension discovery and loading."
   (:require [clojure.java.io :as io]
             [clojure.string :as str])
   (:import [java.io File InputStream FileOutputStream]
@@ -72,7 +72,7 @@
   (str/replace (.getName f) #"\.(duckdb_extension|trex)$" ""))
 
 (defn find-extensions
-  "Find all DuckDB extension files in the given directory.
+  "Find all TrexSQL extension files in the given directory.
    Searches recursively in @trex subdirectories.
    Returns seq of {:name <string> :path <string> :requires-avx <boolean>}"
   [extensions-path]
@@ -88,7 +88,7 @@
          :requires-avx (= name "llama")}))))
 
 (defn load-extension
-  "Load a single extension into the DuckDB connection.
+  "Load a single extension into the TrexSQL connection.
    Returns {:name <string> :loaded <boolean> :error <string or nil>}"
   [^Connection conn {:keys [name path requires-avx]}]
   (let [avx-available? (has-avx-support?)]
