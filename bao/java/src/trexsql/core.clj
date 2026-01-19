@@ -11,10 +11,19 @@
 (def ^:private shutdown-promise (promise))
 (defonce current-database (atom nil))
 
+(defn- camel->kebab
+  "Convert camelCase string to kebab-case keyword.
+   e.g. 'pgwirePort' -> :pgwire-port"
+  [s]
+  (-> s
+      (clojure.string/replace #"([a-z])([A-Z])" "$1-$2")
+      clojure.string/lower-case
+      keyword))
+
 (defn- parse-trex-init []
   (when-let [init-json (System/getenv "TREX_INIT")]
     (try
-      (json/read-str init-json :key-fn keyword)
+      (json/read-str init-json :key-fn camel->kebab)
       (catch Exception e
         (log/warn e "Failed to parse TREX_INIT JSON")
         nil))))
