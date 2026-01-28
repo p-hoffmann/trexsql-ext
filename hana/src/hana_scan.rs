@@ -492,10 +492,14 @@ fn map_hana_type(hana_type: hdbconnect::TypeId) -> LogicalTypeId {
 }
 
 pub fn parse_hana_url(url: &str) -> Result<(String, String, String, u16, String), Box<dyn Error>> {
-    if !url.starts_with("hdbsql://") {
-        return Err(HanaError::new("URL must start with hdbsql://"));
-    }
-    let url_part = &url[9..];
+    let scheme_len = if url.starts_with("hdbsqls://") {
+        10
+    } else if url.starts_with("hdbsql://") {
+        9
+    } else {
+        return Err(HanaError::new("URL must start with hdbsql:// or hdbsqls://"));
+    };
+    let url_part = &url[scheme_len..];
     let (auth_part, host_db_part) = url_part
         .split_once('@')
         .ok_or_else(|| HanaError::new("Invalid URL format: missing '@' separator"))?;
@@ -1143,7 +1147,33 @@ mod tests {
         let url = "mysql://user:pass@host:3306/db";
         let result = parse_hana_url(url);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("URL must start with hdbsql://"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("URL must start with hdbsql:// or hdbsqls://"));
+    }
+    #[test]
+    fn test_parse_hana_url_ssl_scheme() {
+        let url = "hdbsqls://user:pass@server:30041/MYDB";
+        let result = parse_hana_url(url).unwrap();
+        assert_eq!(result.0, "user");
+        assert_eq!(result.1, "pass");
+        assert_eq!(result.2, "server");
+        assert_eq!(result.3, 30041);
+        assert_eq!(result.4, "MYDB");
+    }
+    #[test]
+    fn test_parse_hana_url_ssl_with_tls_options() {
+        let url = "hdbsqls://user:pass@server:30041/MYDB?use_mozillas_root_certificates";
+        let result = parse_hana_url(url).unwrap();
+        assert_eq!(result.0, "user");
+        assert_eq!(result.4, "MYDB");
+    }
+    #[test]
+    fn test_parse_hana_url_ssl_with_cert_dir() {
+        let url = "hdbsqls://user:pass@server:30041/MYDB?tls_certificate_dir=/path/to/certs";
+        let result = parse_hana_url(url).unwrap();
+        assert_eq!(result.0, "user");
     }
     #[test]
     fn test_parse_hana_url_missing_auth() {

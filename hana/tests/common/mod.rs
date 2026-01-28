@@ -42,5 +42,5 @@ pub fn is_hana_available(url: &str) -> bool {
     // Try to parse the URL and check basic connectivity
     // This is a simplified check - in a real scenario you might want to
     // actually attempt a connection
-    !url.is_empty() && url.starts_with("hdbsql://")
+    !url.is_empty() && (url.starts_with("hdbsql://") || url.starts_with("hdbsqls://"))
 }
