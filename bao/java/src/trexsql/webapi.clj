@@ -146,6 +146,17 @@
 
     :else m))
 
+(defn- sanitize-database-code
+  "Convert a source key (e.g., UUID) to a valid SQL identifier.
+   Replaces hyphens with underscores and ensures it starts with a letter/underscore."
+  [source-key]
+  (when source-key
+    (let [sanitized (str/replace source-key "-" "_")]
+      ;; If it starts with a digit, prefix with underscore
+      (if (re-matches #"^\d.*" sanitized)
+        (str "_" sanitized)
+        sanitized))))
+
 (defn- validate-database-code
   "Validate database-code for safe use. Returns nil if valid, error message if invalid."
   [database-code]
@@ -159,9 +170,9 @@
     (str/blank? database-code)
     "database-code cannot be empty"
 
-    (not (re-matches #"^[a-zA-Z0-9_-]+$" database-code))
+    (not (re-matches #"^[a-zA-Z_][a-zA-Z0-9_]*$" database-code))
     (str "Invalid database-code: " database-code
-         ". Must contain only alphanumeric, underscore, or hyphen characters.")
+         ". Must start with letter/underscore and contain only alphanumeric/underscore characters.")
 
     (> (count database-code) 128)
     "database-code is too long (max 128 characters)"
@@ -231,7 +242,7 @@
           (bad-request "Invalid JSON body")
           (if (str/blank? (:schemaName request))
             (bad-request "schemaName is required")
-            (let [database-code (or (:databaseCode request) source-key)]
+            (let [database-code (or (:databaseCode request) (sanitize-database-code source-key))]
               (if-let [validation-error (validate-database-code database-code)]
                 (bad-request validation-error)
                 (try
@@ -254,7 +265,7 @@
   (let [source (find-source-by-key source-key)]
     (if-not source
       (not-found (str "Source not found: " source-key))
-      (let [database-code (or (:databaseCode params) source-key)]
+      (let [database-code (or (:databaseCode params) (sanitize-database-code source-key))]
         (if-let [validation-error (validate-database-code database-code)]
           (bad-request validation-error)
           (let [cache-path (or (:cachePath params) (get-cache-path-from-config))
@@ -303,7 +314,7 @@
   (let [source (find-source-by-key source-key)]
     (if-not source
       (not-found (str "Source not found: " source-key))
-      (let [database-code (or (:databaseCode params) source-key)
+      (let [database-code (or (:databaseCode params) (sanitize-database-code source-key))
             job-status (try (jobs/get-job-status db database-code) (catch Exception _ nil))]
         (cond
           (nil? job-status)
@@ -323,7 +334,7 @@
   (let [source (find-source-by-key source-key)]
     (if-not source
       (not-found (str "Source not found: " source-key))
-      (let [database-code (or (:databaseCode params) source-key)
+      (let [database-code (or (:databaseCode params) (sanitize-database-code source-key))
             cache-path (or (:cachePath params) (get-cache-path-from-config))
             cache-file (File. (get-cache-path cache-path database-code))]
         (if-not (.exists cache-file)
@@ -386,7 +397,7 @@
       (not-found (str "Source not found: " source-key))
       (let [query (:query params)
             max-rows (try (Integer/parseInt (or (:maxRows params) "1000")) (catch Exception _ 1000))
-            database-code (or (:databaseCode params) source-key)]
+            database-code (or (:databaseCode params) (sanitize-database-code source-key))]
         (if (str/blank? query)
           (bad-request "query parameter is required")
           (try
@@ -470,7 +481,7 @@
       (not-found (str "Source not found: " source-key))
       (if (str/blank? (:schemaName body-params))
         (bad-request "schemaName is required")
-        (let [database-code (or (:databaseCode body-params) source-key)]
+        (let [database-code (or (:databaseCode body-params) (sanitize-database-code source-key))]
           (if-let [validation-error (validate-database-code database-code)]
             (bad-request validation-error)
             (try
