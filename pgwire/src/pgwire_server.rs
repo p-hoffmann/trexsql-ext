@@ -1,8 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::time::SystemTime;
 
-use duckdb::{Connection, params};
+use duckdb::params;
 use async_trait::async_trait;
 use futures::stream;
 use serde_json;
@@ -23,10 +23,20 @@ use pgwire::tokio::process_socket;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
-use arrow_pg::datatypes::{arrow_schema_to_pg_fields, encode_recordbatch, into_pg_type};
+use arrow_pg::datatypes::{encode_recordbatch, into_pg_type};
 
-use crate::get_shared_connection;
+use crate::{get_query_executor, get_shared_connection, QueryExecutor, QueryResult};
 use crate::server_registry::{ServerHandle, ServerRegistry};
+
+const DEBUG_LOGGING: bool = false;
+
+#[inline]
+fn log_debug(_msg: &str) {
+    #[cfg(debug_assertions)]
+    if DEBUG_LOGGING {
+        eprintln!("[pgwire] {}", _msg);
+    }
+}
 
 const SCRAM_ITERATIONS: usize = 4096;
 
@@ -188,33 +198,28 @@ impl AuthSource for SimpleAuthSource {
 
 #[derive(Clone)]
 pub struct DuckDBQueryHandler {
-    connection: Arc<Mutex<Connection>>,
+    executor: Arc<QueryExecutor>,
     server_host: String,
     server_port: u16,
 }
 
 impl DuckDBQueryHandler {
-    pub fn new(connection: Arc<Mutex<Connection>>, host: String, port: u16) -> Self {
-        Self { 
-            connection,
+    pub fn new(executor: Arc<QueryExecutor>, host: String, port: u16) -> Self {
+        Self {
+            executor,
             server_host: host,
             server_port: port,
         }
     }
 }
 
-fn get_params(_portal: &Portal<String>) -> Vec<String> {
-    Vec::new()
-}
-
+/// Convert DuckDB statement columns to pgwire field info (for describe operations)
 fn row_desc_from_stmt(stmt: &duckdb::Statement, format: &Format) -> PgWireResult<Vec<FieldInfo>> {
     let columns = stmt.column_count();
-
     (0..columns)
         .map(|idx| {
             let datatype = stmt.column_type(idx);
             let name = stmt.column_name(idx).map_or("unknown".to_string(), |v| v.clone());
-
             Ok(FieldInfo::new(
                 name.to_string(),
                 None,
@@ -226,130 +231,119 @@ fn row_desc_from_stmt(stmt: &duckdb::Statement, format: &Format) -> PgWireResult
         .collect()
 }
 
+/// Convert Arrow schema to pgwire field info
+fn schema_to_field_info(schema: &duckdb::arrow::datatypes::Schema, format: &Format) -> PgWireResult<Vec<FieldInfo>> {
+    schema.fields().iter().enumerate().map(|(idx, field)| {
+        let pg_type = arrow_type_to_pg_type(field.data_type());
+        Ok(FieldInfo::new(
+            field.name().clone(),
+            None,
+            None,
+            pg_type,
+            format.format_for(idx),
+        ))
+    }).collect()
+}
+
+/// Convert Arrow data type to PostgreSQL type
+fn arrow_type_to_pg_type(arrow_type: &duckdb::arrow::datatypes::DataType) -> Type {
+    use duckdb::arrow::datatypes::DataType;
+    match arrow_type {
+        DataType::Boolean => Type::BOOL,
+        DataType::Int8 | DataType::Int16 => Type::INT2,
+        DataType::Int32 => Type::INT4,
+        DataType::Int64 => Type::INT8,
+        DataType::UInt8 | DataType::UInt16 => Type::INT2,
+        DataType::UInt32 => Type::INT4,
+        DataType::UInt64 => Type::INT8,
+        DataType::Float16 | DataType::Float32 => Type::FLOAT4,
+        DataType::Float64 => Type::FLOAT8,
+        DataType::Utf8 | DataType::LargeUtf8 => Type::TEXT,
+        DataType::Date32 | DataType::Date64 => Type::DATE,
+        DataType::Timestamp(_, _) => Type::TIMESTAMP,
+        DataType::Time32(_) | DataType::Time64(_) => Type::TIME,
+        DataType::Binary | DataType::LargeBinary => Type::BYTEA,
+        _ => Type::TEXT,
+    }
+}
+
 #[async_trait]
 impl SimpleQueryHandler for DuckDBQueryHandler {
     async fn do_query<'a, C>(&self, _client: &mut C, query: &str) -> PgWireResult<Vec<Response<'a>>>
     where
         C: ClientInfo + Unpin + Send + Sync,
     {
-        let login_info = LoginInfo::from_client_info(_client);
-        let database = login_info.database().map(|s| s.to_string());
-        
-        let connection = self.connection.clone();
-        let query = query.to_string();
-        let server_host = self.server_host.clone();
-        let server_port = self.server_port;
-        
-        let result = tokio::task::spawn_blocking(move || -> PgWireResult<Vec<Response<'static>>> {
-            let conn = connection.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        log_debug(&format!("SimpleQuery: {}", query));
 
-            if let Some(db) = &database {
-                if let Some(db_credentials) = ServerRegistry::instance().get_db_credentials(&server_host, server_port) {
-                    match check_database_action(db, &db_credentials) {
-                        DatabaseAction::SetDatabase => {
-                            let _ = conn.execute(&format!("USE {}", db), params![]);
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            
-            let queries: Vec<&str> = query
-                .split(';')
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect();
+        // Split multi-statement queries
+        let queries: Vec<&str> = query
+            .split(';')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
 
-            let mut responses = Vec::new();
+        let mut responses = Vec::new();
 
-            for tmpsql in queries {
-                let sql = &tmpsql.replace("::regclass", "::string")
-        .replace("AND datallowconn AND NOT datistemplate", "AND NOT db.datname =('system') AND NOT db.datname =('temp')")
-        .replace("pg_get_expr(ad.adbin, ad.adrelid, true)","pg_get_expr(ad.adbin, ad.adrelid)")
-        .replace("pg_catalog.pg_relation_size(i.indexrelid)","''")
-        .replace("pg_catalog.pg_stat_get_numscans(i.indexrelid)","''")
-        .replace("pg_catalog.pg_inherits i,pg_catalog.pg_class c WHERE",
-        "(select 0 as inhseqno, 0 as inhrelid, 0 as inhparent) as i join pg_catalog.pg_class as c ON")
-        .replace("SELECT c.oid,c.*,t.relname as tabrelname,rt.relnamespace as refnamespace,d.description, null as consrc_copy",
-        "SELECT c.oid,t.relname  as tabrelname,rt.relnamespace as refnamespace,d.description, null as consrc_copy");
+        for sql in queries {
+            // Apply PostgreSQL compatibility transformations
+            let sql = sql.replace("::regclass", "::string")
+                .replace("AND datallowconn AND NOT datistemplate", "AND NOT db.datname =('system') AND NOT db.datname =('temp')")
+                .replace("pg_get_expr(ad.adbin, ad.adrelid, true)","pg_get_expr(ad.adbin, ad.adrelid)")
+                .replace("pg_catalog.pg_relation_size(i.indexrelid)","''")
+                .replace("pg_catalog.pg_stat_get_numscans(i.indexrelid)","''")
+                .replace("pg_catalog.pg_inherits i,pg_catalog.pg_class c WHERE",
+                "(select 0 as inhseqno, 0 as inhrelid, 0 as inhparent) as i join pg_catalog.pg_class as c ON")
+                .replace("SELECT c.oid,c.*,t.relname as tabrelname,rt.relnamespace as refnamespace,d.description, null as consrc_copy",
+                "SELECT c.oid,t.relname  as tabrelname,rt.relnamespace as refnamespace,d.description, null as consrc_copy");
 
-                let hana_credentials = get_hana_credentials_if_available(&database, &server_host, server_port);
+            // Submit query to executor and await result
+            log_debug(&format!("Submitting to executor: {}", sql));
+            let result_rx = self.executor.submit(sql.clone());
 
-                let (actual_sql, fallback_sql) = if let Some(hana_creds) = &hana_credentials {
-                    (wrap_query_for_hana(sql, hana_creds), Some(sql.to_string()))
-                } else {
-                    (sql.to_string(), None)
-                };
+            let query_result = result_rx.await.map_err(|_| {
+                PgWireError::UserError(Box::new(ErrorInfo::new(
+                    "ERROR".to_owned(),
+                    "XX000".to_owned(),
+                    "Query execution channel closed".to_owned(),
+                )))
+            })?;
 
-                if actual_sql.to_uppercase().starts_with("SELECT") || actual_sql.to_uppercase().starts_with("WITH") {
-                    let fallback_ref = fallback_sql.as_deref();
-
-                    let mut stmt_result = conn.prepare(&actual_sql);
-                    let mut query_to_use = actual_sql.as_str();
-
-                    if stmt_result.is_err() && fallback_ref.is_some() {
-                        stmt_result = conn.prepare(fallback_ref.unwrap());
-                        query_to_use = fallback_ref.unwrap();
-                    }
-
-                    let mut stmt = stmt_result.map_err(|e| PgWireError::ApiError(Box::new(e)))?;
-
-                    let mut ret_result = stmt.query_arrow(params![]);
-
-                    if ret_result.is_err() && fallback_ref.is_some() && query_to_use != fallback_ref.unwrap() {
-                        stmt = conn.prepare(fallback_ref.unwrap()).map_err(|e| PgWireError::ApiError(Box::new(e)))?;
-                        ret_result = stmt.query_arrow(params![]);
-                    }
-
-                    let ret = ret_result.map_err(|e| PgWireError::ApiError(Box::new(e)))?;
-                    let schema = ret.get_schema();
-                    let header = Arc::new(arrow_schema_to_pg_fields(
-                        schema.as_ref(),
-                        &Format::UnifiedText,
-                    )?);
-
+            // Convert QueryResult to pgwire Response
+            match query_result {
+                QueryResult::Select { schema, batches } => {
+                    log_debug(&format!("Got SELECT result: {} batches", batches.len()));
+                    let header = Arc::new(schema_to_field_info(&schema, &Format::UnifiedText)?);
                     let header_ref = header.clone();
-                    let data = ret
-                        .flat_map(move |rb| encode_recordbatch(header_ref.clone(), rb))
-                        .collect::<Vec<_>>();
-                        
+
+                    let data: Vec<_> = batches.into_iter()
+                        .flat_map(|rb| encode_recordbatch(header_ref.clone(), rb))
+                        .collect();
+
                     responses.push(Response::Query(QueryResponse::new(
                         header,
                         stream::iter(data.into_iter()),
                     )));
-                } else {
-                    if sql.to_uppercase().starts_with("SET")
-                    && (sql.to_uppercase().contains("EXTRA_FLOAT_DIGITS")
-                        || sql.to_uppercase().contains("APPLICATION_NAME")) {
-                        responses.push(Response::Execution(Tag::new("OK")));
-                    } else {
-                        let fallback_ref = fallback_sql.as_deref();
-
-                        let _affected_rows = execute_with_fallback(&actual_sql, fallback_ref, |query_str| {
-                            conn.execute_batch(query_str)
-                        }).map_err(|e| PgWireError::ApiError(Box::new(e)))?;
-
-                        responses.push(Response::Execution(Tag::new("OK").with_rows(0)));
-                    }
+                }
+                QueryResult::Execute { rows_affected } => {
+                    log_debug(&format!("Got EXECUTE result: {} rows", rows_affected));
+                    responses.push(Response::Execution(Tag::new("OK").with_rows(rows_affected)));
+                }
+                QueryResult::Error(err) => {
+                    log_debug(&format!("Got ERROR: {}", err));
+                    return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                        "ERROR".to_owned(),
+                        "XX000".to_owned(),
+                        err,
+                    ))));
                 }
             }
+        }
 
-            if responses.is_empty() {
-                responses.push(Response::Execution(Tag::new("OK").with_rows(0)));
-            }
+        if responses.is_empty() {
+            responses.push(Response::Execution(Tag::new("OK").with_rows(0)));
+        }
 
-            Ok(responses)
-        })
-        .await
-        .map_err(|e| {
-            PgWireError::UserError(Box::new(ErrorInfo::new(
-                "ERROR".to_owned(),
-                "XX000".to_owned(),
-                format!("Task execution failed: {}", e),
-            )))
-        })??;
-
-        Ok(result)
+        Ok(responses)
     }
 }
 
@@ -371,86 +365,46 @@ impl ExtendedQueryHandler for DuckDBQueryHandler {
     where
         C: ClientInfo + Unpin + Send + Sync,
     {
-        let login_info = LoginInfo::from_client_info(_client);
-        let database = login_info.database().map(|s| s.to_string());
-        
-        let connection = self.connection.clone();
         let query = portal.statement.statement.clone();
-        let _params = get_params(portal);
-        let server_host = self.server_host.clone();
-        let server_port = self.server_port;
-        
-        tokio::task::spawn_blocking(move || -> PgWireResult<Response<'static>> {
-            let conn = connection.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            
-            let hana_credentials = get_hana_credentials_if_available(&database, &server_host, server_port);
-            
-            let (actual_query, fallback_query) = if let Some(hana_creds) = &hana_credentials {
-                (wrap_query_for_hana(&query, hana_creds), Some(query.clone()))
-            } else {
-                (query.clone(), None)
-            };
-            
-            if actual_query.to_uppercase().starts_with("SELECT") || actual_query.to_uppercase().starts_with("WITH") {
-                let fallback_ref = fallback_query.as_deref();
+        log_debug(&format!("ExtendedQuery: {}", query));
 
-                let mut stmt_result = conn.prepare(&actual_query);
-                let mut query_to_use = actual_query.as_str();
+        // Submit query to executor
+        let result_rx = self.executor.submit(query);
 
-                if stmt_result.is_err() && fallback_ref.is_some() {
-                    stmt_result = conn.prepare(fallback_ref.unwrap());
-                    query_to_use = fallback_ref.unwrap();
-                }
+        let query_result = result_rx.await.map_err(|_| {
+            PgWireError::UserError(Box::new(ErrorInfo::new(
+                "ERROR".to_owned(),
+                "XX000".to_owned(),
+                "Query execution channel closed".to_owned(),
+            )))
+        })?;
 
-                let mut stmt = stmt_result.map_err(|e| PgWireError::ApiError(Box::new(e)))?;
-
-                let mut ret_result = stmt.query_arrow(params![]);
-
-                if ret_result.is_err() && fallback_ref.is_some() && query_to_use != fallback_ref.unwrap() {
-                    stmt = conn.prepare(fallback_ref.unwrap()).map_err(|e| PgWireError::ApiError(Box::new(e)))?;
-                    ret_result = stmt.query_arrow(params![]);
-                }
-
-                let ret = ret_result.map_err(|e| PgWireError::ApiError(Box::new(e)))?;
-                let schema = ret.get_schema();
-                let header = Arc::new(arrow_schema_to_pg_fields(
-                    schema.as_ref(),
-                    &Format::UnifiedText,
-                )?);
-
+        // Convert QueryResult to pgwire Response
+        match query_result {
+            QueryResult::Select { schema, batches } => {
+                let header = Arc::new(schema_to_field_info(&schema, &Format::UnifiedText)?);
                 let header_ref = header.clone();
-                let data = ret
-                    .flat_map(move |rb| encode_recordbatch(header_ref.clone(), rb))
-                    .collect::<Vec<_>>();
+
+                let data: Vec<_> = batches.into_iter()
+                    .flat_map(|rb| encode_recordbatch(header_ref.clone(), rb))
+                    .collect();
 
                 Ok(Response::Query(QueryResponse::new(
                     header,
                     stream::iter(data.into_iter()),
                 )))
-            } else {
-                if query.to_uppercase().starts_with("SET")
-                && (query.to_uppercase().contains("EXTRA_FLOAT_DIGITS")
-                    || query.to_uppercase().contains("APPLICATION_NAME")) {
-                    Ok(Response::Execution(Tag::new("OK")))
-                } else {
-                    let fallback_ref = fallback_query.as_deref();
-
-                    let _affected_rows = execute_with_fallback(&actual_query, fallback_ref, |query_str| {
-                        conn.execute_batch(query_str)
-                    }).map_err(|e| PgWireError::ApiError(Box::new(e)))?;
-
-                    Ok(Response::Execution(Tag::new("OK").with_rows(0)))
-                }
             }
-        })
-        .await
-        .map_err(|e| {
-            PgWireError::UserError(Box::new(ErrorInfo::new(
-                "ERROR".to_owned(),
-                "XX000".to_owned(),
-                format!("Task execution failed: {}", e),
-            )))
-        })?
+            QueryResult::Execute { rows_affected } => {
+                Ok(Response::Execution(Tag::new("OK").with_rows(rows_affected)))
+            }
+            QueryResult::Error(err) => {
+                Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                    "ERROR".to_owned(),
+                    "XX000".to_owned(),
+                    err,
+                ))))
+            }
+        }
     }
 
     async fn do_describe_statement<C>(
@@ -463,15 +417,34 @@ impl ExtendedQueryHandler for DuckDBQueryHandler {
     {
         let login_info = LoginInfo::from_client_info(_client);
         let database = login_info.database().map(|s| s.to_string());
-        
-        let connection = self.connection.clone();
+
+        // Use shared connection for describe operations (quick, don't need parallel execution)
+        let connection = get_shared_connection().ok_or_else(|| {
+            PgWireError::UserError(Box::new(ErrorInfo::new(
+                "ERROR".to_owned(),
+                "XX000".to_owned(),
+                "No shared connection available".to_owned(),
+            )))
+        })?;
         let statement = stmt.statement.clone();
         let param_types = stmt.parameter_types.clone();
         let server_host = self.server_host.clone();
         let server_port = self.server_port;
-        
+
         tokio::task::spawn_blocking(move || -> PgWireResult<DescribeStatementResponse> {
-            let conn = connection.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let guard = connection.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let conn = &*guard;
+
+            if let Some(db) = &database {
+                if let Some(db_credentials) = ServerRegistry::instance().get_db_credentials(&server_host, server_port) {
+                    match check_database_action(db, &db_credentials) {
+                        DatabaseAction::SetDatabase => {
+                            let _ = conn.execute(&format!("USE {}", db), params![]);
+                        }
+                        _ => {}
+                    }
+                }
+            }
 
             let hana_credentials = get_hana_credentials_if_available(&database, &server_host, server_port);
 
@@ -509,15 +482,34 @@ impl ExtendedQueryHandler for DuckDBQueryHandler {
     {
         let login_info = LoginInfo::from_client_info(_client);
         let database = login_info.database().map(|s| s.to_string());
-        
-        let connection = self.connection.clone();
+
+        // Use shared connection for describe operations (quick, don't need parallel execution)
+        let connection = get_shared_connection().ok_or_else(|| {
+            PgWireError::UserError(Box::new(ErrorInfo::new(
+                "ERROR".to_owned(),
+                "XX000".to_owned(),
+                "No shared connection available".to_owned(),
+            )))
+        })?;
         let statement = portal.statement.statement.clone();
         let format = portal.result_column_format.clone();
         let server_host = self.server_host.clone();
         let server_port = self.server_port;
-        
+
         tokio::task::spawn_blocking(move || -> PgWireResult<DescribePortalResponse> {
-            let conn = connection.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let guard = connection.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let conn = &*guard;
+
+            if let Some(db) = &database {
+                if let Some(db_credentials) = ServerRegistry::instance().get_db_credentials(&server_host, server_port) {
+                    match check_database_action(db, &db_credentials) {
+                        DatabaseAction::SetDatabase => {
+                            let _ = conn.execute(&format!("USE {}", db), params![]);
+                        }
+                        _ => {}
+                    }
+                }
+            }
 
             let hana_credentials = get_hana_credentials_if_available(&database, &server_host, server_port);
 
@@ -551,9 +543,9 @@ pub struct DuckDBPgWireServerFactory {
 }
 
 impl DuckDBPgWireServerFactory {
-    pub fn new(connection: Arc<Mutex<Connection>>, host: String, port: u16) -> Self {
+    pub fn new(executor: Arc<QueryExecutor>, host: String, port: u16) -> Self {
         Self {
-            query_handler: Arc::new(DuckDBQueryHandler::new(connection, host, port)),
+            query_handler: Arc::new(DuckDBQueryHandler::new(executor, host, port)),
         }
     }
 }
@@ -579,13 +571,13 @@ pub struct DuckDBPgWireServerWithAuth {
 
 impl DuckDBPgWireServerWithAuth {
     pub fn new(
-        connection: Arc<Mutex<Connection>>, 
+        executor: Arc<QueryExecutor>,
         password: String,
         host: String,
         port: u16,
     ) -> Self {
         Self {
-            query_handler: Arc::new(DuckDBQueryHandler::new(connection, host, port)),
+            query_handler: Arc::new(DuckDBQueryHandler::new(executor, host, port)),
             password,
         }
     }
@@ -638,14 +630,19 @@ pub fn start_pgwire_server_capi(
 
             let result = rt.block_on(async move {
                 let listener = TcpListener::bind(format!("{}:{}", server_host, server_port)).await?;
+                log_debug(&format!("Bound to {}:{}", server_host, server_port));
 
-                let shared_connection = get_shared_connection().unwrap_or_else(|| {
-                    Arc::new(Mutex::new(
-                        Connection::open_in_memory().expect("Failed to create connection")
-                    ))
-                });
-                if let Some(required_password) = password_opt {
-                    let server_handlers = Arc::new(DuckDBPgWireServerWithAuth::new(shared_connection.clone(), required_password, server_host.clone(), server_port));
+                // Get the query executor created during extension init.
+                // The executor has multiple worker threads with their own connection clones.
+                let executor = get_query_executor().ok_or_else(|| {
+                    log_debug("No query executor available");
+                    std::io::Error::new(std::io::ErrorKind::Other, "No query executor available")
+                })?;
+                log_debug(&format!("Using query executor with {} workers", executor.pool_size()));
+
+                // Treat empty password as no authentication
+                if let Some(required_password) = password_opt.filter(|p| !p.is_empty()) {
+                    let server_handlers = Arc::new(DuckDBPgWireServerWithAuth::new(executor.clone(), required_password.to_string(), server_host.clone(), server_port));
 
                     loop {
                         tokio::select! {
@@ -664,20 +661,30 @@ pub fn start_pgwire_server_capi(
                         }
                     }
                 } else {
-                    let server_handlers = Arc::new(DuckDBPgWireServerFactory::new(shared_connection.clone(), server_host.clone(), server_port));
+                    log_debug("Using no-auth mode");
+                    let server_handlers = Arc::new(DuckDBPgWireServerFactory::new(executor.clone(), server_host.clone(), server_port));
 
                     loop {
                         tokio::select! {
-                            _ = &mut shutdown_rx => break,
+                            _ = &mut shutdown_rx => {
+                                log_debug("Received shutdown signal");
+                                break;
+                            }
                             result = listener.accept() => {
                                 match result {
-                                    Ok((socket, _addr)) => {
+                                    Ok((socket, addr)) => {
+                                        log_debug(&format!("New connection from {:?}", addr));
                                         let handlers = server_handlers.clone();
                                         tokio::spawn(async move {
-                                            let _ = process_socket(socket, None, handlers).await;
+                                            log_debug("Processing socket...");
+                                            let result = process_socket(socket, None, handlers).await;
+                                            log_debug(&format!("Socket result: {:?}", result));
                                         });
                                     }
-                                    Err(_) => break,
+                                    Err(e) => {
+                                        log_debug(&format!("Accept error: {}", e));
+                                        break;
+                                    }
                                 }
                             }
                         }
