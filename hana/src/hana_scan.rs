@@ -9,6 +9,7 @@ use std::fmt;
 use std::sync::RwLock;
 use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::panic::{self, AssertUnwindSafe};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LogLevel {
@@ -556,6 +557,40 @@ pub fn validate_hana_connection(url: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Safe wrapper around HanaConnection::new that catches panics
+fn safe_hana_connect(url: String) -> Result<HanaConnection, Box<dyn Error>> {
+    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+        HanaConnection::new(url)
+    }));
+
+    match result {
+        Ok(conn_result) => conn_result.map_err(|e| {
+            HanaError::connection(
+                &format!("Connection failed: {}", e),
+                None,
+                None,
+                "safe_hana_connect"
+            ) as Box<dyn Error>
+        }),
+        Err(panic_err) => {
+            let panic_msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_err.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic during HANA connection".to_string()
+            };
+            hana_error!("CONN", "Connection panicked: {}", panic_msg);
+            Err(HanaError::connection(
+                &format!("Connection panicked: {}", panic_msg),
+                None,
+                None,
+                "safe_hana_connect"
+            ))
+        }
+    }
+}
+
 pub struct HanaScanVTab;
 
 impl VTab for HanaScanVTab {
@@ -588,7 +623,7 @@ impl VTab for HanaScanVTab {
         if connection_timeout_ms == 0 || connection_timeout_ms > 300000 {
             return Err(HanaError::new("Connection timeout must be between 1ms and 5 minutes"));
         }
-        let (column_names, column_types) = match HanaConnection::new(url.clone()) {
+        let (column_names, column_types) = match safe_hana_connect(url.clone()) {
             Ok(connection) => {
                 let is_datetime_query = query.to_lowercase().contains("now()") ||
                                        query.to_lowercase().contains("current_timestamp") ||
@@ -719,7 +754,7 @@ impl VTab for HanaScanVTab {
             let mut connection_result = None;
             let mut last_error = None;
             for attempt in 0..=bind_data_ref.max_retries {
-                match HanaConnection::new(bind_data_ref.url.clone()) {
+                match safe_hana_connect(bind_data_ref.url.clone()) {
                     Ok(connection) => {
                         connection_result = Some(connection);
                         break;
