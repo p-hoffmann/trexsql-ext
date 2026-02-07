@@ -1,0 +1,76 @@
+# name: test/sql/flight.test
+# description: test flight extension for Arrow Flight SQL protocol
+# group: [flight]
+
+# Before we load the extension, this will fail
+statement error
+SELECT flight_version();
+----
+Catalog Error: Scalar Function with name flight_version does not exist!
+
+# Require statement will ensure the extension is loaded from now on
+require flight
+
+# Test flight_version returns the correct version string
+query I
+SELECT flight_version();
+----
+flight extension v0.1.0
+
+# Test flight_server_status returns empty when no server is running
+query IIII
+SELECT * FROM flight_server_status();
+----
+
+# Start a Flight server on test port
+query I
+SELECT start_flight_server('127.0.0.1', 18815);
+----
+Started flight server on 127.0.0.1:18815
+
+# Verify flight_server_status shows the running server
+query IIII
+SELECT hostname, port, tls_enabled FROM flight_server_status();
+----
+127.0.0.1	18815	false
+
+# Starting a duplicate server should report an error
+query I
+SELECT start_flight_server('127.0.0.1', 18815);
+----
+Error: Server already running on 127.0.0.1:18815
+
+# Stop the Flight server
+query I
+SELECT stop_flight_server('127.0.0.1', 18815);
+----
+Server 127.0.0.1:18815 stopped
+
+# Verify flight_server_status returns empty after stopping
+query IIII
+SELECT * FROM flight_server_status();
+----
+
+# Stopping a non-existent server should report an error
+query I
+SELECT stop_flight_server('127.0.0.1', 18815);
+----
+Error: No server running on 127.0.0.1:18815
+
+# Invalid port (negative) should report an error
+statement error
+SELECT start_flight_server('127.0.0.1', -1);
+----
+Port must be between 1 and 65535
+
+# Invalid port (too large) should report an error
+statement error
+SELECT start_flight_server('127.0.0.1', 70000);
+----
+Port must be between 1 and 65535
+
+# TLS with non-existent cert files should report an error
+query I
+SELECT start_flight_server_tls('127.0.0.1', 18816, '/nonexistent/cert.pem', '/nonexistent/key.pem', '/nonexistent/ca.pem');
+----
+Error: Failed to read certificate file /nonexistent/cert.pem: No such file or directory (os error 2)
