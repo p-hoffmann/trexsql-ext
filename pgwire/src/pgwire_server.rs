@@ -201,14 +201,16 @@ pub struct DuckDBQueryHandler {
     executor: Arc<QueryExecutor>,
     server_host: String,
     server_port: u16,
+    worker_id: usize,
 }
 
 impl DuckDBQueryHandler {
-    pub fn new(executor: Arc<QueryExecutor>, host: String, port: u16) -> Self {
+    pub fn new(executor: Arc<QueryExecutor>, host: String, port: u16, worker_id: usize) -> Self {
         Self {
             executor,
             server_host: host,
             server_port: port,
+            worker_id,
         }
     }
 }
@@ -296,9 +298,9 @@ impl SimpleQueryHandler for DuckDBQueryHandler {
                 .replace("SELECT c.oid,c.*,t.relname as tabrelname,rt.relnamespace as refnamespace,d.description, null as consrc_copy",
                 "SELECT c.oid,t.relname  as tabrelname,rt.relnamespace as refnamespace,d.description, null as consrc_copy");
 
-            // Submit query to executor and await result
-            log_debug(&format!("Submitting to executor: {}", sql));
-            let result_rx = self.executor.submit(sql.clone());
+            // Submit query to pinned worker and await result
+            log_debug(&format!("Submitting to worker {}: {}", self.worker_id, sql));
+            let result_rx = self.executor.submit_to(self.worker_id, sql.clone());
 
             let query_result = result_rx.await.map_err(|_| {
                 PgWireError::UserError(Box::new(ErrorInfo::new(
@@ -368,8 +370,8 @@ impl ExtendedQueryHandler for DuckDBQueryHandler {
         let query = portal.statement.statement.clone();
         log_debug(&format!("ExtendedQuery: {}", query));
 
-        // Submit query to executor
-        let result_rx = self.executor.submit(query);
+        // Submit query to pinned worker
+        let result_rx = self.executor.submit_to(self.worker_id, query);
 
         let query_result = result_rx.await.map_err(|_| {
             PgWireError::UserError(Box::new(ErrorInfo::new(
@@ -543,9 +545,9 @@ pub struct DuckDBPgWireServerFactory {
 }
 
 impl DuckDBPgWireServerFactory {
-    pub fn new(executor: Arc<QueryExecutor>, host: String, port: u16) -> Self {
+    pub fn new(executor: Arc<QueryExecutor>, host: String, port: u16, worker_id: usize) -> Self {
         Self {
-            query_handler: Arc::new(DuckDBQueryHandler::new(executor, host, port)),
+            query_handler: Arc::new(DuckDBQueryHandler::new(executor, host, port, worker_id)),
         }
     }
 }
@@ -575,9 +577,10 @@ impl DuckDBPgWireServerWithAuth {
         password: String,
         host: String,
         port: u16,
+        worker_id: usize,
     ) -> Self {
         Self {
-            query_handler: Arc::new(DuckDBQueryHandler::new(executor, host, port)),
+            query_handler: Arc::new(DuckDBQueryHandler::new(executor, host, port, worker_id)),
             password,
         }
     }
@@ -642,15 +645,14 @@ pub fn start_pgwire_server_capi(
 
                 // Treat empty password as no authentication
                 if let Some(required_password) = password_opt.filter(|p| !p.is_empty()) {
-                    let server_handlers = Arc::new(DuckDBPgWireServerWithAuth::new(executor.clone(), required_password.to_string(), server_host.clone(), server_port));
-
                     loop {
                         tokio::select! {
                             _ = &mut shutdown_rx => break,
                             result = listener.accept() => {
                                 match result {
                                     Ok((socket, _addr)) => {
-                                        let handlers = server_handlers.clone();
+                                        let worker_id = executor.next_worker_id();
+                                        let handlers = Arc::new(DuckDBPgWireServerWithAuth::new(executor.clone(), required_password.to_string(), server_host.clone(), server_port, worker_id));
                                         tokio::spawn(async move {
                                             let _ = process_socket(socket, None, handlers).await;
                                         });
@@ -662,7 +664,6 @@ pub fn start_pgwire_server_capi(
                     }
                 } else {
                     log_debug("Using no-auth mode");
-                    let server_handlers = Arc::new(DuckDBPgWireServerFactory::new(executor.clone(), server_host.clone(), server_port));
 
                     loop {
                         tokio::select! {
@@ -674,7 +675,8 @@ pub fn start_pgwire_server_capi(
                                 match result {
                                     Ok((socket, addr)) => {
                                         log_debug(&format!("New connection from {:?}", addr));
-                                        let handlers = server_handlers.clone();
+                                        let worker_id = executor.next_worker_id();
+                                        let handlers = Arc::new(DuckDBPgWireServerFactory::new(executor.clone(), server_host.clone(), server_port, worker_id));
                                         tokio::spawn(async move {
                                             log_debug("Processing socket...");
                                             let result = process_socket(socket, None, handlers).await;

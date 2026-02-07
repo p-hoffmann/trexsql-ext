@@ -4,6 +4,7 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use duckdb::arrow::record_batch::RecordBatch;
 use duckdb::{params, Connection};
 use std::panic::{self, AssertUnwindSafe};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
@@ -29,14 +30,15 @@ struct Worker {
 
 /// Distributes queries across a pool of worker threads with pre-cloned connections.
 pub struct QueryExecutor {
-    sender: Option<Sender<QueryRequest>>,
+    senders: Vec<Sender<QueryRequest>>,
     workers: Vec<Worker>,
+    next_worker: AtomicUsize,
 }
 
 impl Drop for QueryExecutor {
     fn drop(&mut self) {
-        // Drop sender to signal workers to exit
-        self.sender.take();
+        // Drop senders to signal workers to exit
+        self.senders.clear();
         // Wait for workers to finish
         for worker in &mut self.workers {
             if let Some(handle) = worker.handle.take() {
@@ -49,6 +51,9 @@ impl Drop for QueryExecutor {
 impl QueryExecutor {
     /// Creates executor pool. Must be called from the connection's origin thread.
     pub fn new(connection: &Connection, pool_size: usize) -> Result<Self, String> {
+        if pool_size == 0 {
+            return Err("pool_size must be > 0".into());
+        }
         let mut connections = Vec::with_capacity(pool_size);
         for i in 0..pool_size {
             connections.push(
@@ -58,11 +63,11 @@ impl QueryExecutor {
             );
         }
 
-        let (sender, receiver): (Sender<QueryRequest>, Receiver<QueryRequest>) = unbounded();
-
+        let mut senders = Vec::with_capacity(pool_size);
         let mut workers = Vec::with_capacity(pool_size);
         for (i, conn) in connections.into_iter().enumerate() {
-            let rx = receiver.clone();
+            let (tx, rx): (Sender<QueryRequest>, Receiver<QueryRequest>) = unbounded();
+            senders.push(tx);
             let handle = thread::Builder::new()
                 .name(format!("pgwire-executor-{i}"))
                 .spawn(move || worker_loop(conn, rx))
@@ -70,20 +75,26 @@ impl QueryExecutor {
             workers.push(Worker { handle: Some(handle) });
         }
 
-        Ok(Self { sender: Some(sender), workers })
+        Ok(Self {
+            senders,
+            workers,
+            next_worker: AtomicUsize::new(0),
+        })
     }
 
-    pub fn submit(&self, query: String) -> tokio::sync::oneshot::Receiver<QueryResult> {
-        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+    /// Returns next worker index via round-robin.
+    pub fn next_worker_id(&self) -> usize {
+        self.next_worker.fetch_add(1, Ordering::Relaxed) % self.senders.len()
+    }
 
-        let sender = match &self.sender {
-            Some(s) => s,
-            None => {
-                let (tx, rx) = tokio::sync::oneshot::channel();
-                let _ = tx.send(QueryResult::Error("executor shutdown".into()));
-                return rx;
-            }
-        };
+    /// Sends request to a specific worker's channel (pinned connection).
+    pub fn submit_to(
+        &self,
+        worker_id: usize,
+        query: String,
+    ) -> tokio::sync::oneshot::Receiver<QueryResult> {
+        let sender = &self.senders[worker_id % self.senders.len()];
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
         if let Err(e) = sender.send(QueryRequest { query, response_tx }) {
             let (tx, rx) = tokio::sync::oneshot::channel();
@@ -92,6 +103,12 @@ impl QueryExecutor {
         }
 
         response_rx
+    }
+
+    /// Sends request via round-robin worker selection.
+    pub fn submit(&self, query: String) -> tokio::sync::oneshot::Receiver<QueryResult> {
+        let worker_id = self.next_worker_id();
+        self.submit_to(worker_id, query)
     }
 
     pub fn pool_size(&self) -> usize {
