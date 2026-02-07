@@ -3,6 +3,7 @@
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use duckdb::arrow::record_batch::RecordBatch;
 use duckdb::{params, Connection};
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
@@ -100,8 +101,28 @@ impl QueryExecutor {
 
 fn worker_loop(conn: Connection, receiver: Receiver<QueryRequest>) {
     while let Ok(req) = receiver.recv() {
-        let result = execute_query(&conn, &req.query);
-        let _ = req.response_tx.send(result);
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            execute_query(&conn, &req.query)
+        }));
+        let query_result = match result {
+            Ok(r) => r,
+            Err(panic_err) => {
+                let msg = extract_panic_message(panic_err);
+                eprintln!("pgwire query panicked: {msg}");
+                QueryResult::Error(format!("query panicked: {msg}"))
+            }
+        };
+        let _ = req.response_tx.send(query_result);
+    }
+}
+
+fn extract_panic_message(err: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = err.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = err.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
     }
 }
 
