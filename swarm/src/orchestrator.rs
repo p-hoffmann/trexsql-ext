@@ -1,24 +1,7 @@
 use crate::config::ExtensionConfig;
 use crate::gossip::GossipRegistry;
 use crate::logging::SwarmLogger;
-
-// ---------------------------------------------------------------------------
-// Known service start function mapping
-// ---------------------------------------------------------------------------
-
-/// Return the SQL statement to start a service for the given extension name,
-/// substituting the provided host and port.  Returns `None` for extensions
-/// that have no known start function (load-only extensions).
-fn start_function_sql(name: &str, host: &str, port: u16, password: &str) -> Option<String> {
-    match name {
-        "flight" => Some(format!("SELECT start_flight_server('{host}', {port})")),
-        "pgwire" => Some(format!(
-            "SELECT start_pgwire_server('{host}', {port}, '{password}', '')"
-        )),
-        "trexas" => Some(format!("SELECT start_trexas_server('{host}', {port})")),
-        _ => None,
-    }
-}
+use crate::service_functions::get_start_service_sql;
 
 // ---------------------------------------------------------------------------
 // Orchestrator
@@ -69,10 +52,10 @@ pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
             continue;
         }
 
-        // Step 2: Start the service if host+port are configured
-        let (host, port) = match (&ext.host, ext.port) {
-            (Some(h), Some(p)) => (h.as_str(), p),
-            _ => {
+        // Step 2: Start the service if config is provided
+        let config_json = match &ext.config {
+            Some(cfg) => serde_json::to_string(cfg).unwrap_or_else(|_| "{}".to_string()),
+            None => {
                 let msg = format!("{}: loaded", ext.name);
                 SwarmLogger::info("orchestrator", &msg);
                 statuses.push(msg);
@@ -80,10 +63,9 @@ pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
             }
         };
 
-        let password = ext.password.as_deref().unwrap_or("");
-        let start_sql = match start_function_sql(&ext.name, host, port, password) {
-            Some(sql) => sql,
-            None => {
+        let start_sql = match get_start_service_sql(&ext.name, &config_json) {
+            Ok(Some(sql)) => sql,
+            Ok(None) => {
                 SwarmLogger::warn(
                     "orchestrator",
                     &format!(
@@ -94,7 +76,19 @@ pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
                 statuses.push(format!("{}: loaded (no start function)", ext.name));
                 continue;
             }
+            Err(e) => {
+                let msg = format!("{}: config error — {}", ext.name, e);
+                SwarmLogger::error("orchestrator", &msg);
+                statuses.push(msg);
+                continue;
+            }
         };
+
+        // Extract host/port from config for logging and gossip
+        let cfg_val: serde_json::Value =
+            serde_json::from_str(&config_json).unwrap_or_default();
+        let host = cfg_val["host"].as_str().unwrap_or("");
+        let port = cfg_val["port"].as_u64().unwrap_or(0);
 
         SwarmLogger::info(
             "orchestrator",
@@ -112,10 +106,13 @@ pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
         let registry = GossipRegistry::instance();
         if registry.is_running() {
             let gossip_key = format!("service:{}", ext.name);
-            let gossip_value = format!(
-                r#"{{"host": "{}", "port": {}, "status": "running"}}"#,
-                host, port
-            );
+            let gossip_value = serde_json::json!({
+                "host": host,
+                "port": port,
+                "status": "running",
+                "config": cfg_val
+            })
+            .to_string();
 
             if let Err(e) = registry.set_key(&gossip_key, &gossip_value) {
                 SwarmLogger::warn(
@@ -141,38 +138,91 @@ pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
 mod tests {
     use super::*;
 
-    // -- start_function_sql lookup tests ------------------------------------
+    // -- get_start_service_sql lookup tests (via service_functions) ----------
 
     #[test]
     fn start_sql_flight() {
-        let sql = start_function_sql("flight", "0.0.0.0", 8815, "").unwrap();
+        let sql = get_start_service_sql("flight", r#"{"host":"0.0.0.0","port":8815}"#)
+            .unwrap()
+            .unwrap();
         assert_eq!(sql, "SELECT start_flight_server('0.0.0.0', 8815)");
     }
 
     #[test]
+    fn start_sql_flight_tls() {
+        let sql = get_start_service_sql(
+            "flight",
+            r#"{"host":"0.0.0.0","port":8815,"cert_path":"/x/cert.pem","key_path":"/x/key.pem","ca_cert_path":"/x/ca.pem"}"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            sql,
+            "SELECT start_flight_server_tls('0.0.0.0', 8815, '/x/cert.pem', '/x/key.pem', '/x/ca.pem')"
+        );
+    }
+
+    #[test]
     fn start_sql_pgwire() {
-        let sql = start_function_sql("pgwire", "127.0.0.1", 5432, "").unwrap();
-        assert_eq!(sql, "SELECT start_pgwire_server('127.0.0.1', 5432, '', '')");
+        let sql = get_start_service_sql("pgwire", r#"{"host":"127.0.0.1","port":5432}"#)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            sql,
+            "SELECT start_pgwire_server('127.0.0.1', 5432, '', '')"
+        );
     }
 
     #[test]
     fn start_sql_pgwire_with_password() {
-        let sql = start_function_sql("pgwire", "127.0.0.1", 5432, "secret").unwrap();
-        assert_eq!(sql, "SELECT start_pgwire_server('127.0.0.1', 5432, 'secret', '')");
+        let sql = get_start_service_sql(
+            "pgwire",
+            r#"{"host":"127.0.0.1","port":5432,"password":"secret"}"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            sql,
+            "SELECT start_pgwire_server('127.0.0.1', 5432, 'secret', '')"
+        );
     }
 
     #[test]
     fn start_sql_trexas() {
-        let sql = start_function_sql("trexas", "10.0.0.1", 9090, "").unwrap();
-        assert_eq!(sql, "SELECT start_trexas_server('10.0.0.1', 9090)");
+        let json = r#"{"host":"10.0.0.1","port":9090}"#;
+        let sql = get_start_service_sql("trexas", json).unwrap().unwrap();
+        let escaped = json.replace('\'', "''");
+        assert_eq!(
+            sql,
+            format!("SELECT trex_start_server_with_config('{escaped}')")
+        );
+    }
+
+    #[test]
+    fn start_sql_chdb_no_path() {
+        let sql = get_start_service_sql("chdb", "{}").unwrap().unwrap();
+        assert_eq!(sql, "SELECT chdb_start_database()");
+    }
+
+    #[test]
+    fn start_sql_chdb_with_path() {
+        let sql =
+            get_start_service_sql("chdb", r#"{"data_path":"/tmp/chdb"}"#)
+                .unwrap()
+                .unwrap();
+        assert_eq!(sql, "SELECT chdb_start_database('/tmp/chdb')");
     }
 
     #[test]
     fn start_sql_unknown_returns_none() {
-        assert!(start_function_sql("hana", "0.0.0.0", 1234, "").is_none());
-        assert!(start_function_sql("chdb", "0.0.0.0", 1234, "").is_none());
-        assert!(start_function_sql("llama", "0.0.0.0", 1234, "").is_none());
-        assert!(start_function_sql("nonexistent", "0.0.0.0", 1234, "").is_none());
+        assert!(get_start_service_sql("hana", "{}").unwrap().is_none());
+        assert!(get_start_service_sql("llama", "{}").unwrap().is_none());
+        assert!(get_start_service_sql("nonexistent", "{}").unwrap().is_none());
+    }
+
+    #[test]
+    fn start_sql_invalid_json_returns_err() {
+        assert!(get_start_service_sql("flight", "not json").is_err());
     }
 
     // -- orchestrate_extensions: load-only path -----------------------------
@@ -187,15 +237,11 @@ mod tests {
         let extensions = vec![
             ExtensionConfig {
                 name: "hana".to_string(),
-                host: None,
-                port: None,
-                password: None,
+                config: None,
             },
             ExtensionConfig {
                 name: "flight".to_string(),
-                host: Some("0.0.0.0".to_string()),
-                port: Some(8815),
-                password: None,
+                config: Some(serde_json::json!({"host": "0.0.0.0", "port": 8815})),
             },
         ];
 
@@ -211,12 +257,5 @@ mod tests {
                 "unexpected status: {status}"
             );
         }
-    }
-
-    #[test]
-    fn load_only_extension_has_no_start_sql() {
-        // Extensions without host/port should never match a start function,
-        // regardless of name.
-        assert!(start_function_sql("hana", "0.0.0.0", 0, "").is_none());
     }
 }

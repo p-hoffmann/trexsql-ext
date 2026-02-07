@@ -85,20 +85,53 @@ pub fn parse_service_json(json: &str) -> Option<ServiceInfo> {
 // Helper: known start-service SQL mapping
 // ---------------------------------------------------------------------------
 
-/// Return the SQL statement that starts the given service extension, or `None`
-/// if the extension name is not in the known mapping.
-pub fn get_start_service_sql(extension: &str, host: &str, port: u16, password: &str) -> Option<String> {
+/// Return the SQL statement that starts the given service extension by parsing
+/// a JSON config string.  Returns `Ok(None)` for unknown extensions,
+/// `Ok(Some(sql))` on success, or `Err` when the JSON is malformed.
+pub fn get_start_service_sql(extension: &str, config_json: &str) -> Result<Option<String>, String> {
+    let config: serde_json::Value = serde_json::from_str(config_json)
+        .map_err(|e| format!("Invalid JSON config: {e}"))?;
+
     match extension {
-        "flight" => Some(format!(
-            "SELECT start_flight_server('{host}', {port})"
-        )),
-        "pgwire" => Some(format!(
-            "SELECT start_pgwire_server('{host}', {port}, '{password}', '')"
-        )),
-        "trexas" => Some(format!(
-            "SELECT start_trexas_server('{host}', {port})"
-        )),
-        _ => None,
+        "flight" => {
+            let host = config["host"].as_str().unwrap_or("0.0.0.0");
+            let port = config["port"].as_u64().unwrap_or(8815);
+            if config.get("cert_path").is_some() {
+                let cert = config["cert_path"].as_str().unwrap_or("");
+                let key = config["key_path"].as_str().unwrap_or("");
+                let ca = config["ca_cert_path"].as_str().unwrap_or("");
+                Ok(Some(format!(
+                    "SELECT start_flight_server_tls('{host}', {port}, '{cert}', '{key}', '{ca}')"
+                )))
+            } else {
+                Ok(Some(format!(
+                    "SELECT start_flight_server('{host}', {port})"
+                )))
+            }
+        }
+        "pgwire" => {
+            let host = config["host"].as_str().unwrap_or("127.0.0.1");
+            let port = config["port"].as_u64().unwrap_or(5432);
+            let password = config["password"].as_str().unwrap_or("");
+            let db_creds = config["db_credentials"].as_str().unwrap_or("");
+            Ok(Some(format!(
+                "SELECT start_pgwire_server('{host}', {port}, '{password}', '{db_creds}')"
+            )))
+        }
+        "trexas" => {
+            let escaped = config_json.replace('\'', "''");
+            Ok(Some(format!(
+                "SELECT trex_start_server_with_config('{escaped}')"
+            )))
+        }
+        "chdb" => {
+            if let Some(path) = config.get("data_path").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                Ok(Some(format!("SELECT chdb_start_database('{path}')")))
+            } else {
+                Ok(Some("SELECT chdb_start_database()".to_string()))
+            }
+        }
+        _ => Ok(None),
     }
 }
 
@@ -243,7 +276,7 @@ impl VTab for SwarmServicesTable {
 }
 
 // ---------------------------------------------------------------------------
-// Scalar: swarm_start_service(extension, host, port)
+// Scalar: swarm_start_service(extension, config_json)
 // ---------------------------------------------------------------------------
 
 pub struct SwarmStartServiceScalar;
@@ -260,51 +293,37 @@ impl VScalar for SwarmStartServiceScalar {
             return Err("No input provided".into());
         }
 
-        // Read parameters
+        // Read parameters: extension name + JSON config string
         let ext_vector = input.flat_vector(0);
-        let host_vector = input.flat_vector(1);
-        let port_vector = input.flat_vector(2);
+        let cfg_vector = input.flat_vector(1);
 
         let ext_slice =
             ext_vector.as_slice_with_len::<libduckdb_sys::duckdb_string_t>(input.len());
-        let host_slice =
-            host_vector.as_slice_with_len::<libduckdb_sys::duckdb_string_t>(input.len());
-        let port_slice = port_vector.as_slice_with_len::<i32>(input.len());
+        let cfg_slice =
+            cfg_vector.as_slice_with_len::<libduckdb_sys::duckdb_string_t>(input.len());
 
         let extension = duckdb::types::DuckString::new(&mut { ext_slice[0] })
             .as_str()
             .to_string();
-        let host = duckdb::types::DuckString::new(&mut { host_slice[0] })
+        let config_json = duckdb::types::DuckString::new(&mut { cfg_slice[0] })
             .as_str()
             .to_string();
-        let port_raw = port_slice[0];
-        if port_raw < 0 || port_raw > 65535 {
-            return Err(format!("Port {} out of valid range (0-65535)", port_raw).into());
-        }
-        let port = port_raw as u16;
-
-        // Read optional password (4th parameter)
-        let password = if input.num_columns() > 3 {
-            let pw_vector = input.flat_vector(3);
-            let pw_slice =
-                pw_vector.as_slice_with_len::<libduckdb_sys::duckdb_string_t>(input.len());
-            duckdb::types::DuckString::new(&mut { pw_slice[0] })
-                .as_str()
-                .to_string()
-        } else {
-            String::new()
-        };
 
         // Look up known SQL for this service extension
-        let sql = match get_start_service_sql(&extension, &host, port, &password) {
-            Some(sql) => sql,
-            None => {
+        let sql = match get_start_service_sql(&extension, &config_json) {
+            Ok(Some(sql)) => sql,
+            Ok(None) => {
                 let msg = format!(
-                    "Unknown service extension '{}'. Known: flight, pgwire, trexas",
+                    "Unknown service extension '{}'. Known: flight, pgwire, trexas, chdb",
                     extension
                 );
                 let flat = output.flat_vector();
                 flat.insert(0, &msg);
+                return Ok(());
+            }
+            Err(e) => {
+                let flat = output.flat_vector();
+                flat.insert(0, &e);
                 return Ok(());
             }
         };
@@ -322,13 +341,18 @@ impl VScalar for SwarmStartServiceScalar {
             return Ok(());
         }
 
+        // Extract host/port from JSON for gossip registration
+        let config: serde_json::Value = serde_json::from_str(&config_json).unwrap_or_default();
+        let host = config["host"].as_str().unwrap_or("");
+        let port = config["port"].as_u64().unwrap_or(0);
+
         // Build the service JSON and publish to gossip
         let service_json = serde_json::json!({
             "host": host,
             "port": port,
             "status": "running",
             "uptime": 0,
-            "config": {}
+            "config": config
         })
         .to_string();
 
@@ -337,12 +361,12 @@ impl VScalar for SwarmStartServiceScalar {
 
         let response = match gossip_result {
             Ok(()) => format!(
-                "Service '{}' started on {}:{} and registered in gossip",
-                extension, host, port
+                "Service '{}' started and registered in gossip",
+                extension
             ),
             Err(e) => format!(
-                "Service '{}' started on {}:{} but gossip registration failed: {}",
-                extension, host, port, e
+                "Service '{}' started but gossip registration failed: {}",
+                extension, e
             ),
         };
 
@@ -352,25 +376,13 @@ impl VScalar for SwarmStartServiceScalar {
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
-        vec![
-            ScalarFunctionSignature::exact(
-                vec![
-                    LogicalTypeId::Varchar.into(), // extension
-                    LogicalTypeId::Varchar.into(), // host
-                    LogicalTypeId::Integer.into(), // port
-                ],
-                LogicalTypeId::Varchar.into(),
-            ),
-            ScalarFunctionSignature::exact(
-                vec![
-                    LogicalTypeId::Varchar.into(), // extension
-                    LogicalTypeId::Varchar.into(), // host
-                    LogicalTypeId::Integer.into(), // port
-                    LogicalTypeId::Varchar.into(), // password
-                ],
-                LogicalTypeId::Varchar.into(),
-            ),
-        ]
+        vec![ScalarFunctionSignature::exact(
+            vec![
+                LogicalTypeId::Varchar.into(), // extension
+                LogicalTypeId::Varchar.into(), // config JSON
+            ],
+            LogicalTypeId::Varchar.into(),
+        )]
     }
 }
 

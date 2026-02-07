@@ -46,13 +46,16 @@ fn default_true() -> bool {
 }
 
 /// An extension hosted by a node (e.g. a Flight SQL endpoint).
+///
+/// Service-specific settings (host, port, password, TLS paths, etc.) live
+/// inside the opaque `config` JSON value.  The swarm layer extracts `host`
+/// and `port` from it at runtime for gossip registration; everything else
+/// is passed through to the extension's own start function.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionConfig {
     pub name: String,
-    pub host: Option<String>,
-    pub port: Option<u16>,
     #[serde(default)]
-    pub password: Option<String>,
+    pub config: Option<serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -109,13 +112,18 @@ impl ClusterConfig {
                 ));
             }
 
-            // 4. For each extension, if host is set then port must also be set
+            // 4. For each extension, if config.host is set then config.port
+            //    must also be set (for network-based services).
             for ext in &node.extensions {
-                if ext.host.is_some() && ext.port.is_none() {
-                    return Err(format!(
-                        "node '{name}', extension '{}': host is set but port is missing",
-                        ext.name
-                    ));
+                if let Some(ref cfg) = ext.config {
+                    let has_host = cfg.get("host").and_then(|v| v.as_str()).is_some();
+                    let has_port = cfg.get("port").and_then(|v| v.as_u64()).is_some();
+                    if has_host && !has_port {
+                        return Err(format!(
+                            "node '{name}', extension '{}': config.host is set but config.port is missing",
+                            ext.name
+                        ));
+                    }
                 }
             }
         }
@@ -162,7 +170,7 @@ mod tests {
                 "node-a": {
                     "gossip_addr": "127.0.0.1:7100",
                     "extensions": [
-                        { "name": "flight", "host": "0.0.0.0", "port": 8815 }
+                        { "name": "flight", "config": {"host": "0.0.0.0", "port": 8815} }
                     ]
                 },
                 "node-b": {
@@ -183,7 +191,8 @@ mod tests {
         assert!(a.data_node); // default_true
         assert_eq!(a.extensions.len(), 1);
         assert_eq!(a.extensions[0].name, "flight");
-        assert_eq!(a.extensions[0].port, Some(8815));
+        let ext_cfg = a.extensions[0].config.as_ref().unwrap();
+        assert_eq!(ext_cfg["port"].as_u64(), Some(8815));
 
         let b = &cfg.nodes["node-b"];
         assert!(!b.data_node);
@@ -247,7 +256,7 @@ mod tests {
             "nodes": {
                 "n": {
                     "gossip_addr": "127.0.0.1:7100",
-                    "extensions": [{ "name": "x", "host": "0.0.0.0" }]
+                    "extensions": [{ "name": "x", "config": {"host": "0.0.0.0"} }]
                 }
             }
         }"#;
