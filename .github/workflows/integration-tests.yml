@@ -484,7 +484,7 @@ jobs:
         run: venv/bin/pytest -v test_hana_standalone.py
         working-directory: integration-tests
         env:
-          HANA_TEST_URL: "hdbsql://SYSTEM:Toor1234@localhost:39041/HDB"
+          HANA_TEST_URL: "hdbsqls://SYSTEM:Toor1234@localhost:39041/HDB?insecure_omit_server_certificate_check"
 
       - name: Cleanup HANA container
         if: always()

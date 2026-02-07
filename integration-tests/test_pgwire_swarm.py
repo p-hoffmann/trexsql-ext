@@ -40,7 +40,7 @@ def test_swarm_register_pgwire(node_factory):
 
 
 def test_swarm_start_pgwire_service(node_factory):
-    """swarm_start_service('pgwire', ...) starts server and registers in gossip."""
+    """swarm_start_service('pgwire', ..., password) starts server and registers in gossip."""
     node = node_factory(load_pgwire=True, load_flight=True, load_swarm=True)
 
     # Start swarm first
@@ -48,9 +48,9 @@ def test_swarm_start_pgwire_service(node_factory):
         f"SELECT swarm_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
 
-    # Use swarm_start_service to start pgwire (starts server + registers)
+    # Use swarm_start_service to start pgwire with password
     node.execute(
-        f"SELECT swarm_start_service('pgwire', '127.0.0.1', {node.pgwire_port})"
+        f"SELECT swarm_start_service('pgwire', '127.0.0.1', {node.pgwire_port}, 'test')"
     )
 
     # Verify pgwire is in swarm_services

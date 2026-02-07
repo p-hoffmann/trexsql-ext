@@ -9,11 +9,11 @@ use crate::logging::SwarmLogger;
 /// Return the SQL statement to start a service for the given extension name,
 /// substituting the provided host and port.  Returns `None` for extensions
 /// that have no known start function (load-only extensions).
-fn start_function_sql(name: &str, host: &str, port: u16) -> Option<String> {
+fn start_function_sql(name: &str, host: &str, port: u16, password: &str) -> Option<String> {
     match name {
         "flight" => Some(format!("SELECT start_flight_server('{host}', {port})")),
         "pgwire" => Some(format!(
-            "SELECT start_pgwire_server('{host}', {port}, '', '')"
+            "SELECT start_pgwire_server('{host}', {port}, '{password}', '')"
         )),
         "trexas" => Some(format!("SELECT start_trexas_server('{host}', {port})")),
         _ => None,
@@ -80,7 +80,8 @@ pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
             }
         };
 
-        let start_sql = match start_function_sql(&ext.name, host, port) {
+        let password = ext.password.as_deref().unwrap_or("");
+        let start_sql = match start_function_sql(&ext.name, host, port, password) {
             Some(sql) => sql,
             None => {
                 SwarmLogger::warn(
@@ -144,28 +145,34 @@ mod tests {
 
     #[test]
     fn start_sql_flight() {
-        let sql = start_function_sql("flight", "0.0.0.0", 8815).unwrap();
+        let sql = start_function_sql("flight", "0.0.0.0", 8815, "").unwrap();
         assert_eq!(sql, "SELECT start_flight_server('0.0.0.0', 8815)");
     }
 
     #[test]
     fn start_sql_pgwire() {
-        let sql = start_function_sql("pgwire", "127.0.0.1", 5432).unwrap();
+        let sql = start_function_sql("pgwire", "127.0.0.1", 5432, "").unwrap();
         assert_eq!(sql, "SELECT start_pgwire_server('127.0.0.1', 5432, '', '')");
     }
 
     #[test]
+    fn start_sql_pgwire_with_password() {
+        let sql = start_function_sql("pgwire", "127.0.0.1", 5432, "secret").unwrap();
+        assert_eq!(sql, "SELECT start_pgwire_server('127.0.0.1', 5432, 'secret', '')");
+    }
+
+    #[test]
     fn start_sql_trexas() {
-        let sql = start_function_sql("trexas", "10.0.0.1", 9090).unwrap();
+        let sql = start_function_sql("trexas", "10.0.0.1", 9090, "").unwrap();
         assert_eq!(sql, "SELECT start_trexas_server('10.0.0.1', 9090)");
     }
 
     #[test]
     fn start_sql_unknown_returns_none() {
-        assert!(start_function_sql("hana", "0.0.0.0", 1234).is_none());
-        assert!(start_function_sql("chdb", "0.0.0.0", 1234).is_none());
-        assert!(start_function_sql("llama", "0.0.0.0", 1234).is_none());
-        assert!(start_function_sql("nonexistent", "0.0.0.0", 1234).is_none());
+        assert!(start_function_sql("hana", "0.0.0.0", 1234, "").is_none());
+        assert!(start_function_sql("chdb", "0.0.0.0", 1234, "").is_none());
+        assert!(start_function_sql("llama", "0.0.0.0", 1234, "").is_none());
+        assert!(start_function_sql("nonexistent", "0.0.0.0", 1234, "").is_none());
     }
 
     // -- orchestrate_extensions: load-only path -----------------------------

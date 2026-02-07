@@ -51,6 +51,8 @@ pub struct ExtensionConfig {
     pub name: String,
     pub host: Option<String>,
     pub port: Option<u16>,
+    #[serde(default)]
+    pub password: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

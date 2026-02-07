@@ -87,13 +87,13 @@ pub fn parse_service_json(json: &str) -> Option<ServiceInfo> {
 
 /// Return the SQL statement that starts the given service extension, or `None`
 /// if the extension name is not in the known mapping.
-pub fn get_start_service_sql(extension: &str, host: &str, port: u16) -> Option<String> {
+pub fn get_start_service_sql(extension: &str, host: &str, port: u16, password: &str) -> Option<String> {
     match extension {
         "flight" => Some(format!(
             "SELECT start_flight_server('{host}', {port})"
         )),
         "pgwire" => Some(format!(
-            "SELECT start_pgwire_server('{host}', {port}, '', '')"
+            "SELECT start_pgwire_server('{host}', {port}, '{password}', '')"
         )),
         "trexas" => Some(format!(
             "SELECT start_trexas_server('{host}', {port})"
@@ -283,8 +283,20 @@ impl VScalar for SwarmStartServiceScalar {
         }
         let port = port_raw as u16;
 
+        // Read optional password (4th parameter)
+        let password = if input.num_columns() > 3 {
+            let pw_vector = input.flat_vector(3);
+            let pw_slice =
+                pw_vector.as_slice_with_len::<libduckdb_sys::duckdb_string_t>(input.len());
+            duckdb::types::DuckString::new(&mut { pw_slice[0] })
+                .as_str()
+                .to_string()
+        } else {
+            String::new()
+        };
+
         // Look up known SQL for this service extension
-        let sql = match get_start_service_sql(&extension, &host, port) {
+        let sql = match get_start_service_sql(&extension, &host, port, &password) {
             Some(sql) => sql,
             None => {
                 let msg = format!(
@@ -340,14 +352,25 @@ impl VScalar for SwarmStartServiceScalar {
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
-        vec![ScalarFunctionSignature::exact(
-            vec![
-                LogicalTypeId::Varchar.into(), // extension
-                LogicalTypeId::Varchar.into(), // host
-                LogicalTypeId::Integer.into(), // port
-            ],
-            LogicalTypeId::Varchar.into(),
-        )]
+        vec![
+            ScalarFunctionSignature::exact(
+                vec![
+                    LogicalTypeId::Varchar.into(), // extension
+                    LogicalTypeId::Varchar.into(), // host
+                    LogicalTypeId::Integer.into(), // port
+                ],
+                LogicalTypeId::Varchar.into(),
+            ),
+            ScalarFunctionSignature::exact(
+                vec![
+                    LogicalTypeId::Varchar.into(), // extension
+                    LogicalTypeId::Varchar.into(), // host
+                    LogicalTypeId::Integer.into(), // port
+                    LogicalTypeId::Varchar.into(), // password
+                ],
+                LogicalTypeId::Varchar.into(),
+            ),
+        ]
     }
 }
 

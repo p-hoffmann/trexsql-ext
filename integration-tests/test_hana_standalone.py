@@ -13,7 +13,7 @@ import time
 import pytest
 
 HANA_TEST_URL = os.environ.get(
-    "HANA_TEST_URL", "hdbsql://SYSTEM:Toor1234@localhost:39041/HDB"
+    "HANA_TEST_URL", "hdbsqls://SYSTEM:Toor1234@localhost:39041/HDB?insecure_omit_server_certificate_check"
 )
 
 
