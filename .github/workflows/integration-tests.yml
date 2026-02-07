@@ -469,15 +469,17 @@ jobs:
 
       - name: Wait for HANA to be ready
         run: |
-          echo "Waiting for HANA Express on port 39041..."
+          echo "Waiting for HANA Express to be fully ready..."
           for i in $(seq 1 120); do
-            if nc -z localhost 39041 2>/dev/null; then
-              echo "HANA is ready after ~$((i * 5))s"
+            if docker logs trex-hana 2>&1 | grep -q "Startup finished!"; then
+              echo "HANA startup finished after ~$((i * 5))s"
+              sleep 5  # extra grace period after startup message
               exit 0
             fi
             sleep 5
           done
           echo "Timeout waiting for HANA (10 min)"
+          docker logs trex-hana 2>&1 | tail -20
           exit 1
 
       - name: Run hana standalone tests
