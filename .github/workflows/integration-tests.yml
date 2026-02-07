@@ -1,0 +1,479 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    types: [opened, ready_for_review, reopened, synchronize]
+    branches: [main, develop]
+  merge_group:
+  workflow_dispatch:
+    inputs:
+      run_hana_tests:
+        description: "Run HANA integration tests (requires Docker, ~15 min)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: integration-tests-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ===========================================================================
+  # Layer 1: Build Jobs (all run in parallel)
+  # ===========================================================================
+
+  build-rust-core:
+    name: "Build flight + swarm"
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            flight/target
+            swarm/target
+          key: rust-core-${{ runner.os }}-${{ hashFiles('flight/Cargo.lock', 'swarm/Cargo.lock') }}
+          restore-keys: rust-core-${{ runner.os }}-
+
+      - name: Build flight
+        run: make configure && make debug
+        working-directory: flight
+
+      - name: Build swarm
+        run: make configure && make debug
+        working-directory: swarm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ext-flight
+          path: flight/build/debug/extension/flight/flight.trex
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ext-swarm
+          path: swarm/build/debug/extension/swarm/swarm.trex
+          retention-days: 1
+
+  build-pgwire:
+    name: "Build pgwire"
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            pgwire/target
+          key: rust-pgwire-${{ runner.os }}-${{ hashFiles('pgwire/Cargo.lock') }}
+          restore-keys: rust-pgwire-${{ runner.os }}-
+
+      - name: Build pgwire
+        run: make configure && make debug
+        working-directory: pgwire
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ext-pgwire
+          path: pgwire/build/debug/extension/pgwire/pgwire.trex
+          retention-days: 1
+
+  build-chdb:
+    name: "Build chdb"
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            chdb/target
+          key: rust-chdb-${{ runner.os }}-${{ hashFiles('chdb/Cargo.lock') }}
+          restore-keys: rust-chdb-${{ runner.os }}-
+
+      - name: Build chdb
+        run: make configure && make debug
+        working-directory: chdb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ext-chdb
+          path: chdb/build/debug/extension/chdb/chdb.trex
+          retention-days: 1
+
+  build-hana:
+    name: "Build hana"
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            hana/target
+          key: rust-hana-${{ runner.os }}-${{ hashFiles('hana/Cargo.lock') }}
+          restore-keys: rust-hana-${{ runner.os }}-
+
+      - name: Build hana
+        run: make configure && make debug
+        working-directory: hana
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ext-hana
+          path: hana/build/debug/extension/hana_scan/hana_scan.trex
+          retention-days: 1
+
+  build-circe:
+    name: "Build circe"
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: "21"
+          components: native-image
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install circe build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake libssl-dev xxd maven
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            circe/build
+            circe/circe-be/target
+          key: circe-${{ runner.os }}-${{ hashFiles('circe/CMakeLists.txt', 'circe/extension_config.cmake', 'circe/circe-be/pom.xml', 'circe/graalvm-config/**') }}
+          restore-keys: circe-${{ runner.os }}-
+
+      - name: Build circe
+        run: make configure && make release
+        working-directory: circe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ext-circe
+          path: circe/build/release/extension/circe/circe.trex
+          retention-days: 1
+
+  build-llama:
+    name: "Build llama"
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install llama build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake libssl-dev libvulkan-dev
+
+      - uses: actions/cache@v4
+        with:
+          path: llama/build
+          key: llama-cmake-${{ runner.os }}-${{ hashFiles('llama/CMakeLists.txt', 'llama/llama.cpp/CMakeLists.txt') }}
+          restore-keys: llama-cmake-${{ runner.os }}-
+
+      - name: Build llama
+        run: make configure && make debug
+        working-directory: llama
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ext-llama
+          path: llama/build/debug/extension/llama/llama.trex
+          retention-days: 1
+
+  # ===========================================================================
+  # Layer 2: Test Jobs
+  # ===========================================================================
+
+  test-distributed:
+    name: "Test distributed (tier1/2/3)"
+    runs-on: ubuntu-24.04
+    needs: [build-rust-core]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-flight
+          path: flight/build/debug/extension/flight/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-swarm
+          path: swarm/build/debug/extension/swarm/
+
+      - name: Setup test environment
+        run: make configure
+        working-directory: integration-tests
+
+      - name: Run tier1 tests
+        run: venv/bin/pytest -v test_tier1_single_node.py
+        working-directory: integration-tests
+
+      - name: Run tier2 tests
+        run: venv/bin/pytest -v test_tier2_two_node.py
+        working-directory: integration-tests
+
+      - name: Run tier3 tests
+        run: venv/bin/pytest -v test_tier3_aggregation.py
+        working-directory: integration-tests
+
+  test-pgwire:
+    name: "Test pgwire"
+    runs-on: ubuntu-24.04
+    needs: [build-rust-core, build-pgwire]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-flight
+          path: flight/build/debug/extension/flight/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-swarm
+          path: swarm/build/debug/extension/swarm/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-pgwire
+          path: pgwire/build/debug/extension/pgwire/
+
+      - name: Setup test environment
+        run: make configure
+        working-directory: integration-tests
+
+      - name: Run pgwire standalone tests
+        run: venv/bin/pytest -v test_pgwire_standalone.py
+        working-directory: integration-tests
+
+      - name: Run pgwire swarm tests
+        run: venv/bin/pytest -v test_pgwire_swarm.py
+        working-directory: integration-tests
+
+  test-circe:
+    name: "Test circe"
+    runs-on: ubuntu-24.04
+    needs: [build-circe]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-circe
+          path: circe/build/release/extension/circe/
+
+      - name: Setup test environment
+        run: make configure
+        working-directory: integration-tests
+
+      - name: Run circe standalone tests
+        run: venv/bin/pytest -v test_circe_standalone.py
+        working-directory: integration-tests
+
+  test-llama:
+    name: "Test llama"
+    runs-on: ubuntu-24.04
+    needs: [build-llama]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-llama
+          path: llama/build/debug/extension/llama/
+
+      - name: Setup test environment
+        run: make configure
+        working-directory: integration-tests
+
+      - name: Run llama standalone tests
+        run: venv/bin/pytest -v test_llama_standalone.py
+        working-directory: integration-tests
+
+  test-chdb:
+    name: "Test chdb"
+    runs-on: ubuntu-24.04
+    needs: [build-rust-core, build-chdb]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-flight
+          path: flight/build/debug/extension/flight/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-swarm
+          path: swarm/build/debug/extension/swarm/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-chdb
+          path: chdb/build/debug/extension/chdb/
+
+      - name: Setup test environment
+        run: make configure
+        working-directory: integration-tests
+
+      - name: Run chdb standalone tests
+        run: venv/bin/pytest -v test_chdb_standalone.py
+        working-directory: integration-tests
+
+      - name: Run chdb swarm tests
+        run: venv/bin/pytest -v test_chdb_swarm.py
+        working-directory: integration-tests
+
+  # ===========================================================================
+  # Layer 2b: HANA Test (conditional — push to main/develop or manual dispatch)
+  # ===========================================================================
+
+  test-hana:
+    name: "Test hana"
+    runs-on: ubuntu-24.04
+    needs: [build-hana]
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'merge_group' ||
+      (github.event_name == 'workflow_dispatch' && inputs.run_hana_tests)
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start HANA Express container
+        run: docker compose -f integration-tests/docker-compose.hana.yml up -d
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-hana
+          path: hana/build/debug/extension/hana_scan/
+
+      - name: Setup test environment
+        run: make configure
+        working-directory: integration-tests
+
+      - name: Wait for HANA to be ready
+        run: |
+          echo "Waiting for HANA Express on port 39041..."
+          for i in $(seq 1 120); do
+            if nc -z localhost 39041 2>/dev/null; then
+              echo "HANA is ready after ~$((i * 5))s"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Timeout waiting for HANA (10 min)"
+          exit 1
+
+      - name: Run hana standalone tests
+        run: venv/bin/pytest -v test_hana_standalone.py
+        working-directory: integration-tests
+        env:
+          HANA_TEST_URL: "hdbsql://SYSTEM:Toor1234@localhost:39041/HDB"
+
+      - name: Cleanup HANA container
+        if: always()
+        run: docker compose -f integration-tests/docker-compose.hana.yml down -v
+
+  # ===========================================================================
+  # Layer 3: Status Gate
+  # ===========================================================================
+
+  integration-tests-status:
+    name: "Integration Tests Status"
+    if: always()
+    runs-on: ubuntu-24.04
+    needs:
+      - test-distributed
+      - test-pgwire
+      - test-circe
+      - test-llama
+      - test-chdb
+      - test-hana
+    steps:
+      - name: Check test results
+        run: |
+          echo "test-distributed: ${{ needs.test-distributed.result }}"
+          echo "test-pgwire:      ${{ needs.test-pgwire.result }}"
+          echo "test-circe:       ${{ needs.test-circe.result }}"
+          echo "test-llama:       ${{ needs.test-llama.result }}"
+          echo "test-chdb:        ${{ needs.test-chdb.result }}"
+          echo "test-hana:        ${{ needs.test-hana.result }}"
+
+          if [[ "${{ needs.test-distributed.result }}" == "failure" ||
+                "${{ needs.test-pgwire.result }}" == "failure" ||
+                "${{ needs.test-circe.result }}" == "failure" ||
+                "${{ needs.test-llama.result }}" == "failure" ||
+                "${{ needs.test-chdb.result }}" == "failure" ||
+                "${{ needs.test-hana.result }}" == "failure" ]]; then
+            echo "::error::One or more integration test jobs failed"
+            exit 1
+          fi
+
+          echo "All required integration tests passed (or were skipped/cancelled)"
