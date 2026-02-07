@@ -108,6 +108,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Install chdb native library
+        run: sudo apt-get update && sudo apt-get install -y libc6-dev clang && sudo bash ./install_chdb.sh
+        working-directory: chdb
+
       - uses: actions/cache@v4
         with:
           path: |
@@ -203,7 +207,7 @@ jobs:
           submodules: recursive
 
       - name: Install llama build dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake libssl-dev libvulkan-dev
+        run: sudo apt-get update && sudo apt-get install -y cmake libssl-dev libvulkan1 libvulkan-dev vulkan-tools glslc libshaderc1 spirv-tools vulkan-validationlayers mesa-vulkan-drivers
 
       - uses: actions/cache@v4
         with:
