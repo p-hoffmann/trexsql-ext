@@ -14,7 +14,7 @@ def test_swarm_register_pgwire(node_factory):
 
     # Start pgwire server
     node.execute(
-        f"SELECT start_pgwire_server('127.0.0.1', {node.pgwire_port}, '', '')"
+        f"SELECT start_pgwire_server('127.0.0.1', {node.pgwire_port}, 'test', '')"
     )
 
     # Start swarm
@@ -68,7 +68,7 @@ def test_swarm_start_pgwire_service(node_factory):
         host="127.0.0.1",
         port=node.pgwire_port,
         user="any",
-        password="",
+        password="test",
         dbname="memory",
     )
     try:
@@ -87,7 +87,7 @@ def test_two_node_pgwire_discovery(node_factory):
 
     # Node A: start swarm + pgwire
     node_a.execute(
-        f"SELECT start_pgwire_server('127.0.0.1', {node_a.pgwire_port}, '', '')"
+        f"SELECT start_pgwire_server('127.0.0.1', {node_a.pgwire_port}, 'test', '')"
     )
     node_a.execute(
         f"SELECT swarm_start('0.0.0.0', {node_a.gossip_port}, 'test-cluster')"
@@ -98,7 +98,7 @@ def test_two_node_pgwire_discovery(node_factory):
 
     # Node B: start swarm + pgwire, join Node A
     node_b.execute(
-        f"SELECT start_pgwire_server('127.0.0.1', {node_b.pgwire_port}, '', '')"
+        f"SELECT start_pgwire_server('127.0.0.1', {node_b.pgwire_port}, 'test', '')"
     )
     node_b.execute(
         f"SELECT swarm_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
@@ -136,7 +136,7 @@ def test_two_node_pgwire_data_isolation(node_factory):
         "SELECT i as id, 'US' as region FROM range(100) t(i)"
     )
     node_a.execute(
-        f"SELECT start_pgwire_server('127.0.0.1', {node_a.pgwire_port}, '', '')"
+        f"SELECT start_pgwire_server('127.0.0.1', {node_a.pgwire_port}, 'test', '')"
     )
 
     # Node B: EU data
@@ -145,7 +145,7 @@ def test_two_node_pgwire_data_isolation(node_factory):
         "SELECT i as id, 'EU' as region FROM range(200) t(i)"
     )
     node_b.execute(
-        f"SELECT start_pgwire_server('127.0.0.1', {node_b.pgwire_port}, '', '')"
+        f"SELECT start_pgwire_server('127.0.0.1', {node_b.pgwire_port}, 'test', '')"
     )
 
     # Query Node A via psycopg2
@@ -153,7 +153,7 @@ def test_two_node_pgwire_data_isolation(node_factory):
         host="127.0.0.1",
         port=node_a.pgwire_port,
         user="any",
-        password="",
+        password="test",
         dbname="memory",
     )
     try:
@@ -169,7 +169,7 @@ def test_two_node_pgwire_data_isolation(node_factory):
         host="127.0.0.1",
         port=node_b.pgwire_port,
         user="any",
-        password="",
+        password="test",
         dbname="memory",
     )
     try:
@@ -203,7 +203,7 @@ def test_pgwire_flight_coexistence(node_factory):
     # Start both servers
     node.execute(f"SELECT start_flight_server('0.0.0.0', {node.flight_port})")
     node.execute(
-        f"SELECT start_pgwire_server('127.0.0.1', {node.pgwire_port}, '', '')"
+        f"SELECT start_pgwire_server('127.0.0.1', {node.pgwire_port}, 'test', '')"
     )
 
     # Verify flight is running
@@ -219,7 +219,7 @@ def test_pgwire_flight_coexistence(node_factory):
         host="127.0.0.1",
         port=node.pgwire_port,
         user="any",
-        password="",
+        password="test",
         dbname="memory",
     )
     try:

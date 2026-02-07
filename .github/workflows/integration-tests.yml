@@ -8,11 +8,6 @@ on:
     branches: [main, develop]
   merge_group:
   workflow_dispatch:
-    inputs:
-      run_hana_tests:
-        description: "Run HANA integration tests (requires Docker, ~15 min)"
-        type: boolean
-        default: false
 
 concurrency:
   group: integration-tests-${{ github.head_ref || github.ref_name }}
@@ -159,6 +154,36 @@ jobs:
         with:
           name: ext-hana
           path: hana/build/debug/extension/hana_scan/hana_scan.trex
+          retention-days: 1
+
+  build-tpm:
+    name: "Build tpm"
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tpm/target
+          key: rust-tpm-${{ runner.os }}-${{ hashFiles('tpm/Cargo.lock') }}
+          restore-keys: rust-tpm-${{ runner.os }}-
+
+      - name: Build tpm
+        run: make configure && make debug
+        working-directory: tpm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ext-tpm
+          path: tpm/build/debug/extension/tpm/tpm.trex
           retention-days: 1
 
   build-circe:
@@ -363,6 +388,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install chdb native library
+        run: sudo bash ./install_chdb.sh
+        working-directory: chdb
+
       - uses: actions/download-artifact@v4
         with:
           name: ext-flight
@@ -390,18 +419,34 @@ jobs:
         run: venv/bin/pytest -v test_chdb_swarm.py
         working-directory: integration-tests
 
-  # ===========================================================================
-  # Layer 2b: HANA Test (conditional — push to main/develop or manual dispatch)
-  # ===========================================================================
+  test-tpm:
+    name: "Test tpm"
+    runs-on: ubuntu-24.04
+    needs: [build-tpm]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-tpm
+          path: tpm/build/debug/extension/tpm/
+
+      - name: Setup test environment
+        run: make configure
+        working-directory: integration-tests
+
+      - name: Run tpm standalone tests
+        run: venv/bin/pytest -v test_tpm_standalone.py
+        working-directory: integration-tests
 
   test-hana:
     name: "Test hana"
     runs-on: ubuntu-24.04
     needs: [build-hana]
-    if: >-
-      github.event_name == 'push' ||
-      github.event_name == 'merge_group' ||
-      (github.event_name == 'workflow_dispatch' && inputs.run_hana_tests)
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -459,6 +504,7 @@ jobs:
       - test-circe
       - test-llama
       - test-chdb
+      - test-tpm
       - test-hana
     steps:
       - name: Check test results
@@ -468,6 +514,7 @@ jobs:
           echo "test-circe:       ${{ needs.test-circe.result }}"
           echo "test-llama:       ${{ needs.test-llama.result }}"
           echo "test-chdb:        ${{ needs.test-chdb.result }}"
+          echo "test-tpm:         ${{ needs.test-tpm.result }}"
           echo "test-hana:        ${{ needs.test-hana.result }}"
 
           if [[ "${{ needs.test-distributed.result }}" == "failure" ||
@@ -475,6 +522,7 @@ jobs:
                 "${{ needs.test-circe.result }}" == "failure" ||
                 "${{ needs.test-llama.result }}" == "failure" ||
                 "${{ needs.test-chdb.result }}" == "failure" ||
+                "${{ needs.test-tpm.result }}" == "failure" ||
                 "${{ needs.test-hana.result }}" == "failure" ]]; then
             echo "::error::One or more integration test jobs failed"
             exit 1

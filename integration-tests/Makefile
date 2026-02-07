@@ -6,10 +6,11 @@ CIRCE_EXT=$(REPO_ROOT)/circe/build/release/extension/circe/circe.trex
 LLAMA_EXT=$(REPO_ROOT)/llama/build/debug/extension/llama/llama.trex
 CHDB_EXT=$(REPO_ROOT)/chdb/build/debug/extension/chdb/chdb.trex
 HANA_EXT=$(REPO_ROOT)/hana/build/debug/extension/hana_scan/hana_scan.trex
+TPM_EXT=$(REPO_ROOT)/tpm/build/debug/extension/tpm/tpm.trex
 PYTHON_BIN?=python3
 VENV=./venv
 
-.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-swarm test-circe test-llama test-chdb test-chdb-swarm test-hana check-extensions check-pgwire check-circe check-llama check-chdb check-hana hana-up hana-down hana-clean clean
+.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-swarm test-circe test-llama test-chdb test-chdb-swarm test-hana test-tpm check-extensions check-pgwire check-circe check-llama check-chdb check-hana check-tpm hana-up hana-down hana-clean clean
 
 configure:
 	$(PYTHON_BIN) -m venv $(VENV)
@@ -61,6 +62,9 @@ test-chdb: check-chdb
 test-chdb-swarm: check-extensions check-chdb
 	$(VENV)/bin/pytest -v test_chdb_swarm.py
 
+check-tpm:
+	@test -f $(TPM_EXT) || (echo "Build tpm first: cd ../tpm && make configure && make debug" && exit 1)
+
 check-hana:
 	@test -f $(HANA_EXT) || (echo "Build hana first: cd ../hana && make configure && make debug" && exit 1)
 
@@ -78,6 +82,9 @@ hana-down:
 
 hana-clean:
 	docker compose -f docker-compose.hana.yml down -v
+
+test-tpm: check-tpm
+	$(VENV)/bin/pytest -v test_tpm_standalone.py
 
 test-hana: check-hana
 	$(VENV)/bin/pytest -v test_hana_standalone.py

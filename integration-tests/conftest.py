@@ -18,6 +18,7 @@ CIRCE_EXT_TREX = f"{REPO_ROOT}/circe/build/release/extension/circe/circe.trex"
 LLAMA_EXT_TREX = f"{REPO_ROOT}/llama/build/debug/extension/llama/llama.trex"
 CHDB_EXT_TREX = f"{REPO_ROOT}/chdb/build/debug/extension/chdb/chdb.trex"
 HANA_EXT_TREX = f"{REPO_ROOT}/hana/build/debug/extension/hana_scan/hana_scan.trex"
+TPM_EXT_TREX = f"{REPO_ROOT}/tpm/build/debug/extension/tpm/tpm.trex"
 
 # DuckDB Python API requires .duckdb_extension suffix for LOAD.
 FLIGHT_EXT = f"{REPO_ROOT}/flight/build/debug/extension/flight/flight.duckdb_extension"
@@ -27,6 +28,7 @@ CIRCE_EXT = f"{REPO_ROOT}/circe/build/release/extension/circe/circe.duckdb_exten
 LLAMA_EXT = f"{REPO_ROOT}/llama/build/debug/extension/llama/llama.duckdb_extension"
 CHDB_EXT = f"{REPO_ROOT}/chdb/build/debug/extension/chdb/chdb.duckdb_extension"
 HANA_EXT = f"{REPO_ROOT}/hana/build/debug/extension/hana_scan/hana_scan.duckdb_extension"
+TPM_EXT = f"{REPO_ROOT}/tpm/build/debug/extension/tpm/tpm.duckdb_extension"
 
 for src, dst in [
     (FLIGHT_EXT_TREX, FLIGHT_EXT),
@@ -36,6 +38,7 @@ for src, dst in [
     (LLAMA_EXT_TREX, LLAMA_EXT),
     (CHDB_EXT_TREX, CHDB_EXT),
     (HANA_EXT_TREX, HANA_EXT),
+    (TPM_EXT_TREX, TPM_EXT),
 ]:
     if os.path.exists(src) and not os.path.exists(dst):
         os.symlink(src, dst)
@@ -153,7 +156,7 @@ def node_factory():
 
     def create_node(load_flight=True, load_swarm=True, load_pgwire=False,
                      load_circe=False, load_llama=False, load_chdb=False,
-                     load_hana=False):
+                     load_hana=False, load_tpm=False):
         ext_paths = []
         if load_flight:
             ext_paths.append(FLIGHT_EXT)
@@ -169,6 +172,8 @@ def node_factory():
             ext_paths.append(CHDB_EXT)
         if load_hana:
             ext_paths.append(HANA_EXT)
+        if load_tpm:
+            ext_paths.append(TPM_EXT)
         gossip_port, flight_port, pgwire_port = alloc_ports()
         node = Node(ext_paths, gossip_port, flight_port, pgwire_port)
         nodes.append(node)

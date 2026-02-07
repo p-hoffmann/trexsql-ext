@@ -43,14 +43,14 @@ def test_pgwire_psycopg2_select(node_factory):
     node = node_factory(load_pgwire=True, load_flight=False, load_swarm=False)
 
     node.execute(
-        f"SELECT start_pgwire_server('127.0.0.1', {node.pgwire_port}, '', '')"
+        f"SELECT start_pgwire_server('127.0.0.1', {node.pgwire_port}, 'test', '')"
     )
 
     conn = psycopg2.connect(
         host="127.0.0.1",
         port=node.pgwire_port,
         user="any",
-        password="",
+        password="test",
         dbname="memory",
     )
     try:
@@ -72,14 +72,14 @@ def test_pgwire_psycopg2_create_and_query(node_factory):
     node = node_factory(load_pgwire=True, load_flight=False, load_swarm=False)
 
     node.execute(
-        f"SELECT start_pgwire_server('127.0.0.1', {node.pgwire_port}, '', '')"
+        f"SELECT start_pgwire_server('127.0.0.1', {node.pgwire_port}, 'test', '')"
     )
 
     conn = psycopg2.connect(
         host="127.0.0.1",
         port=node.pgwire_port,
         user="any",
-        password="",
+        password="test",
         dbname="memory",
     )
     try:
@@ -110,14 +110,14 @@ def test_pgwire_data_visibility(node_factory):
     )
 
     node.execute(
-        f"SELECT start_pgwire_server('127.0.0.1', {node.pgwire_port}, '', '')"
+        f"SELECT start_pgwire_server('127.0.0.1', {node.pgwire_port}, 'test', '')"
     )
 
     conn = psycopg2.connect(
         host="127.0.0.1",
         port=node.pgwire_port,
         user="any",
-        password="",
+        password="test",
         dbname="memory",
     )
     try:
