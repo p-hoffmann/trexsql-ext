@@ -189,11 +189,13 @@ mod tests {
                 name: "hana".to_string(),
                 host: None,
                 port: None,
+                password: None,
             },
             ExtensionConfig {
                 name: "flight".to_string(),
                 host: Some("0.0.0.0".to_string()),
                 port: Some(8815),
+                password: None,
             },
         ];
 
@@ -215,6 +217,6 @@ mod tests {
     fn load_only_extension_has_no_start_sql() {
         // Extensions without host/port should never match a start function,
         // regardless of name.
-        assert!(start_function_sql("hana", "0.0.0.0", 0).is_none());
+        assert!(start_function_sql("hana", "0.0.0.0", 0, "").is_none());
     }
 }
