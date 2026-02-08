@@ -5,6 +5,7 @@ use tokio::sync::oneshot;
 
 #[derive(Debug)]
 pub struct ServerHandle {
+    #[allow(dead_code)] // Kept for potential graceful shutdown
     pub thread_handle: JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>,
     pub shutdown_tx: oneshot::Sender<()>,
     pub start_time: std::time::SystemTime,

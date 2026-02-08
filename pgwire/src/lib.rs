@@ -3,7 +3,10 @@ extern crate duckdb_loadable_macros;
 extern crate libduckdb_sys;
 
 mod pgwire_server;
+mod query_executor;
 mod server_registry;
+
+pub use query_executor::{QueryExecutor, QueryResult};
 
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
@@ -20,19 +23,33 @@ use std::{
 };
 
 static SHARED_CONNECTION: OnceCell<Arc<Mutex<Connection>>> = OnceCell::new();
+static QUERY_EXECUTOR: OnceCell<Arc<QueryExecutor>> = OnceCell::new();
 
-pub fn store_shared_connection(connection: &Connection) -> Result<(), Box<dyn Error>> {
-    let cloned = connection.try_clone()
-        .map_err(|e| format!("Failed to clone connection: {}", e))?;
-    
-    SHARED_CONNECTION.set(Arc::new(Mutex::new(cloned)))
-        .map_err(|_| "Connection already stored")?;
-    
+const EXECUTOR_POOL_SIZE: usize = 4;
+
+fn store_shared_connection(connection: &Connection) -> Result<(), Box<dyn Error>> {
+    let cloned = connection
+        .try_clone()
+        .map_err(|e| format!("connection clone: {e}"))?;
+
+    SHARED_CONNECTION
+        .set(Arc::new(Mutex::new(cloned)))
+        .map_err(|_| "connection already stored")?;
+
+    let executor = QueryExecutor::new(connection, EXECUTOR_POOL_SIZE)?;
+    QUERY_EXECUTOR
+        .set(Arc::new(executor))
+        .map_err(|_| "executor already created")?;
+
     Ok(())
 }
 
 pub fn get_shared_connection() -> Option<Arc<Mutex<Connection>>> {
     SHARED_CONNECTION.get().cloned()
+}
+
+pub fn get_query_executor() -> Option<Arc<QueryExecutor>> {
+    QUERY_EXECUTOR.get().cloned()
 }
 
 struct PgwireVersionScalar;

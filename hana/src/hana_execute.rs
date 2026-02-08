@@ -4,6 +4,7 @@ use duckdb::{
     vscalar::{VScalar, ScalarFunctionSignature},
 };
 use std::error::Error;
+use std::panic::{self, AssertUnwindSafe};
 use crate::{HanaConnection, HanaError};
 
 fn split_sql_statements(sql: &str) -> Vec<String> {
@@ -112,7 +113,33 @@ impl VScalar for HanaExecuteScalar {
 }
 
 fn execute_hana_statement(connection_string: &str, sql_statement: &str) -> Result<usize, Box<dyn Error>> {
-    let connection = HanaConnection::new(connection_string.to_string())?;
+    // Use catch_unwind to prevent panics from crashing the runtime
+    let connection = match panic::catch_unwind(AssertUnwindSafe(|| {
+        HanaConnection::new(connection_string.to_string())
+    })) {
+        Ok(Ok(conn)) => conn,
+        Ok(Err(e)) => return Err(Box::new(HanaError::connection(
+            &format!("Connection failed: {}", e),
+            Some(connection_string),
+            None,
+            "execute_hana_statement"
+        ))),
+        Err(panic_err) => {
+            let panic_msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_err.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic during HANA connection".to_string()
+            };
+            return Err(Box::new(HanaError::connection(
+                &format!("Connection panicked: {}", panic_msg),
+                Some(connection_string),
+                None,
+                "execute_hana_statement"
+            )));
+        }
+    };
 
     let statements = split_sql_statements(sql_statement);
 
