@@ -137,3 +137,21 @@ pub struct ListResponse {
   pub version: String,
   pub install_path: String,
 }
+
+#[derive(Debug, Serialize)]
+pub struct SeedResponse {
+  pub package: String,
+  pub version: String,
+  pub success: bool,
+  pub skipped: bool,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeleteResponse {
+  pub package: String,
+  pub deleted: bool,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub error: Option<String>,
+}

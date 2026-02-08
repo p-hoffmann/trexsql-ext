@@ -569,6 +569,170 @@ impl VTab for TpmListVTab {
   }
 }
 
+// tpm_seed: reads PLUGINS_SEED env var, installs/updates packages
+#[repr(C)]
+struct TpmSeedBindData {
+  install_dir: String,
+  registry_url: Option<String>,
+}
+
+#[repr(C)]
+struct TpmSeedInitData {
+  results: Vec<npm::SeedResponse>,
+  index: std::sync::atomic::AtomicUsize,
+}
+
+struct TpmSeedVTab;
+
+impl VTab for TpmSeedVTab {
+  type InitData = TpmSeedInitData;
+  type BindData = TpmSeedBindData;
+
+  fn bind(
+    bind: &BindInfo,
+  ) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+    bind.add_result_column(
+      "seed_results",
+      LogicalTypeHandle::from(LogicalTypeId::Varchar),
+    );
+    let install_dir = bind.get_parameter(0).to_string();
+    let registry_url = std::env::var("TPM_REGISTRY_URL").ok();
+    Ok(TpmSeedBindData {
+      install_dir,
+      registry_url,
+    })
+  }
+
+  fn init(
+    init: &InitInfo,
+  ) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+    let bind_data = init.get_bind_data::<Self::BindData>();
+
+    let registry = unsafe {
+      npm::NpmRegistry::with_registry_url((*bind_data).registry_url.clone())?
+    };
+    let results =
+      unsafe { registry.seed_packages(&(*bind_data).install_dir)? };
+
+    Ok(TpmSeedInitData {
+      results,
+      index: std::sync::atomic::AtomicUsize::new(0),
+    })
+  }
+
+  fn func(
+    func: &TableFunctionInfo<Self>,
+    output: &mut DataChunkHandle,
+  ) -> Result<(), Box<dyn std::error::Error>> {
+    let init_data = func.get_init_data();
+    let current_index = init_data
+      .index
+      .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+    if current_index >= init_data.results.len() {
+      output.set_len(0);
+      return Ok(());
+    }
+
+    let result = &init_data.results[current_index];
+    let json = serde_json::to_string(result)?;
+    let vector = output.flat_vector(0);
+    let cstring = CString::new(json)?;
+    vector.insert(0, cstring);
+    output.set_len(1);
+
+    Ok(())
+  }
+
+  fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+    Some(vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)])
+  }
+}
+
+// tpm_delete: removes a package directory from disk
+#[repr(C)]
+struct TpmDeleteBindData {
+  package_name: String,
+  install_dir: String,
+}
+
+#[repr(C)]
+struct TpmDeleteInitData {
+  done: AtomicBool,
+  result: Option<npm::DeleteResponse>,
+}
+
+struct TpmDeleteVTab;
+
+impl VTab for TpmDeleteVTab {
+  type InitData = TpmDeleteInitData;
+  type BindData = TpmDeleteBindData;
+
+  fn bind(
+    bind: &BindInfo,
+  ) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+    bind.add_result_column(
+      "delete_results",
+      LogicalTypeHandle::from(LogicalTypeId::Varchar),
+    );
+    let package_name = bind.get_parameter(0).to_string();
+    let install_dir = bind.get_parameter(1).to_string();
+    Ok(TpmDeleteBindData {
+      package_name,
+      install_dir,
+    })
+  }
+
+  fn init(
+    init: &InitInfo,
+  ) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+    let bind_data = init.get_bind_data::<Self::BindData>();
+
+    let result = unsafe {
+      npm::NpmRegistry::delete_package(
+        &(*bind_data).package_name,
+        &(*bind_data).install_dir,
+      )?
+    };
+
+    Ok(TpmDeleteInitData {
+      done: AtomicBool::new(false),
+      result: Some(result),
+    })
+  }
+
+  fn func(
+    func: &TableFunctionInfo<Self>,
+    output: &mut DataChunkHandle,
+  ) -> Result<(), Box<dyn std::error::Error>> {
+    let init_data = func.get_init_data();
+
+    if init_data.done.swap(true, Ordering::Relaxed) {
+      output.set_len(0);
+      return Ok(());
+    }
+
+    if let Some(ref result) = init_data.result {
+      let json = serde_json::to_string(result)?;
+      let vector = output.flat_vector(0);
+      let cstring = CString::new(json)?;
+      vector.insert(0, cstring);
+      output.set_len(1);
+    } else {
+      output.set_len(0);
+    }
+
+    Ok(())
+  }
+
+  fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+    Some(vec![
+      LogicalTypeHandle::from(LogicalTypeId::Varchar),
+      LogicalTypeHandle::from(LogicalTypeId::Varchar),
+    ])
+  }
+}
+
 const EXTENSION_NAME: &str = env!("CARGO_PKG_NAME");
 
 #[duckdb_entrypoint_c_api()]
@@ -602,6 +766,14 @@ pub unsafe fn extension_entrypoint(
   con
     .register_table_function::<TpmListVTab>("tpm_list")
     .expect("Failed to register tpm_list table function");
+
+  con
+    .register_table_function::<TpmSeedVTab>("tpm_seed")
+    .expect("Failed to register tpm_seed table function");
+
+  con
+    .register_table_function::<TpmDeleteVTab>("tpm_delete")
+    .expect("Failed to register tpm_delete table function");
 
   Ok(())
 }

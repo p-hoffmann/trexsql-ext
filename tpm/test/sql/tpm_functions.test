@@ -110,3 +110,25 @@ FROM tpm_tree('is-number@7.0.0')
 LIMIT 1;
 ----
 true
+
+# Test tpm_seed with no PLUGINS_SEED env var returns empty
+query I
+SELECT count(*) as cnt FROM tpm_seed('/tmp/tpm_test_seed_empty');
+----
+0
+
+# Test tpm_delete with non-existent package
+query I
+SELECT
+  json_extract_string(delete_results, '$.deleted') as deleted
+FROM tpm_delete('nonexistent-package', '/tmp/tpm_test_delete_empty');
+----
+false
+
+# Test tpm_delete error message for missing package
+query I
+SELECT
+  json_extract_string(delete_results, '$.error') LIKE 'Package directory not found%' as has_error
+FROM tpm_delete('nonexistent-package', '/tmp/tpm_test_delete_empty');
+----
+true
