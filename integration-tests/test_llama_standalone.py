@@ -97,8 +97,8 @@ def test_llama_generate_no_model_error(node_factory):
 @pytest.fixture(scope="module")
 def llama_node():
     """Module-scoped node with llama loaded (shared across download tests)."""
-    gossip_port, flight_port, pgwire_port = alloc_ports()
-    node = Node([LLAMA_EXT], gossip_port, flight_port, pgwire_port)
+    gossip_port, flight_port, pgwire_port, trexas_port = alloc_ports()
+    node = Node([LLAMA_EXT], gossip_port, flight_port, pgwire_port, trexas_port)
     yield node
     node.close()
 
