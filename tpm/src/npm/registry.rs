@@ -4,9 +4,9 @@ use sha1::{Digest, Sha1};
 use std::time::Duration;
 
 use super::types::{
-  DependencyTreeResponse, InstallResponse, ListResponse, NpmError,
-  NpmPackageMetadata, NpmResult, NpmVersionMetadataExt, PackageInfoResponse,
-  ResolveResponse,
+  DeleteResponse, DependencyTreeResponse, InstallResponse, ListResponse,
+  NpmError, NpmPackageMetadata, NpmResult, NpmVersionMetadataExt,
+  PackageInfoResponse, ResolveResponse, SeedResponse,
 };
 
 pub struct NpmRegistry {
@@ -245,7 +245,17 @@ impl NpmRegistry {
       }
     }
 
-    let package_dir = std::path::Path::new(install_dir).join(&resolved.package);
+    // Strip @org/ scope prefix so `@data2evidence/foo` installs as `{dir}/foo/`
+    let dir_name = if resolved.package.starts_with('@') {
+      resolved
+        .package
+        .split('/')
+        .nth(1)
+        .unwrap_or(&resolved.package)
+    } else {
+      &resolved.package
+    };
+    let package_dir = std::path::Path::new(install_dir).join(dir_name);
 
     std::fs::create_dir_all(&package_dir).map_err(|e| {
       NpmError::Other(format!("Failed to create install directory: {}", e))
@@ -471,26 +481,62 @@ impl NpmRegistry {
       return Ok(results);
     }
 
+    // Try to read a package.json from a directory and add to results
+    let try_read_package =
+      |dir_path: &Path, results: &mut Vec<ListResponse>| {
+        let package_json_path = dir_path.join("package.json");
+        if package_json_path.exists() {
+          if let Ok(content) = fs::read_to_string(&package_json_path) {
+            if let Ok(pkg) =
+              serde_json::from_str::<serde_json::Value>(&content)
+            {
+              let name = pkg
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("")
+                .to_string();
+              // Strip @org/ scope from the name for consistency
+              let short_name = if name.contains('/') {
+                name.split('/').last().unwrap_or(&name).to_string()
+              } else {
+                name.clone()
+              };
+              let version = pkg
+                .get("version")
+                .and_then(|v| v.as_str())
+                .unwrap_or("0.0.0")
+                .to_string();
+              results.push(ListResponse {
+                package: short_name,
+                version,
+                install_path: dir_path.to_string_lossy().to_string(),
+              });
+            }
+          }
+        }
+      };
+
     if let Ok(entries) = fs::read_dir(base_path) {
       for entry in entries.flatten() {
-        if let Ok(package_name) = entry.file_name().into_string() {
-          let package_path = entry.path();
+        let entry_path = entry.path();
+        if !entry_path.is_dir() {
+          continue;
+        }
 
-          if let Ok(version_entries) = fs::read_dir(&package_path) {
-            for version_entry in version_entries.flatten() {
-              if let Ok(version) = version_entry.file_name().into_string() {
-                let install_path = version_entry.path();
-
-                let package_json = install_path.join("package.json");
-                if package_json.exists() {
-                  results.push(ListResponse {
-                    package: package_name.clone(),
-                    version,
-                    install_path: install_path.to_string_lossy().to_string(),
-                  });
+        if let Ok(dir_name) = entry.file_name().into_string() {
+          if dir_name.starts_with('@') {
+            // Scoped package directory — recurse one level
+            if let Ok(scoped_entries) = fs::read_dir(&entry_path) {
+              for scoped_entry in scoped_entries.flatten() {
+                let scoped_path = scoped_entry.path();
+                if scoped_path.is_dir() {
+                  try_read_package(&scoped_path, &mut results);
                 }
               }
             }
+          } else {
+            // Flat layout: {dir}/{name}/package.json
+            try_read_package(&entry_path, &mut results);
           }
         }
       }
@@ -499,6 +545,137 @@ impl NpmRegistry {
     results.sort_by(|a, b| {
       a.package.cmp(&b.package).then(a.version.cmp(&b.version))
     });
+
+    Ok(results)
+  }
+
+  pub fn delete_package(
+    package_name: &str,
+    install_dir: &str,
+  ) -> NpmResult<DeleteResponse> {
+    let package_dir = std::path::Path::new(install_dir).join(package_name);
+
+    if !package_dir.exists() {
+      return Ok(DeleteResponse {
+        package: package_name.to_string(),
+        deleted: false,
+        error: Some(format!(
+          "Package directory not found: {}",
+          package_dir.display()
+        )),
+      });
+    }
+
+    match std::fs::remove_dir_all(&package_dir) {
+      Ok(_) => Ok(DeleteResponse {
+        package: package_name.to_string(),
+        deleted: true,
+        error: None,
+      }),
+      Err(e) => Ok(DeleteResponse {
+        package: package_name.to_string(),
+        deleted: false,
+        error: Some(format!(
+          "Failed to delete {}: {}",
+          package_dir.display(),
+          e
+        )),
+      }),
+    }
+  }
+
+  pub fn seed_packages(
+    &self,
+    install_dir: &str,
+  ) -> NpmResult<Vec<SeedResponse>> {
+    let seed_env = std::env::var("PLUGINS_SEED").unwrap_or_default();
+    if seed_env.is_empty() {
+      return Ok(Vec::new());
+    }
+
+    let packages: Vec<String> = serde_json::from_str(&seed_env)
+      .map_err(|e| NpmError::Other(format!("Invalid PLUGINS_SEED JSON: {}", e)))?;
+
+    let update = std::env::var("PLUGINS_SEED_UPDATE")
+      .map(|v| v.to_lowercase() == "true")
+      .unwrap_or(false);
+
+    let api_version =
+      std::env::var("PLUGINS_API_VERSION").unwrap_or_else(|_| "latest".to_string());
+
+    let mut results = Vec::new();
+
+    for pkg_name in &packages {
+      // Build the full package spec with version
+      let package_spec = if pkg_name.contains('@')
+        && pkg_name.rfind('@').unwrap_or(0) > 0
+      {
+        // Already has a version specifier like `name@1.0.0`
+        pkg_name.clone()
+      } else {
+        format!("{}@{}", pkg_name, api_version)
+      };
+
+      // Determine the short name for directory checking
+      let short_name = {
+        // Strip version: take part before last @, unless it's a scoped package start
+        let name_part = if let Some(pos) = package_spec.rfind('@') {
+          if pos == 0 {
+            &package_spec
+          } else {
+            &package_spec[..pos]
+          }
+        } else {
+          &package_spec
+        };
+        // Strip @org/ scope
+        if name_part.starts_with('@') {
+          name_part
+            .split('/')
+            .nth(1)
+            .unwrap_or(name_part)
+            .to_string()
+        } else {
+          name_part.to_string()
+        }
+      };
+
+      let pkg_dir =
+        std::path::Path::new(install_dir).join(&short_name);
+      let is_installed = pkg_dir.join("package.json").exists();
+
+      if is_installed && !update {
+        results.push(SeedResponse {
+          package: pkg_name.clone(),
+          version: String::new(),
+          success: true,
+          skipped: true,
+          error: None,
+        });
+        continue;
+      }
+
+      match self.install_package(&package_spec, install_dir) {
+        Ok(install_result) => {
+          results.push(SeedResponse {
+            package: pkg_name.clone(),
+            version: install_result.version,
+            success: install_result.success,
+            skipped: false,
+            error: install_result.error,
+          });
+        }
+        Err(e) => {
+          results.push(SeedResponse {
+            package: pkg_name.clone(),
+            version: String::new(),
+            success: false,
+            skipped: false,
+            error: Some(e.to_string()),
+          });
+        }
+      }
+    }
 
     Ok(results)
   }
