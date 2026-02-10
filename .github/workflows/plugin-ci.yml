@@ -79,6 +79,8 @@ jobs:
             RUNNER: ubuntu-24.04
           - PKGPATH: ./pgwire
           - PKGPATH: ./tpm
+          - PKGPATH: ./swarm
+          - PKGPATH: ./flight
           - PKGPATH: ./bao
 
     runs-on: ${{ matrix.RUNNER || needs.pick_runner.outputs.random_runner }}
