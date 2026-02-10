@@ -1,6 +1,6 @@
 # TrexSQL
 
-A monorepo of TrexSQL
+The monorepo of TrexSQL
 
 ## `trex` Binary
 
