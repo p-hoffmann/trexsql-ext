@@ -13,7 +13,7 @@ fn main() {
     let ext_dir = env::var("EXTENSION_DIR")
         .unwrap_or_else(|_| "/usr/lib/trexsql/extensions".to_string());
 
-    eprintln!("Opening database: {db_path}");
+    println!("Opening database: {db_path}");
     let conn = Connection::open(&db_path).expect("Failed to open database");
 
     let mut loaded = 0u32;
@@ -27,37 +27,37 @@ fn main() {
                     if path.extension().and_then(|e| e.to_str()) == Some("trex") {
                         let path_str = path.display().to_string();
                         let safe_path = path_str.replace("'", "''");
-                        eprint!("Loading extension: {path_str} ... ");
+                        print!("Loading extension: {path_str} ... ");
                         match conn.execute(&format!("LOAD '{safe_path}'"), []) {
                             Ok(_) => {
-                                eprintln!("ok");
+                                println!("ok");
                                 loaded += 1;
                             }
                             Err(e) => {
-                                eprintln!("failed: {e}");
+                                println!("FAILED: {e}");
                                 failures += 1;
                             }
                         }
                     }
                 }
             }
-            Err(e) => eprintln!("Warning: could not read extension dir {ext_dir}: {e}"),
+            Err(e) => println!("Warning: could not read extension dir {ext_dir}: {e}"),
         }
     } else {
-        eprintln!("Warning: extension dir {ext_dir} does not exist");
+        println!("Warning: extension dir {ext_dir} does not exist");
     }
 
     if check_mode {
         if failures > 0 {
-            eprintln!("{failures} extension(s) failed to load");
+            println!("{failures} extension(s) failed to load");
             process::exit(1);
         }
         if loaded == 0 {
-            eprintln!("No extensions found in {ext_dir}");
+            println!("No extensions found in {ext_dir}");
             process::exit(1);
         }
-        eprintln!("All {loaded} extension(s) loaded successfully");
-        process::exit(0);
+        println!("All {loaded} extension(s) loaded successfully");
+        return;
     }
 
     eprintln!("TrexSQL ready. Waiting for shutdown signal...");
