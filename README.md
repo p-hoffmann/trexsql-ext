@@ -25,26 +25,14 @@ Pass `--check` to verify extensions load and exit.
 | `ext/chdb` | Rust | ClickHouse integration |
 | `ext/flight` | Rust | Arrow Flight SQL |
 | `ext/swarm` | Rust | Distributed cluster coordination |
-| `ext/bao` | TypeScript | TREX CLI server launcher |
 | `ext/pgt` | Rust | PostgreSQL to SQL transformer (library) |
 
-## Quick Start
+## Build
 
 ```bash
 # Clone with submodules
 git clone --recurse-submodules <repo-url>
-
-# Build an extension
-cd ext/<name>
-make configure
-make debug
-
-# Run
-trex
-LOAD './build/debug/extension/<name>/<name>.trex';
 ```
-
-## Build
 
 All extensions follow the same Makefile pattern:
 
