@@ -9,7 +9,7 @@ mod hana_scan;
 mod hana_execute;
 pub use hana_scan::{
     validate_hana_connection, parse_hana_url,
-    HanaError, HanaPerformanceMetrics, LogLevel, HanaLogger,
+    HanaError, LogLevel, HanaLogger,
     HanaScanVTab, HanaScanBindData, HanaScanInitData
 };
 pub use hana_execute::HanaExecuteScalar;

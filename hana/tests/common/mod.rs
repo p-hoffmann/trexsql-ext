@@ -11,19 +11,21 @@ pub struct HanaTestConfig {
 
 impl HanaTestConfig {
     pub fn new() -> Self {
-        // Default test connection URL
-        let default_url = "hdbsql://SYSTEM:Toor1234@localhost:39041/HDB";
-        
-        // Allow override via environment variable
-        let connection_url = env::var("HANA_TEST_URL").unwrap_or_else(|_| default_url.to_string());
-        
-        // Check if tests should be skipped
-        let should_skip = env::var("SKIP_HANA_TESTS").unwrap_or_else(|_| "false".to_string()) == "true";
-        
-        Self {
-            connection_url,
-            should_skip,
-            skip_reason: "HANA server not available or SKIP_HANA_TESTS=true".to_string(),
+        match env::var("HANA_TEST_URL") {
+            Ok(url) if !url.is_empty() => {
+                let should_skip = env::var("SKIP_HANA_TESTS")
+                    .unwrap_or_else(|_| "false".to_string()) == "true";
+                Self {
+                    connection_url: url,
+                    should_skip,
+                    skip_reason: "SKIP_HANA_TESTS=true".to_string(),
+                }
+            }
+            _ => Self {
+                connection_url: String::new(),
+                should_skip: true,
+                skip_reason: "HANA_TEST_URL not set".to_string(),
+            },
         }
     }
 }

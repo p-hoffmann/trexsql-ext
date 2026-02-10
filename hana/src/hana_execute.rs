@@ -15,32 +15,67 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
     let mut in_double_quote = false;
 
     while let Some(c) = chars.next() {
+        if in_single_quote {
+            current_statement.push(c);
+            if c == '\'' {
+                if chars.peek() == Some(&'\'') {
+                    current_statement.push(chars.next().unwrap());
+                } else {
+                    in_single_quote = false;
+                }
+            }
+            continue;
+        }
+        if in_double_quote {
+            current_statement.push(c);
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    current_statement.push(chars.next().unwrap());
+                } else {
+                    in_double_quote = false;
+                }
+            }
+            continue;
+        }
         match c {
-            '\'' if !in_double_quote => {
-                current_statement.push(c);
-                if in_single_quote {
-                    if chars.peek() == Some(&'\'') {
-                        current_statement.push(chars.next().unwrap());
-                    } else {
-                        in_single_quote = false;
+            '-' if chars.peek() == Some(&'-') => {
+                // Line comment: skip to end of line
+                chars.next(); // consume second '-'
+                for c2 in chars.by_ref() {
+                    if c2 == '\n' {
+                        current_statement.push('\n');
+                        break;
                     }
-                } else {
-                    in_single_quote = true;
                 }
             }
-            '"' if !in_single_quote => {
-                current_statement.push(c);
-                if in_double_quote {
-                    if chars.peek() == Some(&'"') {
-                        current_statement.push(chars.next().unwrap());
-                    } else {
-                        in_double_quote = false;
+            '/' if chars.peek() == Some(&'*') => {
+                // Block comment: skip to */
+                chars.next(); // consume '*'
+                let mut depth = 1u32;
+                while depth > 0 {
+                    match chars.next() {
+                        Some('*') if chars.peek() == Some(&'/') => {
+                            chars.next();
+                            depth -= 1;
+                        }
+                        Some('/') if chars.peek() == Some(&'*') => {
+                            chars.next();
+                            depth += 1;
+                        }
+                        None => break,
+                        _ => {}
                     }
-                } else {
-                    in_double_quote = true;
                 }
             }
-            ';' if !in_single_quote && !in_double_quote => {
+            '\'' => {
+                current_statement.push(c);
+                in_single_quote = true;
+            }
+            '"' => {
+                current_statement.push(c);
+                in_double_quote = true;
+            }
+            ';' => {
                 let trimmed = current_statement.trim();
                 if !trimmed.is_empty() {
                     statements.push(trimmed.to_string());
@@ -91,10 +126,8 @@ impl VScalar for HanaExecuteScalar {
             duckdb::types::DuckString::new(&mut binding).as_str().to_string()
         };
         
-        let result = match execute_hana_statement(&connection_string, &sql_statement) {
-            Ok(statements_executed) => format!("Success: {} statement(s) executed", statements_executed),
-            Err(err) => format!("Error: {}", err),
-        };
+        let statements_executed = execute_hana_statement(&connection_string, &sql_statement)?;
+        let result = format!("{} statement(s) executed", statements_executed);
 
         let flat_vector = output.flat_vector();
         flat_vector.insert(0, &result);
@@ -120,7 +153,7 @@ fn execute_hana_statement(connection_string: &str, sql_statement: &str) -> Resul
         Ok(Ok(conn)) => conn,
         Ok(Err(e)) => return Err(Box::new(HanaError::connection(
             &format!("Connection failed: {}", e),
-            Some(connection_string),
+            None,
             None,
             "execute_hana_statement"
         ))),
@@ -134,7 +167,7 @@ fn execute_hana_statement(connection_string: &str, sql_statement: &str) -> Resul
             };
             return Err(Box::new(HanaError::connection(
                 &format!("Connection panicked: {}", panic_msg),
-                Some(connection_string),
+                None,
                 None,
                 "execute_hana_statement"
             )));
@@ -240,7 +273,7 @@ mod tests {
         let sql = r#"SELECT * FROM "say ""hello;world"""; SELECT 1"#;
         let result = split_sql_statements(sql);
         assert_eq!(result, vec![
-            r#"SELECT * FROM "say ""hello;world"""#,
+            r##"SELECT * FROM "say ""hello;world""""##,
             "SELECT 1"
         ]);
     }
@@ -291,5 +324,74 @@ mod tests {
             "CREATE TABLE foo (\n  id INT,\n  name VARCHAR(100)\n)",
             "INSERT INTO foo VALUES (1, 'test')"
         ]);
+    }
+
+    #[test]
+    fn test_line_comment_stripped() {
+        let sql = "-- this is a comment\nSELECT 1";
+        let result = split_sql_statements(sql);
+        assert_eq!(result, vec!["SELECT 1"]);
+    }
+
+    #[test]
+    fn test_line_comment_after_statement() {
+        let sql = "SELECT 1; -- trailing comment\nSELECT 2";
+        let result = split_sql_statements(sql);
+        assert_eq!(result, vec!["SELECT 1", "SELECT 2"]);
+    }
+
+    #[test]
+    fn test_line_comment_between_statements() {
+        let sql = "SELECT 1;\n-- middle comment\nSELECT 2";
+        let result = split_sql_statements(sql);
+        assert_eq!(result, vec!["SELECT 1", "SELECT 2"]);
+    }
+
+    #[test]
+    fn test_block_comment_stripped() {
+        let sql = "/* block comment */ SELECT 1";
+        let result = split_sql_statements(sql);
+        assert_eq!(result, vec!["SELECT 1"]);
+    }
+
+    #[test]
+    fn test_block_comment_between_statements() {
+        let sql = "SELECT 1; /* comment */ SELECT 2";
+        let result = split_sql_statements(sql);
+        assert_eq!(result, vec!["SELECT 1", "SELECT 2"]);
+    }
+
+    #[test]
+    fn test_nested_block_comments() {
+        let sql = "/* outer /* inner */ still comment */ SELECT 1";
+        let result = split_sql_statements(sql);
+        assert_eq!(result, vec!["SELECT 1"]);
+    }
+
+    #[test]
+    fn test_comment_like_in_single_quotes_preserved() {
+        let sql = "SELECT '-- not a comment' FROM t; SELECT 1";
+        let result = split_sql_statements(sql);
+        assert_eq!(result, vec![
+            "SELECT '-- not a comment' FROM t",
+            "SELECT 1"
+        ]);
+    }
+
+    #[test]
+    fn test_comment_like_in_double_quotes_preserved() {
+        let sql = r#"SELECT * FROM "/* not a comment */"; SELECT 1"#;
+        let result = split_sql_statements(sql);
+        assert_eq!(result, vec![
+            r#"SELECT * FROM "/* not a comment */""#,
+            "SELECT 1"
+        ]);
+    }
+
+    #[test]
+    fn test_only_comments() {
+        let sql = "-- just a comment\n/* another comment */";
+        let result = split_sql_statements(sql);
+        assert!(result.is_empty());
     }
 }

@@ -12,8 +12,10 @@ import time
 
 import pytest
 
+# HANA Express requires TLS — use hdbsqls:// with insecure cert check skipped
 HANA_TEST_URL = os.environ.get(
-    "HANA_TEST_URL", "hdbsqls://SYSTEM:Toor1234@localhost:39041/HDB?insecure_omit_server_certificate_check"
+    "HANA_TEST_URL",
+    "hdbsqls://SYSTEM:Toor1234@localhost:39041/HDB?insecure_omit_server_certificate_check",
 )
 
 
@@ -97,6 +99,95 @@ def test_hana_execute_ddl(node_factory):
             )
         except Exception:
             pass
+
+
+def test_hana_scan_multi_column(node_factory):
+    """hana_scan() returns all columns from a multi-column query."""
+    node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
+    result = node.execute(
+        f"SELECT * FROM hana_scan("
+        f"'SELECT ''hello'' AS col_a, 123 AS col_b, ''world'' AS col_c FROM DUMMY', "
+        f"'{HANA_TEST_URL}')"
+    )
+    assert len(result) == 1
+    row = result[0]
+    assert len(row) == 3, f"Expected 3 columns, got {len(row)}: {row}"
+    assert row[0] == "hello"
+    assert row[1] == 123
+    assert row[2] == "world"
+
+
+def test_hana_scan_now_multi_column(node_factory):
+    """Regression: queries with NOW() must return all columns, not just the first."""
+    node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
+    result = node.execute(
+        f"SELECT * FROM hana_scan("
+        f"'SELECT ''Alice'' AS name, 42 AS age, NOW() AS ts FROM DUMMY', "
+        f"'{HANA_TEST_URL}')"
+    )
+    assert len(result) == 1
+    row = result[0]
+    assert len(row) == 3, f"Expected 3 columns (name, age, ts), got {len(row)}: {row}"
+    assert row[0] == "Alice"
+    assert row[1] == 42
+    # ts (column 2) should be a non-empty timestamp string
+    assert row[2] is not None and str(row[2]) != ""
+
+
+def test_hana_scan_current_timestamp_multi_column(node_factory):
+    """Regression: CURRENT_TIMESTAMP in query must not collapse columns."""
+    node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
+    result = node.execute(
+        f"SELECT * FROM hana_scan("
+        f"'SELECT 1 AS a, CURRENT_TIMESTAMP AS b, ''x'' AS c FROM DUMMY', "
+        f"'{HANA_TEST_URL}')"
+    )
+    assert len(result) == 1
+    row = result[0]
+    assert len(row) == 3, f"Expected 3 columns, got {len(row)}: {row}"
+    assert row[0] == 1
+    assert row[2] == "x"
+
+
+def test_hana_execute_multi_statement(node_factory):
+    """hana_execute() handles multiple semicolon-separated statements."""
+    node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
+    table1 = f"TREX_MULTI1_{int(time.time())}"
+    table2 = f"TREX_MULTI2_{int(time.time())}"
+    try:
+        result = node.execute(
+            f"SELECT hana_execute('{HANA_TEST_URL}', "
+            f"'CREATE TABLE {table1} (ID INT); CREATE TABLE {table2} (ID INT)')"
+        )
+        assert "2 statement" in result[0][0]
+        # Verify both tables exist
+        check = node.execute(
+            f"SELECT * FROM hana_scan("
+            f"'SELECT TABLE_NAME FROM SYS.TABLES "
+            f"WHERE TABLE_NAME IN (''{table1}'', ''{table2}'')', "
+            f"'{HANA_TEST_URL}')"
+        )
+        tables = [row[0] for row in check]
+        assert table1 in tables
+        assert table2 in tables
+    finally:
+        for t in [table1, table2]:
+            try:
+                node.execute(
+                    f"SELECT hana_execute('{HANA_TEST_URL}', 'DROP TABLE {t}')"
+                )
+            except Exception:
+                pass
+
+
+def test_hana_execute_error_propagation(node_factory):
+    """hana_execute() raises RuntimeError on invalid SQL, not a success string."""
+    node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
+    with pytest.raises(RuntimeError):
+        node.execute(
+            f"SELECT hana_execute('{HANA_TEST_URL}', "
+            f"'DROP TABLE NONEXISTENT_TABLE_XYZ_12345')"
+        )
 
 
 def test_hana_scan_error_handling(node_factory):
