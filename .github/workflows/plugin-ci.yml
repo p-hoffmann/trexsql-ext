@@ -185,11 +185,14 @@ jobs:
           else
              ${{ matrix.NPM || 'npm' }} pack
           fi
+      - name: Extract extension name
+        id: extname
+        run: echo "name=$(basename ${{ matrix.PKGPATH }})" >> "$GITHUB_OUTPUT"
       - name: Upload extension artifact
         if: hashFiles(format('{0}/*.trex', matrix.PKGPATH)) != ''
         uses: actions/upload-artifact@v4
         with:
-          name: ext-${{ matrix.PKGPATH }}
+          name: ext-${{ steps.extname.outputs.name }}
           path: ${{ matrix.PKGPATH }}/*.trex
           retention-days: 1
 
