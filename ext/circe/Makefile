@@ -38,8 +38,8 @@ circe-native:
 all: configure release
 
 # Include makefiles from DuckDB C API extensions
-include extension-ci-tools/makefiles/c_api_extensions/base.Makefile
-include extension-ci-tools/makefiles/c_api_extensions/c_cpp.Makefile
+include ../extension-ci-tools/makefiles/c_api_extensions/base.Makefile
+include ../extension-ci-tools/makefiles/c_api_extensions/c_cpp.Makefile
 
 configure: venv platform extension_version
 
