@@ -16,6 +16,7 @@ fn main() {
     println!("Opening database: {db_path}");
     let conn = Connection::open(&db_path).expect("Failed to open database");
 
+    let mut loaded = 0u32;
     let mut failures = 0u32;
     let ext_path = Path::new(&ext_dir);
     if ext_path.is_dir() {
@@ -28,7 +29,10 @@ fn main() {
                         let safe_path = path_str.replace("'", "''");
                         print!("Loading extension: {path_str} ... ");
                         match conn.execute(&format!("LOAD '{safe_path}'"), []) {
-                            Ok(_) => println!("ok"),
+                            Ok(_) => {
+                                println!("ok");
+                                loaded += 1;
+                            }
                             Err(e) => {
                                 println!("failed: {e}");
                                 failures += 1;
@@ -48,7 +52,11 @@ fn main() {
             eprintln!("{failures} extension(s) failed to load");
             process::exit(1);
         }
-        println!("All extensions loaded successfully");
+        if loaded == 0 {
+            eprintln!("No extensions found in {ext_dir}");
+            process::exit(1);
+        }
+        println!("All {loaded} extension(s) loaded successfully");
         process::exit(0);
     }
 
