@@ -317,7 +317,7 @@ impl Clone for HanaScanBindData {
                 LogicalTypeId::Decimal => LogicalTypeId::Decimal,
                 LogicalTypeId::Varchar => LogicalTypeId::Varchar,
                 LogicalTypeId::Blob => LogicalTypeId::Blob,
-                other => panic!("Unexpected LogicalTypeId in column_types: {:?}", other),
+                _other => LogicalTypeId::Varchar,
             }
         }).collect();
         HanaScanBindData {
@@ -372,7 +372,7 @@ fn map_hana_type(hana_type: hdbconnect::TypeId) -> LogicalTypeId {
     }
 }
 
-fn redact_url_password(url: &str) -> String {
+pub fn redact_url_password(url: &str) -> String {
     let scheme_len = if url.starts_with("hdbsqls://") {
         10
     } else if url.starts_with("hdbsql://") {
@@ -462,7 +462,7 @@ pub fn validate_hana_connection(url: &str) -> Result<(), Box<dyn Error>> {
 }
 
 /// Safe wrapper around HanaConnection::new that catches panics
-fn safe_hana_connect(url: String) -> Result<HanaConnection, Box<dyn Error>> {
+pub fn safe_hana_connect(url: String) -> Result<HanaConnection, Box<dyn Error>> {
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         HanaConnection::new(url)
     }));

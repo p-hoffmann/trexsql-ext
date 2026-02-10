@@ -6,9 +6,20 @@
 statement ok
 LOAD hana_scan;
 
-# TODO: Add actual test cases once implementation is complete
 # Test basic functionality (placeholder test)
 query I
 SELECT 1 as test_placeholder;
 ----
 1
+
+# Verify hana_attach is registered (will fail with connection error, not "unknown function")
+statement error
+SELECT * FROM hana_attach('hdbsql://user:pass@localhost:30015/HDB', 'dev', 'SYS');
+----
+Connection
+
+# Verify hana_tables is registered and returns empty when nothing attached
+query IIII
+SELECT * FROM hana_tables();
+----
+

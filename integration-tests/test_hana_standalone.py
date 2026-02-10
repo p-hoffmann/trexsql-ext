@@ -198,3 +198,181 @@ def test_hana_scan_error_handling(node_factory):
             f"SELECT * FROM hana_scan('SELECT * FROM NONEXISTENT_TABLE_XYZ', "
             f"'{HANA_TEST_URL}')"
         )
+
+
+# ---------------------------------------------------------------------------
+# hana_attach / hana_detach / hana_tables tests
+#
+# Uses a small dedicated test schema (TREX_TEST_ATTACH) with 1 table
+# so that attach completes in < 1s.  This avoids the 30s subprocess
+# timeout that would be needed for the 200-table SYS schema.
+# ---------------------------------------------------------------------------
+
+ATTACH_SCHEMA = "TREX_TEST_ATTACH"
+
+
+def _ensure_test_schema(node):
+    """Create the test schema + table in HANA (idempotent)."""
+    try:
+        node.execute(
+            f"SELECT hana_execute('{HANA_TEST_URL}', "
+            f"'CREATE SCHEMA {ATTACH_SCHEMA}')"
+        )
+    except RuntimeError:
+        pass  # already exists
+    # Drop and recreate to ensure correct schema
+    try:
+        node.execute(
+            f"SELECT hana_execute('{HANA_TEST_URL}', "
+            f"'DROP TABLE {ATTACH_SCHEMA}.T1')"
+        )
+    except RuntimeError:
+        pass  # doesn't exist
+    node.execute(
+        f"SELECT hana_execute('{HANA_TEST_URL}', "
+        f"'CREATE TABLE {ATTACH_SCHEMA}.T1 (ID INT, NAME NVARCHAR(50))')"
+    )
+    node.execute(
+        f"SELECT hana_execute('{HANA_TEST_URL}', "
+        f"'INSERT INTO {ATTACH_SCHEMA}.T1 VALUES (42, ''hello'')')"
+    )
+
+
+def test_hana_tables_empty(node_factory):
+    """hana_tables() returns empty result when nothing is attached."""
+    node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
+    result = node.execute("SELECT * FROM hana_tables()")
+    assert result == []
+
+
+def test_hana_attach(node_factory):
+    """hana_attach() discovers tables and registers them."""
+    node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
+    _ensure_test_schema(node)
+    result = node.execute(
+        f"SELECT * FROM hana_attach('{HANA_TEST_URL}', 'test', '{ATTACH_SCHEMA}')"
+    )
+    assert len(result) >= 1
+    table_names = [row[0] for row in result]
+    full_names = [row[1] for row in result]
+    assert "T1" in table_names
+    assert f"HANA__test_{ATTACH_SCHEMA}_T1" in full_names
+
+
+def test_hana_attach_replacement_scan(node_factory):
+    """After attach, HANA__<dbname>_<schema>_<table> resolves via replacement scan."""
+    node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
+    _ensure_test_schema(node)
+    node.execute(
+        f"SELECT * FROM hana_attach('{HANA_TEST_URL}', 'test', '{ATTACH_SCHEMA}')"
+    )
+    result = node.execute(f"SELECT * FROM HANA__test_{ATTACH_SCHEMA}_T1")
+    assert len(result) >= 1
+    assert result[0][0] == 42
+
+
+def test_hana_attach_schema_view(node_factory):
+    """After attach, <dbname>_<schema>.<table> resolves via DuckDB view."""
+    node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
+    _ensure_test_schema(node)
+    node.execute(
+        f"SELECT * FROM hana_attach('{HANA_TEST_URL}', 'test', '{ATTACH_SCHEMA}')"
+    )
+    result = node.execute(f'SELECT * FROM test_{ATTACH_SCHEMA}."T1"')
+    assert len(result) >= 1
+    assert result[0][0] == 42
+
+
+def test_hana_tables_after_attach(node_factory):
+    """hana_tables() lists attached tables after hana_attach()."""
+    node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
+    _ensure_test_schema(node)
+    node.execute(
+        f"SELECT * FROM hana_attach('{HANA_TEST_URL}', 'test', '{ATTACH_SCHEMA}')"
+    )
+    result = node.execute("SELECT * FROM hana_tables()")
+    assert len(result) >= 1
+    table_names = [row[0] for row in result]
+    assert "T1" in table_names
+
+
+def test_hana_detach(node_factory):
+    """hana_detach() removes tables from registry and drops schema."""
+    node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
+    _ensure_test_schema(node)
+    node.execute(
+        f"SELECT * FROM hana_attach('{HANA_TEST_URL}', 'test', '{ATTACH_SCHEMA}')"
+    )
+    # Verify attached
+    result = node.execute("SELECT * FROM hana_tables()")
+    assert len(result) >= 1
+
+    # Detach
+    result = node.execute(f"SELECT hana_detach('test', '{ATTACH_SCHEMA}')")
+    assert "Detached" in result[0][0]
+
+    # Verify empty
+    result = node.execute("SELECT * FROM hana_tables()")
+    assert result == []
+
+
+def test_hana_attach_replacement_scan_case_insensitive(node_factory):
+    """Replacement scan lookup is case-insensitive."""
+    node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
+    _ensure_test_schema(node)
+    node.execute(
+        f"SELECT * FROM hana_attach('{HANA_TEST_URL}', 'test', '{ATTACH_SCHEMA}')"
+    )
+    # DuckDB uppercases unquoted identifiers, so lowercase should resolve
+    result = node.execute(f"SELECT * FROM hana__test_{ATTACH_SCHEMA.lower()}_t1")
+    assert len(result) >= 1
+
+
+def test_hana_attach_reattach_same_key(node_factory):
+    """Re-attaching the same dbname+schema replaces the previous attachment."""
+    node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
+    _ensure_test_schema(node)
+    # Attach once
+    node.execute(
+        f"SELECT * FROM hana_attach('{HANA_TEST_URL}', 'test', '{ATTACH_SCHEMA}')"
+    )
+    result1 = node.execute("SELECT * FROM hana_tables()")
+    count1 = len(result1)
+    assert count1 >= 1
+
+    # Re-attach same key — should replace, not duplicate
+    node.execute(
+        f"SELECT * FROM hana_attach('{HANA_TEST_URL}', 'test', '{ATTACH_SCHEMA}')"
+    )
+    result2 = node.execute("SELECT * FROM hana_tables()")
+    assert len(result2) == count1
+
+    # Replacement scan still works after re-attach
+    result = node.execute(f"SELECT * FROM HANA__test_{ATTACH_SCHEMA}_T1")
+    assert len(result) >= 1
+    assert result[0][0] == 42
+
+
+def test_hana_attach_empty_dbname(node_factory):
+    """hana_attach() rejects empty dbname."""
+    node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
+    with pytest.raises(RuntimeError, match="dbname"):
+        node.execute(
+            f"SELECT * FROM hana_attach('{HANA_TEST_URL}', '', '{ATTACH_SCHEMA}')"
+        )
+
+
+def test_hana_attach_empty_schema(node_factory):
+    """hana_attach() rejects empty schema."""
+    node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
+    with pytest.raises(RuntimeError, match="schema"):
+        node.execute(
+            f"SELECT * FROM hana_attach('{HANA_TEST_URL}', 'test', '')"
+        )
+
+
+def test_hana_detach_nonexistent(node_factory):
+    """hana_detach() on a non-existent attachment returns 0 tables detached."""
+    node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
+    result = node.execute(f"SELECT hana_detach('nonexistent', 'NOPE')")
+    assert "Detached 0 tables" in result[0][0]
