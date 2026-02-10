@@ -70,18 +70,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - PKGPATH: ./chdb
+          - PKGPATH: ./ext/chdb
             RUNNER: ubuntu-24.04
-          - PKGPATH: ./circe
+          - PKGPATH: ./ext/circe
             RUNNER: ubuntu-24.04
-          - PKGPATH: ./hana
-          - PKGPATH: ./llama
+          - PKGPATH: ./ext/hana
+          - PKGPATH: ./ext/llama
             RUNNER: ubuntu-24.04
-          - PKGPATH: ./pgwire
-          - PKGPATH: ./tpm
-          - PKGPATH: ./swarm
-          - PKGPATH: ./flight
-          - PKGPATH: ./bao
+          - PKGPATH: ./ext/pgwire
+          - PKGPATH: ./ext/tpm
+          - PKGPATH: ./ext/swarm
+          - PKGPATH: ./ext/flight
+          - PKGPATH: ./ext/bao
 
     runs-on: ${{ matrix.RUNNER || needs.pick_runner.outputs.random_runner }}
 
@@ -117,13 +117,13 @@ jobs:
             jq --arg v "-$(date +%s)-$GITHUB_SHA" '.version+=$v' package.json > tmppkg; mv tmppkg package.json
           fi
       - name: Set up Java 17
-        if: matrix.PKGPATH == './bao'
+        if: matrix.PKGPATH == './ext/bao'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
       - name: Install Leiningen
-        if: matrix.PKGPATH == './bao'
+        if: matrix.PKGPATH == './ext/bao'
         run: |
           sudo curl -sL https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein -o /usr/local/bin/lein
           sudo chmod +x /usr/local/bin/lein
@@ -185,10 +185,64 @@ jobs:
           else
              ${{ matrix.NPM || 'npm' }} pack
           fi
+      - name: Extract extension name
+        id: extname
+        run: echo "name=$(basename ${{ matrix.PKGPATH }})" >> "$GITHUB_OUTPUT"
+      - name: Upload extension artifact
+        if: hashFiles(format('{0}/*.trex', matrix.PKGPATH)) != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ext-${{ steps.extname.outputs.name }}
+          path: ${{ matrix.PKGPATH }}/*.trex
+          retention-days: 1
+
+  build-docker:
+    needs: [build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_BRANCH_NAME }}
+          repository: ${{ env.GIT_REPO_FULL_NAME }}
+      - name: Download extension artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ext-*
+          path: extensions/
+          merge-multiple: true
+      - name: List extensions
+        run: ls -la extensions/
+      - name: Build Docker image
+        run: docker build -t trexsql-test .
+      - name: Test extensions load
+        run: docker run --rm trexsql-test --check
+      - name: Login to GHCR
+        if: github.ref_name == 'develop' || github.ref_name == 'main' || github.event_name == 'workflow_dispatch'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push to GHCR
+        if: github.ref_name == 'develop' || github.ref_name == 'main' || github.event_name == 'workflow_dispatch'
+        run: |
+          docker tag trexsql-test ghcr.io/p-hoffmann/trexsql:latest
+          docker tag trexsql-test ghcr.io/p-hoffmann/trexsql:sha-${{ github.sha }}
+          docker push ghcr.io/p-hoffmann/trexsql:latest
+          docker push ghcr.io/p-hoffmann/trexsql:sha-${{ github.sha }}
 
   success:
-    needs: build
+    needs: [build, build-docker]
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check
-        run: echo "Check"
+        run: |
+          if [[ "${{ needs.build.result }}" == "failure" || "${{ needs.build-docker.result }}" == "failure" ]]; then
+            echo "::error::One or more jobs failed"
+            exit 1
+          fi
+          echo "All required jobs passed (or were skipped)"

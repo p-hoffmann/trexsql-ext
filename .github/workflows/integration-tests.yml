@@ -37,29 +37,29 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            flight/target
-            swarm/target
-          key: rust-core-${{ runner.os }}-${{ hashFiles('flight/Cargo.lock', 'swarm/Cargo.lock') }}
+            ext/flight/target
+            ext/swarm/target
+          key: rust-core-${{ runner.os }}-${{ hashFiles('ext/flight/Cargo.lock', 'ext/swarm/Cargo.lock') }}
           restore-keys: rust-core-${{ runner.os }}-
 
       - name: Build flight
         run: make configure && make debug
-        working-directory: flight
+        working-directory: ext/flight
 
       - name: Build swarm
         run: make configure && make debug
-        working-directory: swarm
+        working-directory: ext/swarm
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-flight
-          path: flight/build/debug/extension/flight/flight.trex
+          path: ext/flight/build/debug/extension/flight/flight.trex
           retention-days: 1
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-swarm
-          path: swarm/build/debug/extension/swarm/swarm.trex
+          path: ext/swarm/build/debug/extension/swarm/swarm.trex
           retention-days: 1
 
   build-pgwire:
@@ -78,18 +78,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            pgwire/target
-          key: rust-pgwire-${{ runner.os }}-${{ hashFiles('pgwire/Cargo.lock') }}
+            ext/pgwire/target
+          key: rust-pgwire-${{ runner.os }}-${{ hashFiles('ext/pgwire/Cargo.lock') }}
           restore-keys: rust-pgwire-${{ runner.os }}-
 
       - name: Build pgwire
         run: make configure && make debug
-        working-directory: pgwire
+        working-directory: ext/pgwire
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-pgwire
-          path: pgwire/build/debug/extension/pgwire/pgwire.trex
+          path: ext/pgwire/build/debug/extension/pgwire/pgwire.trex
           retention-days: 1
 
   build-chdb:
@@ -105,25 +105,25 @@ jobs:
 
       - name: Install chdb native library
         run: sudo apt-get update && sudo apt-get install -y libc6-dev clang && sudo bash ./install_chdb.sh
-        working-directory: chdb
+        working-directory: ext/chdb
 
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            chdb/target
-          key: rust-chdb-${{ runner.os }}-${{ hashFiles('chdb/Cargo.lock') }}
+            ext/chdb/target
+          key: rust-chdb-${{ runner.os }}-${{ hashFiles('ext/chdb/Cargo.lock') }}
           restore-keys: rust-chdb-${{ runner.os }}-
 
       - name: Build chdb
         run: make configure && make debug
-        working-directory: chdb
+        working-directory: ext/chdb
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-chdb
-          path: chdb/build/debug/extension/chdb/chdb.trex
+          path: ext/chdb/build/debug/extension/chdb/chdb.trex
           retention-days: 1
 
   build-hana:
@@ -142,18 +142,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            hana/target
-          key: rust-hana-${{ runner.os }}-${{ hashFiles('hana/Cargo.lock') }}
+            ext/hana/target
+          key: rust-hana-${{ runner.os }}-${{ hashFiles('ext/hana/Cargo.lock') }}
           restore-keys: rust-hana-${{ runner.os }}-
 
       - name: Build hana
         run: make configure && make debug
-        working-directory: hana
+        working-directory: ext/hana
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-hana
-          path: hana/build/debug/extension/hana_scan/hana_scan.trex
+          path: ext/hana/build/debug/extension/hana_scan/hana_scan.trex
           retention-days: 1
 
   build-tpm:
@@ -172,18 +172,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            tpm/target
-          key: rust-tpm-${{ runner.os }}-${{ hashFiles('tpm/Cargo.lock') }}
+            ext/tpm/target
+          key: rust-tpm-${{ runner.os }}-${{ hashFiles('ext/tpm/Cargo.lock') }}
           restore-keys: rust-tpm-${{ runner.os }}-
 
       - name: Build tpm
         run: make configure && make debug
-        working-directory: tpm
+        working-directory: ext/tpm
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-tpm
-          path: tpm/build/debug/extension/tpm/tpm.trex
+          path: ext/tpm/build/debug/extension/tpm/tpm.trex
           retention-days: 1
 
   build-circe:
@@ -207,19 +207,19 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: |
-            circe/build
-            circe/circe-be/target
-          key: circe-${{ runner.os }}-${{ hashFiles('circe/CMakeLists.txt', 'circe/extension_config.cmake', 'circe/circe-be/pom.xml', 'circe/graalvm-config/**') }}
+            ext/circe/build
+            ext/circe/circe-be/target
+          key: circe-${{ runner.os }}-${{ hashFiles('ext/circe/CMakeLists.txt', 'ext/circe/extension_config.cmake', 'ext/circe/circe-be/pom.xml', 'ext/circe/graalvm-config/**') }}
           restore-keys: circe-${{ runner.os }}-
 
       - name: Build circe
         run: make configure && make release
-        working-directory: circe
+        working-directory: ext/circe
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-circe
-          path: circe/build/release/extension/circe/circe.trex
+          path: ext/circe/build/release/extension/circe/circe.trex
           retention-days: 1
 
   build-llama:
@@ -236,18 +236,18 @@ jobs:
 
       - uses: actions/cache@v4
         with:
-          path: llama/build
-          key: llama-cmake-${{ runner.os }}-${{ hashFiles('llama/CMakeLists.txt', 'llama/llama.cpp/CMakeLists.txt') }}
+          path: ext/llama/build
+          key: llama-cmake-${{ runner.os }}-${{ hashFiles('ext/llama/CMakeLists.txt', 'ext/llama/llama.cpp/CMakeLists.txt') }}
           restore-keys: llama-cmake-${{ runner.os }}-
 
       - name: Build llama
         run: make configure && make debug
-        working-directory: llama
+        working-directory: ext/llama
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-llama
-          path: llama/build/debug/extension/llama/llama.trex
+          path: ext/llama/build/debug/extension/llama/llama.trex
           retention-days: 1
 
   # ===========================================================================
@@ -268,12 +268,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-flight
-          path: flight/build/debug/extension/flight/
+          path: ext/flight/build/debug/extension/flight/
 
       - uses: actions/download-artifact@v4
         with:
           name: ext-swarm
-          path: swarm/build/debug/extension/swarm/
+          path: ext/swarm/build/debug/extension/swarm/
 
       - name: Setup test environment
         run: make configure
@@ -305,17 +305,17 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-flight
-          path: flight/build/debug/extension/flight/
+          path: ext/flight/build/debug/extension/flight/
 
       - uses: actions/download-artifact@v4
         with:
           name: ext-swarm
-          path: swarm/build/debug/extension/swarm/
+          path: ext/swarm/build/debug/extension/swarm/
 
       - uses: actions/download-artifact@v4
         with:
           name: ext-pgwire
-          path: pgwire/build/debug/extension/pgwire/
+          path: ext/pgwire/build/debug/extension/pgwire/
 
       - name: Setup test environment
         run: make configure
@@ -343,7 +343,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-circe
-          path: circe/build/release/extension/circe/
+          path: ext/circe/build/release/extension/circe/
 
       - name: Setup test environment
         run: make configure
@@ -367,7 +367,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-llama
-          path: llama/build/debug/extension/llama/
+          path: ext/llama/build/debug/extension/llama/
 
       - name: Setup test environment
         run: make configure
@@ -390,22 +390,22 @@ jobs:
 
       - name: Install chdb native library
         run: sudo bash ./install_chdb.sh
-        working-directory: chdb
+        working-directory: ext/chdb
 
       - uses: actions/download-artifact@v4
         with:
           name: ext-flight
-          path: flight/build/debug/extension/flight/
+          path: ext/flight/build/debug/extension/flight/
 
       - uses: actions/download-artifact@v4
         with:
           name: ext-swarm
-          path: swarm/build/debug/extension/swarm/
+          path: ext/swarm/build/debug/extension/swarm/
 
       - uses: actions/download-artifact@v4
         with:
           name: ext-chdb
-          path: chdb/build/debug/extension/chdb/
+          path: ext/chdb/build/debug/extension/chdb/
 
       - name: Setup test environment
         run: make configure
@@ -433,7 +433,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-tpm
-          path: tpm/build/debug/extension/tpm/
+          path: ext/tpm/build/debug/extension/tpm/
 
       - name: Setup test environment
         run: make configure
@@ -461,7 +461,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-hana
-          path: hana/build/debug/extension/hana_scan/
+          path: ext/hana/build/debug/extension/hana_scan/
 
       - name: Setup test environment
         run: make configure

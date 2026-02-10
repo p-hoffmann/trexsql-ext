@@ -11,8 +11,8 @@ TARGET_DUCKDB_VERSION=v1.2.0
 all: configure release
 
 # Include the base C API makefile and then the C/C++ specific one
-include extension-ci-tools/makefiles/c_api_extensions/base.Makefile
-include extension-ci-tools/makefiles/c_api_extensions/c_cpp.Makefile
+include ../extension-ci-tools/makefiles/c_api_extensions/base.Makefile
+include ../extension-ci-tools/makefiles/c_api_extensions/c_cpp.Makefile
 
 # Configuration step
 configure: venv platform extension_version

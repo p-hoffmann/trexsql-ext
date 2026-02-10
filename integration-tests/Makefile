@@ -1,12 +1,12 @@
 REPO_ROOT=$(shell cd .. && pwd)
-FLIGHT_EXT=$(REPO_ROOT)/flight/build/debug/extension/flight/flight.trex
-SWARM_EXT=$(REPO_ROOT)/swarm/build/debug/extension/swarm/swarm.trex
-PGWIRE_EXT=$(REPO_ROOT)/pgwire/build/debug/extension/pgwire/pgwire.trex
-CIRCE_EXT=$(REPO_ROOT)/circe/build/release/extension/circe/circe.trex
-LLAMA_EXT=$(REPO_ROOT)/llama/build/debug/extension/llama/llama.trex
-CHDB_EXT=$(REPO_ROOT)/chdb/build/debug/extension/chdb/chdb.trex
-HANA_EXT=$(REPO_ROOT)/hana/build/debug/extension/hana_scan/hana_scan.trex
-TPM_EXT=$(REPO_ROOT)/tpm/build/debug/extension/tpm/tpm.trex
+FLIGHT_EXT=$(REPO_ROOT)/ext/flight/build/debug/extension/flight/flight.trex
+SWARM_EXT=$(REPO_ROOT)/ext/swarm/build/debug/extension/swarm/swarm.trex
+PGWIRE_EXT=$(REPO_ROOT)/ext/pgwire/build/debug/extension/pgwire/pgwire.trex
+CIRCE_EXT=$(REPO_ROOT)/ext/circe/build/release/extension/circe/circe.trex
+LLAMA_EXT=$(REPO_ROOT)/ext/llama/build/debug/extension/llama/llama.trex
+CHDB_EXT=$(REPO_ROOT)/ext/chdb/build/debug/extension/chdb/chdb.trex
+HANA_EXT=$(REPO_ROOT)/ext/hana/build/debug/extension/hana_scan/hana_scan.trex
+TPM_EXT=$(REPO_ROOT)/ext/tpm/build/debug/extension/tpm/tpm.trex
 PYTHON_BIN?=python3
 VENV=./venv
 
@@ -17,20 +17,20 @@ configure:
 	$(VENV)/bin/pip install 'duckdb==1.4.0' pytest psycopg2-binary
 
 check-extensions:
-	@test -f $(FLIGHT_EXT) || (echo "Build flight first: cd ../flight && make configure && make debug" && exit 1)
-	@test -f $(SWARM_EXT) || (echo "Build swarm first: cd ../swarm && make configure && make debug" && exit 1)
+	@test -f $(FLIGHT_EXT) || (echo "Build flight first: cd ../ext/flight && make configure && make debug" && exit 1)
+	@test -f $(SWARM_EXT) || (echo "Build swarm first: cd ../ext/swarm && make configure && make debug" && exit 1)
 
 check-pgwire:
-	@test -f $(PGWIRE_EXT) || (echo "Build pgwire first: cd ../pgwire && make configure && make debug" && exit 1)
+	@test -f $(PGWIRE_EXT) || (echo "Build pgwire first: cd ../ext/pgwire && make configure && make debug" && exit 1)
 
 check-circe:
-	@test -f $(CIRCE_EXT) || (echo "Build circe first: cd ../circe && make configure && make release" && exit 1)
+	@test -f $(CIRCE_EXT) || (echo "Build circe first: cd ../ext/circe && make configure && make release" && exit 1)
 
 check-llama:
-	@test -f $(LLAMA_EXT) || (echo "Build llama first: cd ../llama && make configure && make debug" && exit 1)
+	@test -f $(LLAMA_EXT) || (echo "Build llama first: cd ../ext/llama && make configure && make debug" && exit 1)
 
 check-chdb:
-	@test -f $(CHDB_EXT) || (echo "Build chdb first: cd ../chdb && make configure && make debug" && exit 1)
+	@test -f $(CHDB_EXT) || (echo "Build chdb first: cd ../ext/chdb && make configure && make debug" && exit 1)
 
 test: check-extensions check-pgwire
 	$(VENV)/bin/pytest -v test_tier1_single_node.py test_tier2_two_node.py test_tier3_aggregation.py test_pgwire_standalone.py test_pgwire_swarm.py
@@ -63,10 +63,10 @@ test-chdb-swarm: check-extensions check-chdb
 	$(VENV)/bin/pytest -v test_chdb_swarm.py
 
 check-tpm:
-	@test -f $(TPM_EXT) || (echo "Build tpm first: cd ../tpm && make configure && make debug" && exit 1)
+	@test -f $(TPM_EXT) || (echo "Build tpm first: cd ../ext/tpm && make configure && make debug" && exit 1)
 
 check-hana:
-	@test -f $(HANA_EXT) || (echo "Build hana first: cd ../hana && make configure && make debug" && exit 1)
+	@test -f $(HANA_EXT) || (echo "Build hana first: cd ../ext/hana && make configure && make debug" && exit 1)
 
 hana-up:
 	docker compose -f docker-compose.hana.yml up -d

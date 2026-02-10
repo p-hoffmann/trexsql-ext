@@ -11,24 +11,24 @@ except RuntimeError:
     pass  # already set
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FLIGHT_EXT_TREX = f"{REPO_ROOT}/flight/build/debug/extension/flight/flight.trex"
-SWARM_EXT_TREX = f"{REPO_ROOT}/swarm/build/debug/extension/swarm/swarm.trex"
-PGWIRE_EXT_TREX = f"{REPO_ROOT}/pgwire/build/debug/extension/pgwire/pgwire.trex"
-CIRCE_EXT_TREX = f"{REPO_ROOT}/circe/build/release/extension/circe/circe.trex"
-LLAMA_EXT_TREX = f"{REPO_ROOT}/llama/build/debug/extension/llama/llama.trex"
-CHDB_EXT_TREX = f"{REPO_ROOT}/chdb/build/debug/extension/chdb/chdb.trex"
-HANA_EXT_TREX = f"{REPO_ROOT}/hana/build/debug/extension/hana_scan/hana_scan.trex"
-TPM_EXT_TREX = f"{REPO_ROOT}/tpm/build/debug/extension/tpm/tpm.trex"
+FLIGHT_EXT_TREX = f"{REPO_ROOT}/ext/flight/build/debug/extension/flight/flight.trex"
+SWARM_EXT_TREX = f"{REPO_ROOT}/ext/swarm/build/debug/extension/swarm/swarm.trex"
+PGWIRE_EXT_TREX = f"{REPO_ROOT}/ext/pgwire/build/debug/extension/pgwire/pgwire.trex"
+CIRCE_EXT_TREX = f"{REPO_ROOT}/ext/circe/build/release/extension/circe/circe.trex"
+LLAMA_EXT_TREX = f"{REPO_ROOT}/ext/llama/build/debug/extension/llama/llama.trex"
+CHDB_EXT_TREX = f"{REPO_ROOT}/ext/chdb/build/debug/extension/chdb/chdb.trex"
+HANA_EXT_TREX = f"{REPO_ROOT}/ext/hana/build/debug/extension/hana_scan/hana_scan.trex"
+TPM_EXT_TREX = f"{REPO_ROOT}/ext/tpm/build/debug/extension/tpm/tpm.trex"
 
 # DuckDB Python API requires .duckdb_extension suffix for LOAD.
-FLIGHT_EXT = f"{REPO_ROOT}/flight/build/debug/extension/flight/flight.duckdb_extension"
-SWARM_EXT = f"{REPO_ROOT}/swarm/build/debug/extension/swarm/swarm.duckdb_extension"
-PGWIRE_EXT = f"{REPO_ROOT}/pgwire/build/debug/extension/pgwire/pgwire.duckdb_extension"
-CIRCE_EXT = f"{REPO_ROOT}/circe/build/release/extension/circe/circe.duckdb_extension"
-LLAMA_EXT = f"{REPO_ROOT}/llama/build/debug/extension/llama/llama.duckdb_extension"
-CHDB_EXT = f"{REPO_ROOT}/chdb/build/debug/extension/chdb/chdb.duckdb_extension"
-HANA_EXT = f"{REPO_ROOT}/hana/build/debug/extension/hana_scan/hana_scan.duckdb_extension"
-TPM_EXT = f"{REPO_ROOT}/tpm/build/debug/extension/tpm/tpm.duckdb_extension"
+FLIGHT_EXT = f"{REPO_ROOT}/ext/flight/build/debug/extension/flight/flight.duckdb_extension"
+SWARM_EXT = f"{REPO_ROOT}/ext/swarm/build/debug/extension/swarm/swarm.duckdb_extension"
+PGWIRE_EXT = f"{REPO_ROOT}/ext/pgwire/build/debug/extension/pgwire/pgwire.duckdb_extension"
+CIRCE_EXT = f"{REPO_ROOT}/ext/circe/build/release/extension/circe/circe.duckdb_extension"
+LLAMA_EXT = f"{REPO_ROOT}/ext/llama/build/debug/extension/llama/llama.duckdb_extension"
+CHDB_EXT = f"{REPO_ROOT}/ext/chdb/build/debug/extension/chdb/chdb.duckdb_extension"
+HANA_EXT = f"{REPO_ROOT}/ext/hana/build/debug/extension/hana_scan/hana_scan.duckdb_extension"
+TPM_EXT = f"{REPO_ROOT}/ext/tpm/build/debug/extension/tpm/tpm.duckdb_extension"
 
 for src, dst in [
     (FLIGHT_EXT_TREX, FLIGHT_EXT),
