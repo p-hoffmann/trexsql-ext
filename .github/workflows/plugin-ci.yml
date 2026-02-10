@@ -225,10 +225,11 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/p-hoffmann/trex:latest
-            ghcr.io/p-hoffmann/trex:sha-${{ github.sha }}
+            ghcr.io/p-hoffmann/trexsql:latest
+            ghcr.io/p-hoffmann/trexsql:sha-${{ github.sha }}
 
   success:
     needs: [build, build-docker]
@@ -236,4 +237,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check
-        run: echo "Check"
+        run: |
+          if [[ "${{ needs.build.result }}" == "failure" || "${{ needs.build-docker.result }}" == "failure" ]]; then
+            echo "::error::One or more jobs failed"
+            exit 1
+          fi
+          echo "All required jobs passed (or were skipped)"

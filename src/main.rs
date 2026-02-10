@@ -19,9 +19,10 @@ fn main() {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.extension().and_then(|e| e.to_str()) == Some("trex") {
-                        let path_str = path.display();
+                        let path_str = path.display().to_string();
+                        let safe_path = path_str.replace("'", "''");
                         print!("Loading extension: {path_str} ... ");
-                        match conn.execute(&format!("LOAD '{path_str}'"), []) {
+                        match conn.execute(&format!("LOAD '{safe_path}'"), []) {
                             Ok(_) => println!("ok"),
                             Err(e) => println!("failed: {e}"),
                         }
@@ -59,4 +60,5 @@ fn main() {
     }
 
     println!("Shutting down.");
+    drop(conn);
 }
