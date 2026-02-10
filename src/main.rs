@@ -13,7 +13,7 @@ fn main() {
     let ext_dir = env::var("EXTENSION_DIR")
         .unwrap_or_else(|_| "/usr/lib/trexsql/extensions".to_string());
 
-    println!("Opening database: {db_path}");
+    eprintln!("Opening database: {db_path}");
     let conn = Connection::open(&db_path).expect("Failed to open database");
 
     let mut loaded = 0u32;
@@ -27,14 +27,14 @@ fn main() {
                     if path.extension().and_then(|e| e.to_str()) == Some("trex") {
                         let path_str = path.display().to_string();
                         let safe_path = path_str.replace("'", "''");
-                        print!("Loading extension: {path_str} ... ");
+                        eprint!("Loading extension: {path_str} ... ");
                         match conn.execute(&format!("LOAD '{safe_path}'"), []) {
                             Ok(_) => {
-                                println!("ok");
+                                eprintln!("ok");
                                 loaded += 1;
                             }
                             Err(e) => {
-                                println!("failed: {e}");
+                                eprintln!("failed: {e}");
                                 failures += 1;
                             }
                         }
@@ -56,11 +56,11 @@ fn main() {
             eprintln!("No extensions found in {ext_dir}");
             process::exit(1);
         }
-        println!("All {loaded} extension(s) loaded successfully");
+        eprintln!("All {loaded} extension(s) loaded successfully");
         process::exit(0);
     }
 
-    println!("TrexSQL ready. Waiting for shutdown signal...");
+    eprintln!("TrexSQL ready. Waiting for shutdown signal...");
 
     #[cfg(unix)]
     {
@@ -84,6 +84,6 @@ fn main() {
         std::thread::park();
     }
 
-    println!("Shutting down.");
+    eprintln!("Shutting down.");
     drop(conn);
 }
