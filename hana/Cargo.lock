@@ -752,7 +752,6 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "duckdb",
- "duckdb-loadable-macros",
  "env_logger",
  "hdbconnect",
  "libduckdb-sys",

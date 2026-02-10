@@ -1,5 +1,5 @@
 // Integration tests for DuckDB extension with HANA
-use hana_scan::{HanaPerformanceMetrics, HanaError, LogLevel, HanaLogger};
+use hana_scan::{HanaError, LogLevel, HanaLogger};
 
 mod common;
 
@@ -110,28 +110,6 @@ fn test_hana_configuration_parsing() {
     assert!(batch_size <= 10000, "Batch size should be reasonable");
     
     println!("✓ Configuration parsing tests completed");
-}
-
-#[test]
-fn test_performance_metrics_initialization() {
-    common::setup();
-    
-    // Test performance metrics structure
-    let metrics = HanaPerformanceMetrics::default();
-    
-    println!("Testing performance metrics:");
-    println!("  Connection time: {:?} ms", metrics.connection_time_ms);
-    println!("  Query time: {:?} ms", metrics.query_time_ms);
-    println!("  Memory allocated: {} bytes", metrics.memory_allocated_bytes);
-    println!("  Rows processed: {}", metrics.rows_processed);
-    
-    // Verify initial values
-    assert_eq!(metrics.connection_time_ms, None, "Initial connection time should be None");
-    assert_eq!(metrics.query_time_ms, None, "Initial query time should be None");
-    assert_eq!(metrics.memory_allocated_bytes, 0, "Initial memory usage should be 0");
-    assert_eq!(metrics.rows_processed, 0, "Initial rows processed should be 0");
-    
-    println!("✓ Performance metrics initialization test completed");
 }
 
 #[test]

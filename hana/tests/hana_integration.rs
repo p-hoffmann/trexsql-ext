@@ -187,6 +187,118 @@ fn test_hana_system_tables_query() {
 }
 
 #[test]
+fn test_hana_multi_column_with_datetime_functions() {
+    common::setup();
+    let config = common::HanaTestConfig::new();
+
+    if config.should_skip {
+        println!("Skipping test_hana_multi_column_with_datetime_functions: {}", config.skip_reason);
+        return;
+    }
+
+    // Regression test: queries containing NOW()/CURRENT_TIMESTAMP must still
+    // return all columns, not just a single "result" column.
+    let query = "SELECT 'Alice' AS name, 42 AS age, CURRENT_TIMESTAMP AS ts FROM DUMMY";
+
+    let connection_result = HanaConnection::new(config.connection_url.clone());
+
+    match connection_result {
+        Ok(connection) => {
+            println!("✓ HANA connection established");
+
+            // Detect schema via the same subquery approach used by the extension
+            let schema_query = format!("SELECT * FROM ({}) AS subquery LIMIT 1", query);
+            let query_result = connection.query(&schema_query);
+
+            match query_result {
+                Ok(result_set) => {
+                    let metadata = result_set.metadata();
+                    let column_count = metadata.len();
+                    println!("  Column count: {}", column_count);
+                    for field in metadata.iter() {
+                        println!("    {} ({:?})", field.displayname(), field.type_id());
+                    }
+                    assert_eq!(
+                        column_count, 3,
+                        "Query with datetime functions must return all 3 columns, got {}",
+                        column_count
+                    );
+                }
+                Err(e) => {
+                    panic!("Schema detection query failed: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            println!("✗ HANA connection failed: {}", e);
+            if !common::is_hana_available(&config.connection_url) {
+                println!("Skipping test due to HANA server unavailability");
+                return;
+            }
+            panic!("Connection failed: {}", e);
+        }
+    }
+}
+
+#[test]
+fn test_hana_multi_column_values() {
+    common::setup();
+    let config = common::HanaTestConfig::new();
+
+    if config.should_skip {
+        println!("Skipping test_hana_multi_column_values: {}", config.skip_reason);
+        return;
+    }
+
+    // Verify that multi-column queries return correct values for each column
+    let query = "SELECT 'hello' AS col_a, 123 AS col_b, 'world' AS col_c FROM DUMMY";
+
+    let connection_result = HanaConnection::new(config.connection_url.clone());
+
+    match connection_result {
+        Ok(connection) => {
+            println!("✓ HANA connection established");
+
+            let query_result = connection.query(query);
+
+            match query_result {
+                Ok(result_set) => {
+                    let metadata = result_set.metadata();
+                    let column_count = metadata.len();
+                    assert_eq!(column_count, 3, "Should return 3 columns");
+
+                    let mut row_count = 0;
+                    for row_result in result_set {
+                        match row_result {
+                            Ok(row) => {
+                                row_count += 1;
+                                assert_eq!(row.len(), 3, "Each row should have 3 columns");
+                                println!("  Row: {:?}", row);
+                            }
+                            Err(e) => {
+                                panic!("Error reading row: {}", e);
+                            }
+                        }
+                    }
+                    assert!(row_count > 0, "Should have at least one row");
+                }
+                Err(e) => {
+                    panic!("Query failed: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            println!("✗ HANA connection failed: {}", e);
+            if !common::is_hana_available(&config.connection_url) {
+                println!("Skipping test due to HANA server unavailability");
+                return;
+            }
+            panic!("Connection failed: {}", e);
+        }
+    }
+}
+
+#[test]
 fn test_hana_error_handling() {
     common::setup();
     let config = common::HanaTestConfig::new();

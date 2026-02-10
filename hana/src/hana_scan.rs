@@ -8,7 +8,6 @@ use hdbconnect::{Connection as HanaConnection, Row};
 use std::fmt;
 use std::sync::RwLock;
 use std::env;
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::panic::{self, AssertUnwindSafe};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -91,22 +90,11 @@ macro_rules! hana_warn {
         HanaLogger::warn($category, &format!($($arg)*))
     };
 }
-macro_rules! hana_info {
-    ($category:expr, $($arg:tt)*) => {
-        HanaLogger::info($category, &format!($($arg)*))
-    };
-}
 macro_rules! hana_debug {
     ($category:expr, $($arg:tt)*) => {
         HanaLogger::debug($category, &format!($($arg)*))
     };
 }
-macro_rules! hana_trace {
-    ($category:expr, $($arg:tt)*) => {
-        HanaLogger::trace($category, &format!($($arg)*))
-    };
-}
-
 #[derive(Debug)]
 pub enum HanaError {
     Connection { 
@@ -156,7 +144,7 @@ impl fmt::Display for HanaError {
             HanaError::Connection { message, url, retry_count, context } => {
                 write!(f, "HANA Connection Error: {}", message)?;
                 if let Some(url) = url {
-                    write!(f, " (URL: {})", url)?;
+                    write!(f, " (URL: {})", redact_url_password(url))?;
                 }
                 if let Some(retries) = retry_count {
                     write!(f, " (Retries: {})", retries)?;
@@ -299,107 +287,6 @@ impl HanaError {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct HanaPerformanceMetrics {
-    pub connection_time_ms: Option<u64>,
-    pub query_time_ms: Option<u64>,
-    pub schema_time_ms: Option<u64>,
-    pub data_retrieval_time_ms: Option<u64>,
-    pub total_time_ms: Option<u64>,
-    pub rows_processed: usize,
-    pub columns_processed: usize,
-    pub memory_allocated_bytes: usize,
-    pub retry_attempts: u32,
-    pub peak_memory_bytes: Option<usize>,
-    pub network_roundtrips: u32,
-}
-
-impl Default for HanaPerformanceMetrics {
-    fn default() -> Self {
-        HanaPerformanceMetrics {
-            connection_time_ms: None,
-            query_time_ms: None,
-            schema_time_ms: None,
-            data_retrieval_time_ms: None,
-            total_time_ms: None,
-            rows_processed: 0,
-            columns_processed: 0,
-            memory_allocated_bytes: 0,
-            retry_attempts: 0,
-            peak_memory_bytes: None,
-            network_roundtrips: 0,
-        }
-    }
-}
-
-impl HanaPerformanceMetrics {
-    pub fn log_summary(&self, operation: &str) {
-        hana_info!("PERF", "{}: {} rows, {} cols, {}ms",
-                   operation, self.rows_processed, self.columns_processed,
-                   self.total_time_ms.unwrap_or(0));
-        if LogLevel::current() >= LogLevel::Debug {
-            let conn_time = self.connection_time_ms.unwrap_or(0).to_string();
-            let query_time = self.query_time_ms.unwrap_or(0).to_string();
-            let memory_mb = (self.memory_allocated_bytes / 1024 / 1024).to_string();
-            let retries = self.retry_attempts.to_string();
-            let roundtrips = self.network_roundtrips.to_string();
-            let context: Vec<(&str, &str)> = vec![
-                ("connection_ms", &conn_time),
-                ("query_ms", &query_time),
-                ("memory_mb", &memory_mb),
-                ("retries", &retries),
-                ("roundtrips", &roundtrips),
-            ];
-            HanaLogger::log_with_context(LogLevel::Debug, "PERF", operation, &context);
-        }
-    }
-    pub fn throughput_rows_per_sec(&self) -> f64 {
-        if let Some(total_time) = self.total_time_ms {
-            if total_time > 0 {
-                return (self.rows_processed as f64 * 1000.0) / total_time as f64;
-            }
-        }
-        0.0
-    }
-    pub fn memory_per_row(&self) -> f64 {
-        if self.rows_processed > 0 {
-            self.memory_allocated_bytes as f64 / self.rows_processed as f64
-        } else {
-            0.0
-        }
-    }
-}
-
-pub struct HanaTimer {
-    start_time: SystemTime,
-    label: String,
-}
-
-impl HanaTimer {
-    pub fn new(label: &str) -> Self {
-        hana_trace!("TIMER", "Start: {}", label);
-        HanaTimer {
-            start_time: SystemTime::now(),
-            label: label.to_string(),
-        }
-    }
-    pub fn elapsed_ms(&self) -> u64 {
-        self.start_time.elapsed()
-            .unwrap_or_default()
-            .as_millis() as u64
-    }
-    pub fn stop(self) -> u64 {
-        let elapsed = self.elapsed_ms();
-        hana_trace!("TIMER", "{} {}ms", self.label, elapsed);
-        elapsed
-    }
-    pub fn stop_and_log(self) -> u64 {
-        let elapsed = self.elapsed_ms();
-        hana_info!("TIMER", "{} {}ms", self.label, elapsed);
-        elapsed
-    }
-}
-
 #[derive(Debug)]
 pub struct HanaScanBindData {
     pub url: String,
@@ -412,15 +299,13 @@ pub struct HanaScanBindData {
     pub column_names: Vec<String>,
     pub column_types: Vec<LogicalTypeId>,
     pub batch_size: usize,
-    pub connection_timeout_ms: u64,
-    pub query_timeout_ms: u64,
     pub max_retries: u32,
-    pub metrics: HanaPerformanceMetrics,
 }
 
 impl Clone for HanaScanBindData {
     fn clone(&self) -> Self {
         let cloned_types = self.column_types.iter().map(|t| {
+            // All types produced by map_hana_type and bind registration
             match t {
                 LogicalTypeId::Boolean => LogicalTypeId::Boolean,
                 LogicalTypeId::Tinyint => LogicalTypeId::Tinyint,
@@ -432,10 +317,7 @@ impl Clone for HanaScanBindData {
                 LogicalTypeId::Decimal => LogicalTypeId::Decimal,
                 LogicalTypeId::Varchar => LogicalTypeId::Varchar,
                 LogicalTypeId::Blob => LogicalTypeId::Blob,
-                LogicalTypeId::Date => LogicalTypeId::Date,
-                LogicalTypeId::Time => LogicalTypeId::Time,
-                LogicalTypeId::Timestamp => LogicalTypeId::Timestamp,
-                _ => LogicalTypeId::Varchar,
+                _other => LogicalTypeId::Varchar,
             }
         }).collect();
         HanaScanBindData {
@@ -449,10 +331,7 @@ impl Clone for HanaScanBindData {
             column_names: self.column_names.clone(),
             column_types: cloned_types,
             batch_size: self.batch_size,
-            connection_timeout_ms: self.connection_timeout_ms,
-            query_timeout_ms: self.query_timeout_ms,
             max_retries: self.max_retries,
-            metrics: self.metrics.clone(),
         }
     }
 }
@@ -464,13 +343,12 @@ pub struct HanaScanInitData {
     current_row: RwLock<usize>,
     total_rows: usize,
     done: RwLock<bool>,
-    metrics: RwLock<HanaPerformanceMetrics>,
 }
 
 fn map_hana_type(hana_type: hdbconnect::TypeId) -> LogicalTypeId {
     match hana_type {
         hdbconnect::TypeId::BOOLEAN => LogicalTypeId::Boolean,
-        hdbconnect::TypeId::TINYINT => LogicalTypeId::Tinyint,
+        hdbconnect::TypeId::TINYINT => LogicalTypeId::Smallint, // HANA TINYINT is u8 (0-255), doesn't fit DuckDB i8
         hdbconnect::TypeId::SMALLINT => LogicalTypeId::Smallint,
         hdbconnect::TypeId::INT => LogicalTypeId::Integer,
         hdbconnect::TypeId::BIGINT => LogicalTypeId::Bigint,
@@ -482,14 +360,36 @@ fn map_hana_type(hana_type: hdbconnect::TypeId) -> LogicalTypeId {
         hdbconnect::TypeId::STRING | hdbconnect::TypeId::NSTRING |
         hdbconnect::TypeId::SHORTTEXT | hdbconnect::TypeId::ALPHANUM => LogicalTypeId::Varchar,
         hdbconnect::TypeId::BINARY | hdbconnect::TypeId::VARBINARY => LogicalTypeId::Blob,
-        hdbconnect::TypeId::DAYDATE => LogicalTypeId::Date,
-        hdbconnect::TypeId::SECONDTIME => LogicalTypeId::Time,
-        hdbconnect::TypeId::LONGDATE | hdbconnect::TypeId::SECONDDATE => LogicalTypeId::Timestamp,
+        // Datetime types are serialised as VARCHAR strings because DuckDB's
+        // flat_vector.insert() only works on string-typed vectors.
+        hdbconnect::TypeId::DAYDATE => LogicalTypeId::Varchar,
+        hdbconnect::TypeId::SECONDTIME => LogicalTypeId::Varchar,
+        hdbconnect::TypeId::LONGDATE | hdbconnect::TypeId::SECONDDATE => LogicalTypeId::Varchar,
         hdbconnect::TypeId::CLOB | hdbconnect::TypeId::NCLOB | hdbconnect::TypeId::TEXT => LogicalTypeId::Varchar,
         hdbconnect::TypeId::BLOB | hdbconnect::TypeId::BLOCATOR | hdbconnect::TypeId::BINTEXT => LogicalTypeId::Blob,
         hdbconnect::TypeId::GEOMETRY | hdbconnect::TypeId::POINT => LogicalTypeId::Varchar,
         _ => LogicalTypeId::Varchar,
     }
+}
+
+pub fn redact_url_password(url: &str) -> String {
+    let scheme_len = if url.starts_with("hdbsqls://") {
+        10
+    } else if url.starts_with("hdbsql://") {
+        9
+    } else {
+        return url.to_string();
+    };
+    let url_part = &url[scheme_len..];
+    if let Some(at_pos) = url_part.rfind('@') {
+        let auth_part = &url_part[..at_pos];
+        let host_part = &url_part[at_pos..];
+        if let Some(colon_pos) = auth_part.find(':') {
+            let user = &auth_part[..colon_pos];
+            return format!("{}{}:***{}", &url[..scheme_len], user, host_part);
+        }
+    }
+    url.to_string()
 }
 
 pub fn parse_hana_url(url: &str) -> Result<(String, String, String, u16, String), Box<dyn Error>> {
@@ -501,12 +401,16 @@ pub fn parse_hana_url(url: &str) -> Result<(String, String, String, u16, String)
         return Err(HanaError::new("URL must start with hdbsql:// or hdbsqls://"));
     };
     let url_part = &url[scheme_len..];
-    let (auth_part, host_db_part) = url_part
-        .split_once('@')
+    let at_pos = url_part
+        .rfind('@')
         .ok_or_else(|| HanaError::new("Invalid URL format: missing '@' separator"))?;
-    let (user, password) = auth_part
-        .split_once(':')
+    let auth_part = &url_part[..at_pos];
+    let host_db_part = &url_part[at_pos + 1..];
+    let colon_pos = auth_part
+        .find(':')
         .ok_or_else(|| HanaError::new("Invalid URL format: missing ':' in credentials"))?;
+    let user = &auth_part[..colon_pos];
+    let password = &auth_part[colon_pos + 1..];
     if user.trim().is_empty() {
         return Err(HanaError::new("Username cannot be empty"));
     }
@@ -558,7 +462,7 @@ pub fn validate_hana_connection(url: &str) -> Result<(), Box<dyn Error>> {
 }
 
 /// Safe wrapper around HanaConnection::new that catches panics
-fn safe_hana_connect(url: String) -> Result<HanaConnection, Box<dyn Error>> {
+pub fn safe_hana_connect(url: String) -> Result<HanaConnection, Box<dyn Error>> {
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         HanaConnection::new(url)
     }));
@@ -605,14 +509,6 @@ impl VTab for HanaScanVTab {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(1024);
-        let connection_timeout_ms = std::env::var("HANA_CONNECTION_TIMEOUT_MS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(30000);
-        let query_timeout_ms = std::env::var("HANA_QUERY_TIMEOUT_MS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(300000);
         let max_retries = std::env::var("HANA_MAX_RETRIES")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -620,101 +516,65 @@ impl VTab for HanaScanVTab {
         if batch_size == 0 || batch_size > 10000 {
             return Err(HanaError::new("Batch size must be between 1 and 10000"));
         }
-        if connection_timeout_ms == 0 || connection_timeout_ms > 300000 {
-            return Err(HanaError::new("Connection timeout must be between 1ms and 5 minutes"));
-        }
         let (column_names, column_types) = match safe_hana_connect(url.clone()) {
             Ok(connection) => {
-                let is_datetime_query = query.to_lowercase().contains("now()") ||
-                                       query.to_lowercase().contains("current_timestamp") ||
-                                       query.to_lowercase().contains("current_date") ||
-                                       query.to_lowercase().contains("current_time");
-                if is_datetime_query {
-                    hana_debug!("SCHEMA", "Query with datetime functions, using VARCHAR schema");
-                    (
-                        vec!["result".to_string()],
-                        vec![LogicalTypeId::Varchar],
-                    )
-                } else {
-                    let schema_result = match connection.prepare(&query) {
-                        Ok(_prepared) => {
-                            match connection.query(&format!("SELECT * FROM ({}) AS subquery LIMIT 1", query)) {
-                                Ok(result_set) => {
-                                    let metadata = result_set.metadata();
-                                    let mut names = Vec::new();
-                                    let mut types = Vec::new();
-                                    for field_metadata in metadata.iter() {
-                                        let column_name = if field_metadata.displayname().is_empty() {
-                                            field_metadata.columnname().to_string()
-                                        } else {
-                                            field_metadata.displayname().to_string()
-                                        };
-                                        let logical_type = match field_metadata.type_id() {
-                                            hdbconnect::TypeId::DAYDATE | 
-                                            hdbconnect::TypeId::SECONDTIME |
-                                            hdbconnect::TypeId::LONGDATE | 
-                                            hdbconnect::TypeId::SECONDDATE => {
-                                                LogicalTypeId::Varchar
-                                            }
-                                            _ => map_hana_type(field_metadata.type_id())
-                                        };
-                                        names.push(column_name);
-                                        types.push(logical_type);
-                                    }
-                                    if names.is_empty() {
-                                        (
-                                            vec!["result".to_string()],
-                                            vec![LogicalTypeId::Varchar],
-                                        )
+                let schema_result = match connection.prepare(&query) {
+                    Ok(_prepared) => {
+                        match connection.query(&format!("SELECT * FROM ({}) AS subquery LIMIT 1", query)) {
+                            Ok(result_set) => {
+                                let metadata = result_set.metadata();
+                                let mut names = Vec::new();
+                                let mut types = Vec::new();
+                                for field_metadata in metadata.iter() {
+                                    let column_name = if field_metadata.displayname().is_empty() {
+                                        field_metadata.columnname().to_string()
                                     } else {
-                                        (names, types)
-                                    }
+                                        field_metadata.displayname().to_string()
+                                    };
+                                    let logical_type = map_hana_type(field_metadata.type_id());
+                                    names.push(column_name);
+                                    types.push(logical_type);
                                 }
-                                Err(e) => {
-                                    hana_warn!("SCHEMA", "Schema detection failed: {}", e);
+                                if names.is_empty() {
                                     (
                                         vec!["result".to_string()],
                                         vec![LogicalTypeId::Varchar],
                                     )
+                                } else {
+                                    (names, types)
                                 }
                             }
+                            Err(e) => {
+                                hana_warn!("SCHEMA", "Schema detection failed: {}", e);
+                                (
+                                    vec!["result".to_string()],
+                                    vec![LogicalTypeId::Varchar],
+                                )
+                            }
                         }
-                        Err(e) => {
-                            hana_warn!("SCHEMA", "Query prepare failed: {}", e);
-                            (
-                                vec!["result".to_string()],
-                                vec![LogicalTypeId::Varchar],
-                            )
-                        }
-                    };
-                    schema_result
-                }
-            }
-            Err(e) => {
-                hana_warn!("SCHEMA", "Connection failed, using fallback: {}", e);
-                let query_lower = query.to_lowercase();
-                if query_lower.contains("select") && (query_lower.contains(" as ") || query_lower.contains("from")) {
-                    if query_lower.contains("42") || query_lower.contains("123") || query_lower.contains("integer") || query_lower.contains("int") {
-                        (
-                            vec!["result".to_string()],
-                            vec![LogicalTypeId::Integer],
-                        )
-                    } else {
+                    }
+                    Err(e) => {
+                        hana_warn!("SCHEMA", "Query prepare failed: {}", e);
                         (
                             vec!["result".to_string()],
                             vec![LogicalTypeId::Varchar],
                         )
                     }
-                } else {
-                    (
-                        vec!["result".to_string()],
-                        vec![LogicalTypeId::Varchar],
-                    )
-                }
+                };
+                schema_result
+            }
+            Err(e) => {
+                hana_warn!("SCHEMA", "Connection failed, using fallback: {}", e);
+                (
+                    vec!["result".to_string()],
+                    vec![LogicalTypeId::Varchar],
+                )
             }
         };
         for (name, type_id) in column_names.iter().zip(column_types.iter()) {
             let logical_type = match type_id {
+                LogicalTypeId::Tinyint => LogicalTypeId::Tinyint,
+                LogicalTypeId::Smallint => LogicalTypeId::Smallint,
                 LogicalTypeId::Integer => LogicalTypeId::Integer,
                 LogicalTypeId::Bigint => LogicalTypeId::Bigint,
                 LogicalTypeId::Float => LogicalTypeId::Float,
@@ -722,9 +582,6 @@ impl VTab for HanaScanVTab {
                 LogicalTypeId::Varchar => LogicalTypeId::Varchar,
                 LogicalTypeId::Boolean => LogicalTypeId::Boolean,
                 LogicalTypeId::Decimal => LogicalTypeId::Decimal,
-                LogicalTypeId::Date => LogicalTypeId::Date,
-                LogicalTypeId::Time => LogicalTypeId::Time,
-                LogicalTypeId::Timestamp => LogicalTypeId::Timestamp,
                 LogicalTypeId::Blob => LogicalTypeId::Blob,
                 _ => LogicalTypeId::Varchar,
             };
@@ -742,10 +599,7 @@ impl VTab for HanaScanVTab {
             column_names,
             column_types,
             batch_size,
-            connection_timeout_ms,
-            query_timeout_ms,
             max_retries,
-            metrics: HanaPerformanceMetrics::default(),
         })
     }
     fn init(init: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {
@@ -771,13 +625,26 @@ impl VTab for HanaScanVTab {
         }
         match connection_result {
             Some(connection) => {
+                let max_rows: usize = std::env::var("HANA_MAX_ROWS")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(10_000_000);
                 let query_result = connection.query(&bind_data_ref.query);
                 match query_result {
                     Ok(result_set) => {
                         let mut result_rows = Vec::new();
                         for row_result in result_set {
                             match row_result {
-                                Ok(row) => result_rows.push(row),
+                                Ok(row) => {
+                                    result_rows.push(row);
+                                    if result_rows.len() > max_rows {
+                                        return Err(HanaError::new(&format!(
+                                            "Result set exceeds {} rows (HANA_MAX_ROWS). \
+                                             Add a LIMIT clause or increase HANA_MAX_ROWS.",
+                                            max_rows
+                                        )));
+                                    }
+                                }
                                 Err(e) => return Err(HanaError::new(&format!("Row read failed: {}", e))),
                             }
                         }
@@ -788,7 +655,6 @@ impl VTab for HanaScanVTab {
                             current_row: RwLock::new(0),
                             total_rows,
                             done: RwLock::new(false),
-                            metrics: RwLock::new(HanaPerformanceMetrics::default()),
                         })
                     }
                     Err(e) => {
@@ -846,281 +712,70 @@ impl VTab for HanaScanVTab {
                 };
                 if col_idx < row.len() {
                     let hdb_value = &row[col_idx];
-                    let debug_repr = format!("{:?}", hdb_value);
-                    let is_datetime_type = debug_repr.starts_with("Timestamp(") || 
-                                          debug_repr.starts_with("Date(") ||
-                                          debug_repr.starts_with("Time(") ||
-                                          debug_repr.starts_with("LongDate(") ||
-                                          debug_repr.starts_with("SecondDate(") ||
-                                          debug_repr.starts_with("DayDate(") ||
-                                          debug_repr.starts_with("SecondTime(");
-                    if debug_repr.contains("Null") || debug_repr.contains("null") {
+                    if hdb_value.is_null() {
                         flat_vector.set_null(row_idx);
-                    } else if is_datetime_type {
-                        let conversion_success = match column_type {
-                            LogicalTypeId::Date => {
-                                if let Ok(Some(date)) = hdb_value.clone().try_into::<Option<chrono::NaiveDate>>() {
-                                    flat_vector.insert(row_idx, &date.to_string());
-                                    true
-                                } else if let Ok(None) = hdb_value.clone().try_into::<Option<chrono::NaiveDate>>() {
-                                    flat_vector.set_null(row_idx);
-                                    true
-                                } else {
-                                    false
-                                }
-                            }
-                            LogicalTypeId::Time => {
-                                if let Ok(Some(time)) = hdb_value.clone().try_into::<Option<chrono::NaiveTime>>() {
-                                    flat_vector.insert(row_idx, &time.to_string());
-                                    true
-                                } else if let Ok(None) = hdb_value.clone().try_into::<Option<chrono::NaiveTime>>() {
-                                    flat_vector.set_null(row_idx);
-                                    true
-                                } else {
-                                    false
-                                }
-                            }
-                            LogicalTypeId::Timestamp => {
-                                if let Ok(Some(timestamp)) = hdb_value.clone().try_into::<Option<chrono::NaiveDateTime>>() {
-                                    flat_vector.insert(row_idx, &timestamp.to_string());
-                                    true
-                                } else if let Ok(None) = hdb_value.clone().try_into::<Option<chrono::NaiveDateTime>>() {
-                                    flat_vector.set_null(row_idx);
-                                    true
-                                } else {
-                                    false
-                                }
-                            }
-                            _ => false
-                        };
-                        if !conversion_success {
-                            let safe_datetime_value = if let Some(start) = debug_repr.find('(') {
-                                if let Some(end) = debug_repr.rfind(')') {
-                                    let content = &debug_repr[start+1..end];
-                                    if content.starts_with('"') && content.ends_with('"') {
-                                        content[1..content.len()-1].to_string()
-                                    } else {
-                                        content.to_string()
-                                    }
-                                } else {
-                                    "<hana_datetime>".to_string()
-                                }
-                            } else {
-                                "<hana_datetime>".to_string()
-                            };
-                            flat_vector.insert(row_idx, safe_datetime_value.as_str());
-                        }
                     } else {
                         match column_type {
-                            LogicalTypeId::Varchar => {
+                            LogicalTypeId::Varchar | LogicalTypeId::Decimal => {
                                 if let Ok(Some(s)) = hdb_value.clone().try_into::<Option<String>>() {
                                     flat_vector.insert(row_idx, s.as_str());
-                                } else if let Ok(None) = hdb_value.clone().try_into::<Option<String>>() {
-                                    flat_vector.set_null(row_idx);
                                 } else {
-                                    if debug_repr.starts_with("String(") && debug_repr.ends_with(")") {
-                                        let content = &debug_repr[7..debug_repr.len()-1];
-                                        if content.starts_with('"') && content.ends_with('"') {
-                                            flat_vector.insert(row_idx, &content[1..content.len()-1]);
-                                        } else {
-                                            flat_vector.insert(row_idx, content);
-                                        }
-                                    } else {
-                                        flat_vector.insert(row_idx, "<hana_string>");
-                                    }
+                                    flat_vector.set_null(row_idx);
+                                }
+                            }
+                            LogicalTypeId::Tinyint | LogicalTypeId::Smallint => {
+                                let slice = flat_vector.as_mut_slice::<i16>();
+                                if let Ok(Some(i)) = hdb_value.clone().try_into::<Option<i16>>() {
+                                    slice[row_idx] = i;
+                                } else {
+                                    flat_vector.set_null(row_idx);
                                 }
                             }
                             LogicalTypeId::Integer => {
                                 let slice = flat_vector.as_mut_slice::<i32>();
                                 if let Ok(Some(i)) = hdb_value.clone().try_into::<Option<i32>>() {
                                     slice[row_idx] = i;
-                                } else if let Ok(None) = hdb_value.clone().try_into::<Option<i32>>() {
-                                    flat_vector.set_null(row_idx);
                                 } else {
-                                    if debug_repr.contains(":INT") {
-                                        if let Some(colon_pos) = debug_repr.find(':') {
-                                            let content = &debug_repr[..colon_pos];
-                                            if let Ok(parsed) = content.parse::<i32>() {
-                                                slice[row_idx] = parsed;
-                                            } else {
-                                                flat_vector.set_null(row_idx);
-                                            }
-                                        } else {
-                                            flat_vector.set_null(row_idx);
-                                        }
-                                    } else {
-                                        flat_vector.set_null(row_idx);
-                                    }
+                                    flat_vector.set_null(row_idx);
                                 }
                             }
                             LogicalTypeId::Bigint => {
                                 let slice = flat_vector.as_mut_slice::<i64>();
                                 if let Ok(Some(i)) = hdb_value.clone().try_into::<Option<i64>>() {
                                     slice[row_idx] = i;
-                                } else if let Ok(None) = hdb_value.clone().try_into::<Option<i64>>() {
-                                    flat_vector.set_null(row_idx);
                                 } else {
-                                    if debug_repr.contains(":BIGINT") {
-                                        if let Some(colon_pos) = debug_repr.find(':') {
-                                            let content = &debug_repr[..colon_pos];
-                                            if let Ok(parsed) = content.parse::<i64>() {
-                                                slice[row_idx] = parsed;
-                                            } else {
-                                                flat_vector.set_null(row_idx);
-                                            }
-                                        } else {
-                                            flat_vector.set_null(row_idx);
-                                        }
-                                    } else {
-                                        flat_vector.set_null(row_idx);
-                                    }
+                                    flat_vector.set_null(row_idx);
                                 }
                             }
                             LogicalTypeId::Float => {
                                 let slice = flat_vector.as_mut_slice::<f32>();
                                 if let Ok(Some(f)) = hdb_value.clone().try_into::<Option<f32>>() {
                                     slice[row_idx] = f;
-                                } else if let Ok(None) = hdb_value.clone().try_into::<Option<f32>>() {
-                                    flat_vector.set_null(row_idx);
                                 } else {
-                                    if debug_repr.contains(":REAL") {
-                                        if let Some(colon_pos) = debug_repr.find(':') {
-                                            let content = &debug_repr[..colon_pos];
-                                            if let Ok(parsed) = content.parse::<f32>() {
-                                                slice[row_idx] = parsed;
-                                            } else {
-                                                flat_vector.set_null(row_idx);
-                                            }
-                                        } else {
-                                            flat_vector.set_null(row_idx);
-                                        }
-                                    } else {
-                                        flat_vector.set_null(row_idx);
-                                    }
+                                    flat_vector.set_null(row_idx);
                                 }
                             }
                             LogicalTypeId::Double => {
                                 let slice = flat_vector.as_mut_slice::<f64>();
                                 if let Ok(Some(d)) = hdb_value.clone().try_into::<Option<f64>>() {
                                     slice[row_idx] = d;
-                                } else if let Ok(None) = hdb_value.clone().try_into::<Option<f64>>() {
-                                    flat_vector.set_null(row_idx);
                                 } else {
-                                    if debug_repr.contains(":DOUBLE") {
-                                        if let Some(colon_pos) = debug_repr.find(':') {
-                                            let content = &debug_repr[..colon_pos];
-                                            if let Ok(parsed) = content.parse::<f64>() {
-                                                slice[row_idx] = parsed;
-                                            } else {
-                                                flat_vector.set_null(row_idx);
-                                            }
-                                        } else {
-                                            flat_vector.set_null(row_idx);
-                                        }
-                                    } else {
-                                        flat_vector.set_null(row_idx);
-                                    }
-                                }
-                            }
-                            LogicalTypeId::Decimal => {
-                                if let Ok(Some(s)) = hdb_value.clone().try_into::<Option<String>>() {
-                                    flat_vector.insert(row_idx, s.as_str());
-                                } else if let Ok(None) = hdb_value.clone().try_into::<Option<String>>() {
                                     flat_vector.set_null(row_idx);
-                                } else {
-                                    if debug_repr.contains(":DECIMAL") {
-                                        if let Some(colon_pos) = debug_repr.find(':') {
-                                            let content = &debug_repr[..colon_pos];
-                                            flat_vector.insert(row_idx, content);
-                                        } else {
-                                            flat_vector.set_null(row_idx);
-                                        }
-                                    } else {
-                                        flat_vector.set_null(row_idx);
-                                    }
                                 }
                             }
                             LogicalTypeId::Boolean => {
                                 let slice = flat_vector.as_mut_slice::<bool>();
                                 if let Ok(Some(b)) = hdb_value.clone().try_into::<Option<bool>>() {
                                     slice[row_idx] = b;
-                                } else if let Ok(None) = hdb_value.clone().try_into::<Option<bool>>() {
+                                } else {
                                     flat_vector.set_null(row_idx);
-                                } else {
-                                    if debug_repr.contains(":BOOLEAN") {
-                                        if let Some(colon_pos) = debug_repr.find(':') {
-                                            let content = &debug_repr[..colon_pos];
-                                            if let Ok(parsed) = content.parse::<bool>() {
-                                                slice[row_idx] = parsed;
-                                            } else {
-                                                flat_vector.set_null(row_idx);
-                                            }
-                                        } else {
-                                            flat_vector.set_null(row_idx);
-                                        }
-                                    } else {
-                                        flat_vector.set_null(row_idx);
-                                    }
                                 }
-                            }
-                            LogicalTypeId::Date => {
-                                let safe_date_value = if let Some(start) = debug_repr.find('(') {
-                                    if let Some(end) = debug_repr.rfind(')') {
-                                        let content = &debug_repr[start+1..end];
-                                        if content.starts_with('"') && content.ends_with('"') {
-                                            content[1..content.len()-1].to_string()
-                                        } else {
-                                            content.to_string()
-                                        }
-                                    } else {
-                                        "<hana_date>".to_string()
-                                    }
-                                } else {
-                                    "<hana_date>".to_string()
-                                };
-                                flat_vector.insert(row_idx, safe_date_value.as_str());
-                            }
-                            LogicalTypeId::Time => {
-                                let safe_time_value = if let Some(start) = debug_repr.find('(') {
-                                    if let Some(end) = debug_repr.rfind(')') {
-                                        let content = &debug_repr[start+1..end];
-                                        if content.starts_with('"') && content.ends_with('"') {
-                                            content[1..content.len()-1].to_string()
-                                        } else {
-                                            content.to_string()
-                                        }
-                                    } else {
-                                        "<hana_time>".to_string()
-                                    }
-                                } else {
-                                    "<hana_time>".to_string()
-                                };
-                                flat_vector.insert(row_idx, safe_time_value.as_str());
-                            }
-                            LogicalTypeId::Timestamp => {
-                                let safe_timestamp_value = if let Some(start) = debug_repr.find('(') {
-                                    if let Some(end) = debug_repr.rfind(')') {
-                                        let content = &debug_repr[start+1..end];
-                                        if content.starts_with('"') && content.ends_with('"') {
-                                            content[1..content.len()-1].to_string()
-                                        } else {
-                                            content.to_string()
-                                        }
-                                    } else {
-                                        "<hana_timestamp>".to_string()
-                                    }
-                                } else {
-                                    "<hana_timestamp>".to_string()
-                                };
-                                flat_vector.insert(row_idx, safe_timestamp_value.as_str());
                             }
                             _ => {
                                 if let Ok(Some(s)) = hdb_value.clone().try_into::<Option<String>>() {
                                     flat_vector.insert(row_idx, s.as_str());
-                                } else if let Ok(None) = hdb_value.clone().try_into::<Option<String>>() {
-                                    flat_vector.set_null(row_idx);
                                 } else {
-                                    flat_vector.insert(row_idx, "<hana_value>");
+                                    flat_vector.set_null(row_idx);
                                 }
                             }
                         }
@@ -1265,7 +920,7 @@ mod tests {
         assert_eq!(map_hana_type(hdbconnect::TypeId::INT), LogicalTypeId::Integer);
         assert_eq!(map_hana_type(hdbconnect::TypeId::BIGINT), LogicalTypeId::Bigint);
         assert_eq!(map_hana_type(hdbconnect::TypeId::SMALLINT), LogicalTypeId::Smallint);
-        assert_eq!(map_hana_type(hdbconnect::TypeId::TINYINT), LogicalTypeId::Tinyint);
+        assert_eq!(map_hana_type(hdbconnect::TypeId::TINYINT), LogicalTypeId::Smallint);
     }
     #[test]
     fn test_map_hana_type_floats() {
@@ -1283,10 +938,11 @@ mod tests {
     }
     #[test]
     fn test_map_hana_type_dates() {
-        assert_eq!(map_hana_type(hdbconnect::TypeId::DAYDATE), LogicalTypeId::Date);
-        assert_eq!(map_hana_type(hdbconnect::TypeId::SECONDTIME), LogicalTypeId::Time);
-        assert_eq!(map_hana_type(hdbconnect::TypeId::LONGDATE), LogicalTypeId::Timestamp);
-        assert_eq!(map_hana_type(hdbconnect::TypeId::SECONDDATE), LogicalTypeId::Timestamp);
+        // Datetime types map to Varchar (serialised as strings)
+        assert_eq!(map_hana_type(hdbconnect::TypeId::DAYDATE), LogicalTypeId::Varchar);
+        assert_eq!(map_hana_type(hdbconnect::TypeId::SECONDTIME), LogicalTypeId::Varchar);
+        assert_eq!(map_hana_type(hdbconnect::TypeId::LONGDATE), LogicalTypeId::Varchar);
+        assert_eq!(map_hana_type(hdbconnect::TypeId::SECONDDATE), LogicalTypeId::Varchar);
     }
     #[test]
     fn test_map_hana_type_binary() {
@@ -1326,10 +982,7 @@ mod tests {
             column_names: vec!["col1".to_string(), "col2".to_string()],
             column_types: vec![LogicalTypeId::Integer, LogicalTypeId::Varchar],
             batch_size: 1024,
-            connection_timeout_ms: 30000,
-            query_timeout_ms: 300000,
             max_retries: 3,
-            metrics: HanaPerformanceMetrics::default(),
         };
         let cloned = bind_data.clone();
         assert_eq!(bind_data.url, cloned.url);
