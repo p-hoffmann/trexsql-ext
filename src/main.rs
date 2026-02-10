@@ -1,10 +1,14 @@
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::process;
 
 use duckdb::Connection;
 
 fn main() {
+    let args: Vec<String> = env::args().collect();
+    let check_mode = args.iter().any(|a| a == "--check");
+
     let db_path = env::var("DATABASE_PATH").unwrap_or_else(|_| ":memory:".to_string());
     let ext_dir = env::var("EXTENSION_DIR")
         .unwrap_or_else(|_| "/usr/lib/trexsql/extensions".to_string());
@@ -12,6 +16,7 @@ fn main() {
     println!("Opening database: {db_path}");
     let conn = Connection::open(&db_path).expect("Failed to open database");
 
+    let mut failures = 0u32;
     let ext_path = Path::new(&ext_dir);
     if ext_path.is_dir() {
         match fs::read_dir(ext_path) {
@@ -24,7 +29,10 @@ fn main() {
                         print!("Loading extension: {path_str} ... ");
                         match conn.execute(&format!("LOAD '{safe_path}'"), []) {
                             Ok(_) => println!("ok"),
-                            Err(e) => println!("failed: {e}"),
+                            Err(e) => {
+                                println!("failed: {e}");
+                                failures += 1;
+                            }
                         }
                     }
                 }
@@ -33,6 +41,15 @@ fn main() {
         }
     } else {
         eprintln!("Warning: extension dir {ext_dir} does not exist");
+    }
+
+    if check_mode {
+        if failures > 0 {
+            eprintln!("{failures} extension(s) failed to load");
+            process::exit(1);
+        }
+        println!("All extensions loaded successfully");
+        process::exit(0);
     }
 
     println!("TrexSQL ready. Waiting for shutdown signal...");
