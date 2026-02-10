@@ -1,0 +1,62 @@
+use std::env;
+use std::fs;
+use std::path::Path;
+
+use duckdb::Connection;
+
+fn main() {
+    let db_path = env::var("DATABASE_PATH").unwrap_or_else(|_| ":memory:".to_string());
+    let ext_dir = env::var("EXTENSION_DIR")
+        .unwrap_or_else(|_| "/usr/lib/trexsql/extensions".to_string());
+
+    println!("Opening database: {db_path}");
+    let conn = Connection::open(&db_path).expect("Failed to open database");
+
+    let ext_path = Path::new(&ext_dir);
+    if ext_path.is_dir() {
+        match fs::read_dir(ext_path) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some("trex") {
+                        let path_str = path.display();
+                        print!("Loading extension: {path_str} ... ");
+                        match conn.execute(&format!("LOAD '{path_str}'"), []) {
+                            Ok(_) => println!("ok"),
+                            Err(e) => println!("failed: {e}"),
+                        }
+                    }
+                }
+            }
+            Err(e) => eprintln!("Warning: could not read extension dir {ext_dir}: {e}"),
+        }
+    } else {
+        eprintln!("Warning: extension dir {ext_dir} does not exist");
+    }
+
+    println!("TrexSQL ready. Waiting for shutdown signal...");
+
+    #[cfg(unix)]
+    {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&shutdown))
+            .expect("Failed to register SIGTERM handler");
+        signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&shutdown))
+            .expect("Failed to register SIGINT handler");
+
+        while !shutdown.load(Ordering::Relaxed) {
+            std::thread::park_timeout(std::time::Duration::from_secs(1));
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        std::thread::park();
+    }
+
+    println!("Shutting down.");
+}
