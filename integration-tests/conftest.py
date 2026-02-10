@@ -19,6 +19,7 @@ LLAMA_EXT_TREX = f"{REPO_ROOT}/llama/build/debug/extension/llama/llama.trex"
 CHDB_EXT_TREX = f"{REPO_ROOT}/chdb/build/debug/extension/chdb/chdb.trex"
 HANA_EXT_TREX = f"{REPO_ROOT}/hana/build/debug/extension/hana_scan/hana_scan.trex"
 TPM_EXT_TREX = f"{REPO_ROOT}/tpm/build/debug/extension/tpm/tpm.trex"
+TREXAS_EXT_TREX = f"{REPO_ROOT}/trex/ext/trexas/build/debug/extension/trexas/trexas.trex"
 
 # DuckDB Python API requires .duckdb_extension suffix for LOAD.
 FLIGHT_EXT = f"{REPO_ROOT}/flight/build/debug/extension/flight/flight.duckdb_extension"
@@ -29,6 +30,7 @@ LLAMA_EXT = f"{REPO_ROOT}/llama/build/debug/extension/llama/llama.duckdb_extensi
 CHDB_EXT = f"{REPO_ROOT}/chdb/build/debug/extension/chdb/chdb.duckdb_extension"
 HANA_EXT = f"{REPO_ROOT}/hana/build/debug/extension/hana_scan/hana_scan.duckdb_extension"
 TPM_EXT = f"{REPO_ROOT}/tpm/build/debug/extension/tpm/tpm.duckdb_extension"
+TREXAS_EXT = f"{REPO_ROOT}/trex/ext/trexas/build/debug/extension/trexas/trexas.duckdb_extension"
 
 for src, dst in [
     (FLIGHT_EXT_TREX, FLIGHT_EXT),
@@ -39,6 +41,7 @@ for src, dst in [
     (CHDB_EXT_TREX, CHDB_EXT),
     (HANA_EXT_TREX, HANA_EXT),
     (TPM_EXT_TREX, TPM_EXT),
+    (TREXAS_EXT_TREX, TREXAS_EXT),
 ]:
     if os.path.exists(src) and not os.path.exists(dst):
         os.symlink(src, dst)
@@ -46,16 +49,18 @@ for src, dst in [
 _next_gossip_port = 19000
 _next_flight_port = 19100
 _next_pgwire_port = 19200
+_next_trexas_port = 19300
 
 
 def alloc_ports():
-    """Allocate a unique gossip+flight+pgwire port tuple per call."""
-    global _next_gossip_port, _next_flight_port, _next_pgwire_port
-    gp, fp, pp = _next_gossip_port, _next_flight_port, _next_pgwire_port
+    """Allocate a unique gossip+flight+pgwire+trexas port tuple per call."""
+    global _next_gossip_port, _next_flight_port, _next_pgwire_port, _next_trexas_port
+    gp, fp, pp, tp = _next_gossip_port, _next_flight_port, _next_pgwire_port, _next_trexas_port
     _next_gossip_port += 1
     _next_flight_port += 1
     _next_pgwire_port += 1
-    return gp, fp, pp
+    _next_trexas_port += 1
+    return gp, fp, pp, tp
 
 
 # ---------------------------------------------------------------------------
@@ -93,10 +98,11 @@ def _node_worker(ext_paths, cmd_queue, result_queue):
 class Node:
     """A DuckDB node running in a separate process with extensions loaded."""
 
-    def __init__(self, ext_paths, gossip_port, flight_port, pgwire_port):
+    def __init__(self, ext_paths, gossip_port, flight_port, pgwire_port, trexas_port):
         self.gossip_port = gossip_port
         self.flight_port = flight_port
         self.pgwire_port = pgwire_port
+        self.trexas_port = trexas_port
         self._cmd_queue = mp.Queue()
         self._result_queue = mp.Queue()
         self._process = mp.Process(
@@ -156,7 +162,7 @@ def node_factory():
 
     def create_node(load_flight=True, load_swarm=True, load_pgwire=False,
                      load_circe=False, load_llama=False, load_chdb=False,
-                     load_hana=False, load_tpm=False):
+                     load_hana=False, load_tpm=False, load_trexas=False):
         ext_paths = []
         if load_flight:
             ext_paths.append(FLIGHT_EXT)
@@ -174,8 +180,10 @@ def node_factory():
             ext_paths.append(HANA_EXT)
         if load_tpm:
             ext_paths.append(TPM_EXT)
-        gossip_port, flight_port, pgwire_port = alloc_ports()
-        node = Node(ext_paths, gossip_port, flight_port, pgwire_port)
+        if load_trexas:
+            ext_paths.append(TREXAS_EXT)
+        gossip_port, flight_port, pgwire_port, trexas_port = alloc_ports()
+        node = Node(ext_paths, gossip_port, flight_port, pgwire_port, trexas_port)
         nodes.append(node)
         return node
 

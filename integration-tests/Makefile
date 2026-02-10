@@ -7,10 +7,11 @@ LLAMA_EXT=$(REPO_ROOT)/llama/build/debug/extension/llama/llama.trex
 CHDB_EXT=$(REPO_ROOT)/chdb/build/debug/extension/chdb/chdb.trex
 HANA_EXT=$(REPO_ROOT)/hana/build/debug/extension/hana_scan/hana_scan.trex
 TPM_EXT=$(REPO_ROOT)/tpm/build/debug/extension/tpm/tpm.trex
+TREXAS_EXT=$(REPO_ROOT)/trex/ext/trexas/build/debug/extension/trexas/trexas.trex
 PYTHON_BIN?=python3
 VENV=./venv
 
-.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-swarm test-circe test-llama test-chdb test-chdb-swarm test-hana test-tpm check-extensions check-pgwire check-circe check-llama check-chdb check-hana check-tpm hana-up hana-down hana-clean clean
+.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-swarm test-circe test-llama test-chdb test-chdb-swarm test-hana test-tpm test-trexas test-trexas-swarm check-extensions check-pgwire check-circe check-llama check-chdb check-hana check-tpm check-trexas hana-up hana-down hana-clean clean
 
 configure:
 	$(PYTHON_BIN) -m venv $(VENV)
@@ -88,6 +89,15 @@ test-tpm: check-tpm
 
 test-hana: check-hana
 	$(VENV)/bin/pytest -v test_hana_standalone.py
+
+check-trexas:
+	@test -f $(TREXAS_EXT) || (echo "Build trexas first: cd ../trex/ext/trexas && make configure && make debug" && exit 1)
+
+test-trexas: check-trexas
+	$(VENV)/bin/pytest -v test_trexas_standalone.py
+
+test-trexas-swarm: check-extensions check-trexas
+	$(VENV)/bin/pytest -v test_trexas_swarm.py
 
 clean:
 	rm -rf venv __pycache__ .pytest_cache

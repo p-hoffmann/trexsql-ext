@@ -7,3 +7,7 @@
 [submodule "llama/llama.cpp"]
 	path = llama/llama.cpp
 	url = https://github.com/ggml-org/llama.cpp.git
+[submodule "trex"]
+	path = trex
+	url = https://github.com/OHDSI/trex.git
+	branch = develop
