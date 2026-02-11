@@ -1,9 +1,11 @@
 # Stage 1: Build the trex binary
-FROM rust:1.84-bookworm AS builder
+FROM debian:trixie-slim AS builder
 
 ARG TREXSQL_VERSION=v1.4.0-trex
 
-RUN apt-get update && apt-get install -y unzip wget && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y curl unzip wget gcc libc6-dev && rm -rf /var/lib/apt/lists/*
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.84.0
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Download libtrexsql from GitHub release
 RUN mkdir -p /opt/trexsql && \
@@ -26,7 +28,7 @@ COPY src/ /usr/src/trexsql/src/
 RUN cargo build --release
 
 # Stage 2: Minimal runtime image
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libssl3 libgomp1 ca-certificates && \
