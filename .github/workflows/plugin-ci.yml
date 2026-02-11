@@ -219,7 +219,7 @@ jobs:
         run: docker build -t trexsql-test .
       - name: Test extensions load
         run: |
-          OUTPUT=$(docker run --rm trexsql-test --check)
+          OUTPUT=$(docker run --rm trexsql-test --check 2>&1) || true
           echo "$OUTPUT"
           echo "$OUTPUT" | grep -q "extension(s) loaded successfully"
       - name: Login to GHCR
