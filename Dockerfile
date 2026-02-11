@@ -20,7 +20,7 @@ COPY Cargo.toml /usr/src/trexsql/
 WORKDIR /usr/src/trexsql
 RUN mkdir src && echo "fn main() {}" > src/main.rs && \
     cargo build --release && \
-    rm -rf src target/release/trex target/release/deps/trexsql-*
+    rm -rf src target/release/trex target/release/deps/trexsql-* target/release/.fingerprint/trexsql-*
 
 COPY src/ /usr/src/trexsql/src/
 RUN cargo build --release
