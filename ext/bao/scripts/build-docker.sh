@@ -3,7 +3,7 @@ set -e
 
 # Script to combine Dockerfiles and generate the final Dockerfile
 # Reads base Dockerfile from Trex/trexsql/bao/Dockerfile
-# Reads extension from Dockerfile.trex with BEFORE and AFTER sections
+# Reads extension from Dockerfile.runtime with BEFORE and AFTER sections
 # Generates combined Dockerfile in services/trex/Dockerfile
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/../../../.."
 
 BASE_DOCKERFILE="Trex/trexsql/bao/Dockerfile"
-EXTENSION_DOCKERFILE="Trex/trexsql/bao/Dockerfile.trex"
+EXTENSION_DOCKERFILE="Trex/trexsql/bao/Dockerfile.runtime"
 OUTPUT_DOCKERFILE="Dockerfile"
 
 echo "Generating combined Dockerfile..."
