@@ -557,7 +557,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: pg-trex-build
-          path: ext/pg_trex/
+          path: ext/pg_trex/target/debug/
 
       - uses: actions/download-artifact@v4
         with:
