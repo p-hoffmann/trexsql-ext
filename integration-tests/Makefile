@@ -12,6 +12,11 @@ PYTHON_BIN?=python3
 VENV=./venv
 
 .PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-swarm test-circe test-llama test-chdb test-chdb-swarm test-hana test-tpm test-etl test-etl-swarm check-extensions check-pgwire check-circe check-llama check-chdb check-hana check-tpm check-etl check-swarm hana-up hana-down hana-clean clean
+MIGRATION_EXT=$(REPO_ROOT)/ext/migration/build/debug/extension/migration/migration.trex
+PYTHON_BIN?=python3
+VENV=./venv
+
+.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-swarm test-circe test-llama test-chdb test-chdb-swarm test-hana test-tpm test-pg-trex check-extensions check-pgwire check-circe check-llama check-chdb check-hana check-tpm check-migration hana-up hana-down hana-clean pg-trex-up pg-trex-down clean
 
 configure:
 	$(PYTHON_BIN) -m venv $(VENV)
@@ -101,6 +106,25 @@ check-swarm:
 
 test-etl-swarm: check-etl check-swarm
 	$(VENV)/bin/pytest -v test_etl_swarm.py
+pg-trex-up:
+	docker compose -f docker-compose.pg_trex.yml up -d
+	@echo "Waiting for pg_trex to be ready..."
+	@for i in $$(seq 1 30); do \
+		docker exec trex-pg-trex pg_isready -U postgres 2>/dev/null && echo "pg_trex is ready!" && exit 0; \
+		sleep 2; \
+	done; \
+	echo "Timeout waiting for pg_trex (60s)" && exit 1
+
+pg-trex-down:
+	docker compose -f docker-compose.pg_trex.yml down -v
+
+test-pg-trex:
+	$(VENV)/bin/pytest -v test_pg_trex.py
+check-migration:
+	@test -f $(MIGRATION_EXT) || (echo "Build migration first: cd ../ext/migration && make configure && make debug" && exit 1)
+
+test-migration: check-migration
+	$(VENV)/bin/pytest -v test_migration_standalone.py
 
 clean:
 	rm -rf venv __pycache__ .pytest_cache
