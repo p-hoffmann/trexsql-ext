@@ -267,9 +267,15 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            ~/.pgrx
             ext/pg_trex/target
           key: rust-pg-trex-${{ runner.os }}-${{ hashFiles('ext/pg_trex/Cargo.lock') }}
           restore-keys: rust-pg-trex-${{ runner.os }}-
+
+      - name: Install cargo-pgrx and init
+        run: |
+          cargo install cargo-pgrx --version 0.16.1 --locked
+          cargo pgrx init --pg17=$(which pg_config)
 
       - name: Build pg_trex
         run: LIBRARY_PATH=/tmp/trexsql cargo build
