@@ -2,6 +2,7 @@
 FROM debian:trixie-slim AS builder
 
 ARG TREXSQL_VERSION=v1.4.0-trex
+ARG CHDB_VERSION=v3.6.0
 
 RUN apt-get update && apt-get install -y curl unzip wget gcc libc6-dev && rm -rf /var/lib/apt/lists/*
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.84.0
@@ -17,6 +18,14 @@ RUN mkdir -p /opt/trexsql && \
 ENV TREXSQL_LIB_DIR=/opt/trexsql
 ENV TREXSQL_INCLUDE_DIR=/opt/trexsql
 
+# Download libchdb from GitHub release
+RUN cd /tmp && \
+    wget -O libchdb.tar.gz \
+      https://github.com/chdb-io/chdb/releases/download/${CHDB_VERSION}/linux-x86_64-libchdb.tar.gz && \
+    tar -xzf libchdb.tar.gz && \
+    mv libchdb.so /opt/ && \
+    rm -f libchdb.tar.gz chdb.h
+
 # Cache dependency build: copy manifests first, build with dummy src, then replace
 COPY Cargo.toml /usr/src/trexsql/
 WORKDIR /usr/src/trexsql
@@ -31,10 +40,11 @@ RUN cargo build --release
 FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      libssl3 libgomp1 ca-certificates && \
+      libssl3 libgomp1 ca-certificates libvulkan1 && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/trexsql/libtrexsql.so /usr/lib/
+COPY --from=builder /opt/libchdb.so /usr/lib/
 COPY --from=builder /usr/src/trexsql/target/release/trex /usr/bin/
 
 RUN mkdir -p /usr/lib/trexsql/extensions
