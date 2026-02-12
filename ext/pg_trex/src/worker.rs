@@ -339,21 +339,20 @@ fn worker_thread_fn(
         let result = match result {
             Ok(Ok(ipc_bytes)) => Ok(ipc_bytes),
             Ok(Err(e)) => {
-                pgrx::warning!(
+                // NOTE: pgrx::warning!() must NOT be used here — this runs in
+                // a spawned Rust thread, not a PostgreSQL backend process, so
+                // ereport() would access invalid per-process state and hang.
+                eprintln!(
                     "pg_trex [{}]: query error on slot {}: {}",
-                    thread_name,
-                    slot_index,
-                    e
+                    thread_name, slot_index, e
                 );
                 Err(e)
             }
             Err(panic_err) => {
                 let msg = extract_panic_message(panic_err);
-                pgrx::warning!(
+                eprintln!(
                     "pg_trex [{}]: query panicked on slot {}: {}",
-                    thread_name,
-                    slot_index,
-                    msg
+                    thread_name, slot_index, msg
                 );
                 Err(format!("query panicked: {}", msg))
             }
