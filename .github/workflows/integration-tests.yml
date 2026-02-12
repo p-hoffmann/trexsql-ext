@@ -108,9 +108,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: pg-trex-build
-          path: |
-            ext/pg_trex/target/debug/libpg_trex.so
-            ext/pg_trex/target/debug/pg_trex-pg17/usr/share/postgresql/17/extension/pg_trex.control
+          path: ext/pg_trex/target/debug/libpg_trex.so
           retention-days: 1
 
   build-pgwire:

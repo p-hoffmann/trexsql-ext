@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget unzip \
 
 # Install pg_trex extension
 COPY target/debug/libpg_trex.so /usr/lib/postgresql/17/lib/pg_trex.so
-COPY target/debug/pg_trex-pg17/usr/share/postgresql/17/extension/pg_trex.control /usr/share/postgresql/17/extension/
+COPY pg_trex.control /usr/share/postgresql/17/extension/
 COPY sql/pg_trex--0.1.0.sql /usr/share/postgresql/17/extension/
 
 # Copy trexsql extensions (swarm, flight) for distributed query support
