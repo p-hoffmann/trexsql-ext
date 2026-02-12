@@ -250,6 +250,36 @@ jobs:
           path: ext/llama/build/debug/extension/llama/llama.trex
           retention-days: 1
 
+  build-migration:
+    name: "Build migration"
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ext/migration/target
+          key: rust-migration-${{ runner.os }}-${{ hashFiles('ext/migration/Cargo.lock') }}
+          restore-keys: rust-migration-${{ runner.os }}-
+
+      - name: Build migration
+        run: make configure && make debug
+        working-directory: ext/migration
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ext-migration
+          path: ext/migration/build/debug/extension/migration/migration.trex
+          retention-days: 1
+
   # ===========================================================================
   # Layer 2: Test Jobs
   # ===========================================================================
@@ -443,6 +473,30 @@ jobs:
         run: venv/bin/pytest -v test_tpm_standalone.py
         working-directory: integration-tests
 
+  test-migration:
+    name: "Test migration"
+    runs-on: ubuntu-24.04
+    needs: [build-migration]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-migration
+          path: ext/migration/build/debug/extension/migration/
+
+      - name: Setup test environment
+        run: make configure
+        working-directory: integration-tests
+
+      - name: Run migration standalone tests
+        run: venv/bin/pytest -v test_migration_standalone.py
+        working-directory: integration-tests
+
   test-hana:
     name: "Test hana"
     runs-on: ubuntu-24.04
@@ -507,6 +561,7 @@ jobs:
       - test-llama
       - test-chdb
       - test-tpm
+      - test-migration
       - test-hana
     steps:
       - name: Check test results
@@ -517,6 +572,7 @@ jobs:
           echo "test-llama:       ${{ needs.test-llama.result }}"
           echo "test-chdb:        ${{ needs.test-chdb.result }}"
           echo "test-tpm:         ${{ needs.test-tpm.result }}"
+          echo "test-migration:   ${{ needs.test-migration.result }}"
           echo "test-hana:        ${{ needs.test-hana.result }}"
 
           if [[ "${{ needs.test-distributed.result }}" == "failure" ||
@@ -525,6 +581,7 @@ jobs:
                 "${{ needs.test-llama.result }}" == "failure" ||
                 "${{ needs.test-chdb.result }}" == "failure" ||
                 "${{ needs.test-tpm.result }}" == "failure" ||
+                "${{ needs.test-migration.result }}" == "failure" ||
                 "${{ needs.test-hana.result }}" == "failure" ]]; then
             echo "::error::One or more integration test jobs failed"
             exit 1

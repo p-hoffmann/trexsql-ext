@@ -79,6 +79,7 @@ jobs:
             RUNNER: ubuntu-24.04
           - PKGPATH: ./ext/pgwire
           - PKGPATH: ./ext/tpm
+          - PKGPATH: ./ext/migration
           - PKGPATH: ./ext/swarm
           - PKGPATH: ./ext/flight
           - PKGPATH: ./ext/bao
