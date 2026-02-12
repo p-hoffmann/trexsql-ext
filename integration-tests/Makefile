@@ -7,10 +7,11 @@ LLAMA_EXT=$(REPO_ROOT)/ext/llama/build/debug/extension/llama/llama.trex
 CHDB_EXT=$(REPO_ROOT)/ext/chdb/build/debug/extension/chdb/chdb.trex
 HANA_EXT=$(REPO_ROOT)/ext/hana/build/debug/extension/hana_scan/hana_scan.trex
 TPM_EXT=$(REPO_ROOT)/ext/tpm/build/debug/extension/tpm/tpm.trex
+MIGRATION_EXT=$(REPO_ROOT)/ext/migration/build/debug/extension/migration/migration.trex
 PYTHON_BIN?=python3
 VENV=./venv
 
-.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-swarm test-circe test-llama test-chdb test-chdb-swarm test-hana test-tpm test-pg-trex check-extensions check-pgwire check-circe check-llama check-chdb check-hana check-tpm hana-up hana-down hana-clean pg-trex-up pg-trex-down clean
+.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-swarm test-circe test-llama test-chdb test-chdb-swarm test-hana test-tpm test-pg-trex check-extensions check-pgwire check-circe check-llama check-chdb check-hana check-tpm check-migration hana-up hana-down hana-clean pg-trex-up pg-trex-down clean
 
 configure:
 	$(PYTHON_BIN) -m venv $(VENV)
@@ -103,6 +104,11 @@ pg-trex-down:
 
 test-pg-trex:
 	$(VENV)/bin/pytest -v test_pg_trex.py
+check-migration:
+	@test -f $(MIGRATION_EXT) || (echo "Build migration first: cd ../ext/migration && make configure && make debug" && exit 1)
+
+test-migration: check-migration
+	$(VENV)/bin/pytest -v test_migration_standalone.py
 
 clean:
 	rm -rf venv __pycache__ .pytest_cache
