@@ -3,7 +3,7 @@ FROM postgres:17
 ARG TREXSQL_VERSION=v1.4.0-trex
 
 # Download libtrexsql from GitHub release
-RUN apt-get update && apt-get install -y --no-install-recommends wget unzip \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget unzip \
     && wget -O /tmp/libtrexsql.zip \
       https://github.com/p-hoffmann/trexsql-rs/releases/download/${TREXSQL_VERSION}/libtrexsql-linux-amd64.zip \
     && unzip /tmp/libtrexsql.zip -d /tmp/trexsql \
