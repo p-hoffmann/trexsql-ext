@@ -742,16 +742,16 @@ pub fn worker_main(shmem: &pgrx::PgLwLock<PgTrexShmem>) {
 
     // Cache GUC values for SIGHUP change detection
     let mut cached_gucs = CachedGucs::from_current();
-    let mut last_catalog_refresh = Instant::now();
 
-    // Perform initial catalog refresh
-    {
-        let shared = shmem.share();
-        let _ = catalog::refresh_catalog(&shared, &conn);
-        shared
-            .catalog_last_refresh
-            .store(now_epoch_secs(), Ordering::Release);
-    }
+    // Initialize to epoch so the first main-loop iteration triggers a catalog
+    // refresh.  We deliberately do NOT block here before entering the main loop:
+    // swarm_tables() can take an unbounded amount of time if the gossip / flight
+    // services are still initializing, and blocking here would prevent the worker
+    // from processing any queries (the worker state is already RUNNING so
+    // backends will start submitting requests).
+    let mut last_catalog_refresh = Instant::now() - Duration::from_secs(
+        cached_gucs.catalog_refresh_secs.max(1) as u64 + 1,
+    );
 
     // Track in-flight queries dispatched to worker threads
     let mut pending_queries: HashMap<usize, PendingQuery> = HashMap::new();

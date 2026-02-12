@@ -10,6 +10,10 @@ import psycopg2
 import pytest
 
 
+# Per-test timeout (seconds) to prevent indefinite hangs in CI.
+QUERY_TIMEOUT = 60
+
+
 def _pg_trex_reachable():
     """Check if the pg_trex container is reachable."""
     try:
@@ -32,7 +36,8 @@ pytestmark = pytest.mark.skipif(
 def pg_conn():
     """Module-scoped psycopg2 connection to the pg_trex container."""
     conn = psycopg2.connect(
-        host="127.0.0.1", port=45432, user="postgres", dbname="postgres"
+        host="127.0.0.1", port=45432, user="postgres", dbname="postgres",
+        options=f"-c statement_timeout={QUERY_TIMEOUT * 1000}",
     )
     conn.autocommit = True
     yield conn
