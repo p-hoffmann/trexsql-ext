@@ -62,6 +62,51 @@ jobs:
           path: ext/swarm/build/debug/extension/swarm/swarm.trex
           retention-days: 1
 
+  build-pg-trex:
+    name: "Build pg_trex"
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install PostgreSQL 17 dev headers
+        run: |
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg
+          sudo apt-get update
+          sudo apt-get install -y postgresql-server-dev-17
+
+      - name: Download libtrexsql
+        run: |
+          wget -O /tmp/libtrexsql.zip \
+            https://github.com/p-hoffmann/trexsql-rs/releases/download/v1.4.0-trex/libtrexsql-linux-amd64.zip
+          unzip /tmp/libtrexsql.zip -d /tmp/trexsql
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ext/pg_trex/target
+          key: rust-pg-trex-${{ runner.os }}-${{ hashFiles('ext/pg_trex/Cargo.lock') }}
+          restore-keys: rust-pg-trex-${{ runner.os }}-
+
+      - name: Build pg_trex
+        run: LIBRARY_PATH=/tmp/trexsql cargo build
+        working-directory: ext/pg_trex
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pg-trex-build
+          path: |
+            ext/pg_trex/target/debug/libpg_trex.so
+            ext/pg_trex/target/debug/pg_trex-pg17/usr/share/postgresql/17/extension/pg_trex.control
+          retention-days: 1
+
   build-pgwire:
     name: "Build pgwire"
     runs-on: ubuntu-24.04
@@ -492,6 +537,70 @@ jobs:
         if: always()
         run: docker compose -f integration-tests/docker-compose.hana.yml down -v
 
+  test-pg-trex:
+    name: "Test pg_trex"
+    runs-on: ubuntu-24.04
+    needs: [build-rust-core, build-pg-trex]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pg-trex-build
+          path: ext/pg_trex/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-flight
+          path: ext/pg_trex/extensions/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-swarm
+          path: ext/pg_trex/extensions/
+
+      - name: List pg_trex build context
+        run: |
+          ls -la ext/pg_trex/target/debug/libpg_trex.so
+          ls -la ext/pg_trex/extensions/
+
+      - name: Start pg_trex container
+        run: docker compose -f integration-tests/docker-compose.pg_trex.yml up -d --build
+
+      - name: Wait for pg_trex to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if docker exec trex-pg-trex pg_isready -U postgres 2>/dev/null; then
+              echo "PostgreSQL ready after ~$((i * 2))s"
+              sleep 5
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Timeout waiting for PostgreSQL"
+          docker logs trex-pg-trex 2>&1 | tail -30
+          exit 1
+
+      - name: Setup test environment
+        run: make configure
+        working-directory: integration-tests
+
+      - name: Run pg_trex tests
+        run: venv/bin/pytest -v test_pg_trex.py
+        working-directory: integration-tests
+
+      - name: Show pg_trex logs on failure
+        if: failure()
+        run: docker logs trex-pg-trex 2>&1 | tail -50
+
+      - name: Cleanup
+        if: always()
+        run: docker compose -f integration-tests/docker-compose.pg_trex.yml down -v
+
   # ===========================================================================
   # Layer 3: Status Gate
   # ===========================================================================
@@ -508,6 +617,7 @@ jobs:
       - test-chdb
       - test-tpm
       - test-hana
+      - test-pg-trex
     steps:
       - name: Check test results
         run: |
@@ -518,6 +628,7 @@ jobs:
           echo "test-chdb:        ${{ needs.test-chdb.result }}"
           echo "test-tpm:         ${{ needs.test-tpm.result }}"
           echo "test-hana:        ${{ needs.test-hana.result }}"
+          echo "test-pg-trex:     ${{ needs.test-pg-trex.result }}"
 
           if [[ "${{ needs.test-distributed.result }}" == "failure" ||
                 "${{ needs.test-pgwire.result }}" == "failure" ||
@@ -525,7 +636,8 @@ jobs:
                 "${{ needs.test-llama.result }}" == "failure" ||
                 "${{ needs.test-chdb.result }}" == "failure" ||
                 "${{ needs.test-tpm.result }}" == "failure" ||
-                "${{ needs.test-hana.result }}" == "failure" ]]; then
+                "${{ needs.test-hana.result }}" == "failure" ||
+                "${{ needs.test-pg-trex.result }}" == "failure" ]]; then
             echo "::error::One or more integration test jobs failed"
             exit 1
           fi

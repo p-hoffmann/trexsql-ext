@@ -10,7 +10,7 @@ TPM_EXT=$(REPO_ROOT)/ext/tpm/build/debug/extension/tpm/tpm.trex
 PYTHON_BIN?=python3
 VENV=./venv
 
-.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-swarm test-circe test-llama test-chdb test-chdb-swarm test-hana test-tpm check-extensions check-pgwire check-circe check-llama check-chdb check-hana check-tpm hana-up hana-down hana-clean clean
+.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-swarm test-circe test-llama test-chdb test-chdb-swarm test-hana test-tpm test-pg-trex check-extensions check-pgwire check-circe check-llama check-chdb check-hana check-tpm hana-up hana-down hana-clean pg-trex-up pg-trex-down clean
 
 configure:
 	$(PYTHON_BIN) -m venv $(VENV)
@@ -88,6 +88,21 @@ test-tpm: check-tpm
 
 test-hana: check-hana
 	$(VENV)/bin/pytest -v test_hana_standalone.py
+
+pg-trex-up:
+	docker compose -f docker-compose.pg_trex.yml up -d
+	@echo "Waiting for pg_trex to be ready..."
+	@for i in $$(seq 1 30); do \
+		docker exec trex-pg-trex pg_isready -U postgres 2>/dev/null && echo "pg_trex is ready!" && exit 0; \
+		sleep 2; \
+	done; \
+	echo "Timeout waiting for pg_trex (60s)" && exit 1
+
+pg-trex-down:
+	docker compose -f docker-compose.pg_trex.yml down -v
+
+test-pg-trex:
+	$(VENV)/bin/pytest -v test_pg_trex.py
 
 clean:
 	rm -rf venv __pycache__ .pytest_cache

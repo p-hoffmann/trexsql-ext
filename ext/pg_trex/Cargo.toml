@@ -1,0 +1,42 @@
+[package]
+name = "pg_trex"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+default = ["pg17"]
+pg14 = ["pgrx/pg14", "pgrx-tests/pg14"]
+pg15 = ["pgrx/pg15", "pgrx-tests/pg15"]
+pg16 = ["pgrx/pg16", "pgrx-tests/pg16"]
+pg17 = ["pgrx/pg17", "pgrx-tests/pg17"]
+pg18 = ["pgrx/pg18", "pgrx-tests/pg18"]
+pg_test = []
+
+[dependencies]
+pgrx = "0.16.1"
+duckdb = { git = "https://github.com/p-hoffmann/trexsql-rs", tag = "v1.4.0-trex", features = ["vtab-loadable", "vtab-arrow"] }
+arrow = { version = "56", default-features = false }
+arrow-ipc = { version = "56", features = ["lz4"] }
+arrow-schema = "56"
+arrow-array = "56"
+arrow-buffer = "56"
+crossbeam-channel = "0.5"
+
+[dev-dependencies]
+pgrx-tests = "0.16.1"
+
+[[bin]]
+name = "pgrx_embed_pg_trex"
+path = "src/bin/pgrx_embed_pg_trex.rs"
+
+[profile.dev]
+panic = "unwind"
+
+[profile.release]
+panic = "unwind"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
