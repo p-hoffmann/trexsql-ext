@@ -69,7 +69,20 @@ pub fn execute_distributed_query(
     );
 
     // --- 1. Extract target table name (sync) ---
-    let table_name = extract_table_name(sql)?;
+    let table_name = match extract_table_name(sql) {
+        Ok(name) => name,
+        Err(e) if e.contains("No table found") => {
+            // No FROM clause (e.g. "SELECT 1 AS val") — execute locally.
+            SwarmLogger::log_with_context(
+                LogLevel::Debug,
+                "coordinator",
+                &[("query_id", &query_id.to_string())],
+                "No table in query, executing locally",
+            );
+            return execute_local_query(sql);
+        }
+        Err(e) => return Err(e),
+    };
 
     SwarmLogger::log_with_context(
         LogLevel::Debug,
@@ -273,6 +286,36 @@ pub fn execute_distributed_query(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Execute a query locally on the shared DuckDB connection.
+///
+/// Used for queries without a FROM clause (e.g. `SELECT 1 AS val`) that do
+/// not need distribution across the cluster.
+fn execute_local_query(sql: &str) -> Result<QueryResult, String> {
+    let conn_arc = crate::get_shared_connection().ok_or_else(|| {
+        "Shared DuckDB connection not available (extension not initialised?)".to_string()
+    })?;
+    let conn = conn_arc
+        .lock()
+        .map_err(|e| format!("Failed to lock shared connection: {e}"))?;
+
+    let mut stmt = conn
+        .prepare(sql)
+        .map_err(|e| format!("Failed to prepare local query: {e}"))?;
+
+    let batches: Vec<RecordBatch> = stmt
+        .query_arrow([])
+        .map_err(|e| format!("Failed to execute local query: {e}"))?
+        .collect();
+
+    let schema = if let Some(first) = batches.first() {
+        first.schema()
+    } else {
+        Arc::new(arrow::datatypes::Schema::empty())
+    };
+
+    Ok(QueryResult { schema, batches })
+}
 
 /// Extract the first table name from the FROM clause of a SQL statement.
 ///
