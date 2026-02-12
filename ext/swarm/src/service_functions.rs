@@ -131,6 +131,28 @@ pub fn get_start_service_sql(extension: &str, config_json: &str) -> Result<Optio
                 Ok(Some("SELECT chdb_start_database()".to_string()))
             }
         }
+        "etl" => {
+            let pipeline_name = config["pipeline_name"]
+                .as_str()
+                .ok_or("etl config requires 'pipeline_name'")?;
+            let connection_string = config["connection_string"]
+                .as_str()
+                .ok_or("etl config requires 'connection_string'")?;
+
+            let escaped_name = pipeline_name.replace('\'', "''");
+            let escaped_conn = connection_string.replace('\'', "''");
+
+            let batch_size = config["batch_size"].as_u64().unwrap_or(1000);
+            let batch_timeout_ms = config["batch_timeout_ms"].as_u64().unwrap_or(5000);
+            let retry_delay_ms = config["retry_delay_ms"].as_u64().unwrap_or(10000);
+            let retry_max_attempts = config["retry_max_attempts"].as_u64().unwrap_or(5);
+
+            Ok(Some(format!(
+                "SELECT etl_start('{}', '{}', {}, {}, {}, {})",
+                escaped_name, escaped_conn,
+                batch_size, batch_timeout_ms, retry_delay_ms, retry_max_attempts
+            )))
+        }
         _ => Ok(None),
     }
 }
@@ -314,7 +336,7 @@ impl VScalar for SwarmStartServiceScalar {
             Ok(Some(sql)) => sql,
             Ok(None) => {
                 let msg = format!(
-                    "Unknown service extension '{}'. Known: flight, pgwire, trexas, chdb",
+                    "Unknown service extension '{}'. Known: flight, pgwire, trexas, chdb, etl",
                     extension
                 );
                 let flat = output.flat_vector();
@@ -539,6 +561,107 @@ impl VScalar for SwarmLoadScalar {
     fn signatures() -> Vec<ScalarFunctionSignature> {
         vec![ScalarFunctionSignature::exact(
             vec![LogicalTypeId::Varchar.into()], // extension name
+            LogicalTypeId::Varchar.into(),
+        )]
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scalar: swarm_register_service(name, host, port)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Scalar: swarm_set_key(key, value)
+// ---------------------------------------------------------------------------
+
+pub struct SwarmSetKeyScalar;
+
+impl VScalar for SwarmSetKeyScalar {
+    type State = ();
+
+    unsafe fn invoke(
+        _state: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if input.len() == 0 {
+            return Err("No input provided".into());
+        }
+
+        let key_vector = input.flat_vector(0);
+        let value_vector = input.flat_vector(1);
+
+        let key_slice =
+            key_vector.as_slice_with_len::<libduckdb_sys::duckdb_string_t>(input.len());
+        let value_slice =
+            value_vector.as_slice_with_len::<libduckdb_sys::duckdb_string_t>(input.len());
+
+        let key = duckdb::types::DuckString::new(&mut { key_slice[0] })
+            .as_str()
+            .to_string();
+        let value = duckdb::types::DuckString::new(&mut { value_slice[0] })
+            .as_str()
+            .to_string();
+
+        let response = match GossipRegistry::instance().set_key(&key, &value) {
+            Ok(()) => format!("Set key '{}'", key),
+            Err(e) => format!("Error setting key '{}': {}", key, e),
+        };
+
+        let flat = output.flat_vector();
+        flat.insert(0, &response);
+        Ok(())
+    }
+
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        vec![ScalarFunctionSignature::exact(
+            vec![
+                LogicalTypeId::Varchar.into(), // key
+                LogicalTypeId::Varchar.into(), // value
+            ],
+            LogicalTypeId::Varchar.into(),
+        )]
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scalar: swarm_delete_key(key)
+// ---------------------------------------------------------------------------
+
+pub struct SwarmDeleteKeyScalar;
+
+impl VScalar for SwarmDeleteKeyScalar {
+    type State = ();
+
+    unsafe fn invoke(
+        _state: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if input.len() == 0 {
+            return Err("No input provided".into());
+        }
+
+        let key_vector = input.flat_vector(0);
+        let key_slice =
+            key_vector.as_slice_with_len::<libduckdb_sys::duckdb_string_t>(input.len());
+        let key = duckdb::types::DuckString::new(&mut { key_slice[0] })
+            .as_str()
+            .to_string();
+
+        let response = match GossipRegistry::instance().delete_key(&key) {
+            Ok(()) => format!("Deleted key '{}'", key),
+            Err(e) => format!("Error deleting key '{}': {}", key, e),
+        };
+
+        let flat = output.flat_vector();
+        flat.insert(0, &response);
+        Ok(())
+    }
+
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        vec![ScalarFunctionSignature::exact(
+            vec![LogicalTypeId::Varchar.into()], // key
             LogicalTypeId::Varchar.into(),
         )]
     }

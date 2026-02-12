@@ -7,10 +7,11 @@ LLAMA_EXT=$(REPO_ROOT)/ext/llama/build/debug/extension/llama/llama.trex
 CHDB_EXT=$(REPO_ROOT)/ext/chdb/build/debug/extension/chdb/chdb.trex
 HANA_EXT=$(REPO_ROOT)/ext/hana/build/debug/extension/hana_scan/hana_scan.trex
 TPM_EXT=$(REPO_ROOT)/ext/tpm/build/debug/extension/tpm/tpm.trex
+ETL_EXT=$(REPO_ROOT)/ext/etl/build/debug/extension/etl/etl.trex
 PYTHON_BIN?=python3
 VENV=./venv
 
-.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-swarm test-circe test-llama test-chdb test-chdb-swarm test-hana test-tpm check-extensions check-pgwire check-circe check-llama check-chdb check-hana check-tpm hana-up hana-down hana-clean clean
+.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-swarm test-circe test-llama test-chdb test-chdb-swarm test-hana test-tpm test-etl test-etl-swarm check-extensions check-pgwire check-circe check-llama check-chdb check-hana check-tpm check-etl check-swarm hana-up hana-down hana-clean clean
 
 configure:
 	$(PYTHON_BIN) -m venv $(VENV)
@@ -88,6 +89,18 @@ test-tpm: check-tpm
 
 test-hana: check-hana
 	$(VENV)/bin/pytest -v test_hana_standalone.py
+
+check-etl:
+	@test -f $(ETL_EXT) || (echo "Build etl first: cd ../ext/etl && make configure && make debug" && exit 1)
+
+test-etl: check-etl
+	$(VENV)/bin/pytest -v test_etl_standalone.py
+
+check-swarm:
+	@test -f $(SWARM_EXT) || (echo "Build swarm first: cd ../ext/swarm && make configure && make debug" && exit 1)
+
+test-etl-swarm: check-etl check-swarm
+	$(VENV)/bin/pytest -v test_etl_swarm.py
 
 clean:
 	rm -rf venv __pycache__ .pytest_cache

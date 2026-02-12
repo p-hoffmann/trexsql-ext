@@ -713,6 +713,12 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_scalar_function::<service_functions::SwarmRegisterServiceScalar>("swarm_register_service")
         .expect("Failed to register swarm_register_service function");
 
+    con.register_scalar_function::<service_functions::SwarmSetKeyScalar>("swarm_set_key")
+        .expect("Failed to register swarm_set_key function");
+
+    con.register_scalar_function::<service_functions::SwarmDeleteKeyScalar>("swarm_delete_key")
+        .expect("Failed to register swarm_delete_key function");
+
     // Auto-bootstrap from environment config
     if let Ok(config) = config::ClusterConfig::from_env() {
         if let Some((node_name, node_cfg)) = config::get_this_node_config(&config) {

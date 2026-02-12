@@ -81,6 +81,7 @@ jobs:
           - PKGPATH: ./ext/tpm
           - PKGPATH: ./ext/swarm
           - PKGPATH: ./ext/flight
+          - PKGPATH: ./ext/etl
           - PKGPATH: ./ext/bao
 
     runs-on: ${{ matrix.RUNNER || needs.pick_runner.outputs.random_runner }}

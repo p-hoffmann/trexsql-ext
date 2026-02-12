@@ -19,6 +19,7 @@ LLAMA_EXT_TREX = f"{REPO_ROOT}/ext/llama/build/debug/extension/llama/llama.trex"
 CHDB_EXT_TREX = f"{REPO_ROOT}/ext/chdb/build/debug/extension/chdb/chdb.trex"
 HANA_EXT_TREX = f"{REPO_ROOT}/ext/hana/build/debug/extension/hana_scan/hana_scan.trex"
 TPM_EXT_TREX = f"{REPO_ROOT}/ext/tpm/build/debug/extension/tpm/tpm.trex"
+ETL_EXT_TREX = f"{REPO_ROOT}/ext/etl/build/debug/extension/etl/etl.trex"
 
 # DuckDB Python API requires .duckdb_extension suffix for LOAD.
 FLIGHT_EXT = f"{REPO_ROOT}/ext/flight/build/debug/extension/flight/flight.duckdb_extension"
@@ -29,6 +30,7 @@ LLAMA_EXT = f"{REPO_ROOT}/ext/llama/build/debug/extension/llama/llama.duckdb_ext
 CHDB_EXT = f"{REPO_ROOT}/ext/chdb/build/debug/extension/chdb/chdb.duckdb_extension"
 HANA_EXT = f"{REPO_ROOT}/ext/hana/build/debug/extension/hana_scan/hana_scan.duckdb_extension"
 TPM_EXT = f"{REPO_ROOT}/ext/tpm/build/debug/extension/tpm/tpm.duckdb_extension"
+ETL_EXT = f"{REPO_ROOT}/ext/etl/build/debug/extension/etl/etl.duckdb_extension"
 
 for src, dst in [
     (FLIGHT_EXT_TREX, FLIGHT_EXT),
@@ -39,6 +41,7 @@ for src, dst in [
     (CHDB_EXT_TREX, CHDB_EXT),
     (HANA_EXT_TREX, HANA_EXT),
     (TPM_EXT_TREX, TPM_EXT),
+    (ETL_EXT_TREX, ETL_EXT),
 ]:
     if os.path.exists(src) and not os.path.exists(dst):
         os.symlink(src, dst)
@@ -156,7 +159,7 @@ def node_factory():
 
     def create_node(load_flight=True, load_swarm=True, load_pgwire=False,
                      load_circe=False, load_llama=False, load_chdb=False,
-                     load_hana=False, load_tpm=False):
+                     load_hana=False, load_tpm=False, load_etl=False):
         ext_paths = []
         if load_flight:
             ext_paths.append(FLIGHT_EXT)
@@ -174,6 +177,8 @@ def node_factory():
             ext_paths.append(HANA_EXT)
         if load_tpm:
             ext_paths.append(TPM_EXT)
+        if load_etl:
+            ext_paths.append(ETL_EXT)
         gossip_port, flight_port, pgwire_port = alloc_ports()
         node = Node(ext_paths, gossip_port, flight_port, pgwire_port)
         nodes.append(node)
