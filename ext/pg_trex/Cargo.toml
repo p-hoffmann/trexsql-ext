@@ -17,7 +17,7 @@ pg_test = []
 
 [dependencies]
 pgrx = "0.16.1"
-duckdb = { git = "https://github.com/p-hoffmann/trexsql-rs", tag = "v1.4.4-trex", features = ["vtab-loadable", "vtab-arrow"] }
+duckdb = { git = "https://github.com/p-hoffmann/trexsql-rs", tag = "v1.4.4-trex", features = ["vtab-arrow"] }
 arrow = { version = "57", default-features = false }
 arrow-ipc = { version = "57", features = ["lz4"] }
 arrow-schema = "57"
