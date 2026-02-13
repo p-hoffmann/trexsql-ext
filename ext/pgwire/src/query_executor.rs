@@ -169,7 +169,16 @@ fn is_result_returning_query(upper: &str) -> bool {
         || upper.starts_with("TABLE")
         || upper.starts_with("VALUES")
         || upper.starts_with("FROM")
-        || upper.starts_with("PRAGMA")
+        || (upper.starts_with("PRAGMA") && !is_action_pragma(upper))
+}
+
+/// Action PRAGMAs that internally expand to multiple statements and cannot be prepared.
+fn is_action_pragma(upper: &str) -> bool {
+    let after_pragma = upper["PRAGMA".len()..].trim_start();
+    after_pragma.starts_with("CREATE_FTS_INDEX")
+        || after_pragma.starts_with("DROP_FTS_INDEX")
+        || after_pragma.starts_with("COPY_DATABASE")
+        || after_pragma.starts_with("IMPORT_DATABASE")
 }
 
 fn execute_select(
