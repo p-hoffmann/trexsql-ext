@@ -1,6 +1,6 @@
 FROM postgres:17
 
-ARG TREXSQL_VERSION=v1.4.0-trex
+ARG TREXSQL_VERSION=v1.4.4-trex
 
 # Download libtrexsql from GitHub release
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget unzip \

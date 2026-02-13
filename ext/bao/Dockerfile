@@ -21,14 +21,15 @@ apt-get update && apt-get install -y \
     && apt-get install -y -t testing libstdc++6 && \
     rm -rf /var/lib/apt/lists/*
 
+ARG TREXSQL_VERSION=v1.4.4-trex
 RUN mkdir -p /usr/local/lib && \
-    wget -O /tmp/libduckdb-linux-amd64.zip https://github.com/duckdb/duckdb/releases/download/v1.3.2/libduckdb-linux-amd64.zip && \
-    unzip /tmp/libduckdb-linux-amd64.zip -d /tmp/duckdb && \
-    cp /tmp/duckdb/libduckdb.so /usr/local/lib/ && \
-    cp /tmp/duckdb/libduckdb_static.a /usr/local/lib/ && \
-    cp /tmp/duckdb/duckdb.h /usr/local/include/ && \
-    cp /tmp/duckdb/duckdb.hpp /usr/local/include/ && \
-    rm -rf /tmp/libduckdb-linux-amd64.zip /tmp/duckdb && \
+    wget -O /tmp/libtrexsql.zip \
+      https://github.com/p-hoffmann/trexsql-rs/releases/download/${TREXSQL_VERSION}/libtrexsql-linux-amd64.zip && \
+    unzip /tmp/libtrexsql.zip -d /tmp/trexsql && \
+    cp /tmp/trexsql/libtrexsql.so /usr/local/lib/ && \
+    cp /tmp/trexsql/duckdb.h /usr/local/include/ && \
+    cp /tmp/trexsql/duckdb.hpp /usr/local/include/ && \
+    rm -rf /tmp/libtrexsql.zip /tmp/trexsql && \
     ldconfig
 
 RUN curl -sL https://lib.chdb.io | bash

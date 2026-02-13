@@ -1,7 +1,7 @@
 # Stage 1: Build the trex binary
 FROM debian:trixie-slim AS builder
 
-ARG TREXSQL_VERSION=v1.4.0-trex
+ARG TREXSQL_VERSION=v1.4.4-trex
 ARG CHDB_VERSION=v3.6.0
 
 RUN apt-get update && apt-get install -y curl unzip wget gcc libc6-dev && rm -rf /var/lib/apt/lists/*
