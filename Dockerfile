@@ -5,7 +5,7 @@ ARG TREXSQL_VERSION=v1.4.4-trex
 ARG CHDB_VERSION=v3.6.0
 
 RUN apt-get update && apt-get install -y curl unzip wget gcc libc6-dev && rm -rf /var/lib/apt/lists/*
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.84.0
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.85.0
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Download libtrexsql from GitHub release

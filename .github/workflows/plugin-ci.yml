@@ -264,7 +264,7 @@ jobs:
       - name: Download libtrexsql
         run: |
           wget -O /tmp/libtrexsql.zip \
-            https://github.com/p-hoffmann/trexsql-rs/releases/download/v1.4.0-trex/libtrexsql-linux-amd64.zip
+            https://github.com/p-hoffmann/trexsql-rs/releases/download/v1.4.4-trex/libtrexsql-linux-amd64.zip
           unzip /tmp/libtrexsql.zip -d /tmp/trexsql
 
       - uses: actions/cache@v4
