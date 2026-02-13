@@ -8,7 +8,7 @@ name = "trex"
 path = "src/main.rs"
 
 [dependencies]
-duckdb = { git = "https://github.com/p-hoffmann/trexsql-rs", branch = "dev", version = "1.4.4" }
+duckdb = { git = "https://github.com/p-hoffmann/trexsql-rs", tag = "v1.4.4-trex" }
 signal-hook = "0.3"
 
 [profile.release]
