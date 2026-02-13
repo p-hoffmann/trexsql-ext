@@ -277,6 +277,23 @@ impl SimpleQueryHandler for DuckDBQueryHandler {
     {
         log_debug(&format!("SimpleQuery: {}", query));
 
+        // Set database context on the pinned worker connection
+        let login_info = LoginInfo::from_client_info(_client);
+        if let Some(db) = login_info.database() {
+            if let Some(db_credentials) = ServerRegistry::instance().get_db_credentials(&self.server_host, self.server_port) {
+                if matches!(check_database_action(db, &db_credentials), DatabaseAction::SetDatabase) {
+                    let use_rx = self.executor.submit_to(self.worker_id, format!("USE {}", db));
+                    if let Ok(QueryResult::Error(err)) = use_rx.await {
+                        return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                            "ERROR".to_owned(),
+                            "XX000".to_owned(),
+                            format!("Failed to set database context: {}", err),
+                        ))));
+                    }
+                }
+            }
+        }
+
         // Split multi-statement queries
         let queries: Vec<&str> = query
             .split(';')
@@ -369,6 +386,23 @@ impl ExtendedQueryHandler for DuckDBQueryHandler {
     {
         let query = portal.statement.statement.clone();
         log_debug(&format!("ExtendedQuery: {}", query));
+
+        // Set database context on the pinned worker connection
+        let login_info = LoginInfo::from_client_info(_client);
+        if let Some(db) = login_info.database() {
+            if let Some(db_credentials) = ServerRegistry::instance().get_db_credentials(&self.server_host, self.server_port) {
+                if matches!(check_database_action(db, &db_credentials), DatabaseAction::SetDatabase) {
+                    let use_rx = self.executor.submit_to(self.worker_id, format!("USE {}", db));
+                    if let Ok(QueryResult::Error(err)) = use_rx.await {
+                        return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                            "ERROR".to_owned(),
+                            "XX000".to_owned(),
+                            format!("Failed to set database context: {}", err),
+                        ))));
+                    }
+                }
+            }
+        }
 
         // Submit query to pinned worker
         let result_rx = self.executor.submit_to(self.worker_id, query);
