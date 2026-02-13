@@ -299,6 +299,35 @@ jobs:
           path: ext/llama/build/debug/extension/llama/llama.trex
           retention-days: 1
 
+  build-etl:
+    name: "Build etl"
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ext/etl/target
+          key: rust-etl-${{ runner.os }}-${{ hashFiles('ext/etl/Cargo.lock') }}
+          restore-keys: rust-etl-${{ runner.os }}-
+
+      - name: Build etl
+        run: make configure && make debug
+        working-directory: ext/etl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ext-etl
+          path: ext/etl/build/debug/extension/etl/etl.trex
+          retention-days: 1
+    
   build-migration:
     name: "Build migration"
     runs-on: ubuntu-24.04
@@ -522,6 +551,39 @@ jobs:
         run: venv/bin/pytest -v test_tpm_standalone.py
         working-directory: integration-tests
 
+  test-etl:
+    name: "Test etl"
+    runs-on: ubuntu-24.04
+    needs: [build-etl, build-rust-core]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-etl
+          path: ext/etl/build/debug/extension/etl/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-swarm
+          path: ext/swarm/build/debug/extension/swarm/
+
+      - name: Setup test environment
+        run: make configure
+        working-directory: integration-tests
+
+      - name: Run etl standalone tests
+        run: venv/bin/pytest -v test_etl_standalone.py
+        working-directory: integration-tests
+
+      - name: Run etl swarm tests
+        run: venv/bin/pytest -v test_etl_swarm.py
+        working-directory: integration-tests
+
   test-migration:
     name: "Test migration"
     runs-on: ubuntu-24.04
@@ -545,7 +607,7 @@ jobs:
       - name: Run migration standalone tests
         run: venv/bin/pytest -v test_migration_standalone.py
         working-directory: integration-tests
-
+        
   test-hana:
     name: "Test hana"
     runs-on: ubuntu-24.04
@@ -677,6 +739,7 @@ jobs:
       - test-tpm
       - test-migration
       - test-hana
+      - test-etl
       - test-pg-trex
     steps:
       - name: Check test results
@@ -689,6 +752,7 @@ jobs:
           echo "test-tpm:         ${{ needs.test-tpm.result }}"
           echo "test-migration:   ${{ needs.test-migration.result }}"
           echo "test-hana:        ${{ needs.test-hana.result }}"
+          echo "test-etl:         ${{ needs.test-etl.result }}"
           echo "test-pg-trex:     ${{ needs.test-pg-trex.result }}"
 
           if [[ "${{ needs.test-distributed.result }}" == "failure" ||
@@ -697,6 +761,7 @@ jobs:
                 "${{ needs.test-llama.result }}" == "failure" ||
                 "${{ needs.test-chdb.result }}" == "failure" ||
                 "${{ needs.test-tpm.result }}" == "failure" ||
+                "${{ needs.test-etl.result }}" == "failure" ||
                 "${{ needs.test-pg-trex.result }}" == "failure" ||
                 "${{ needs.test-migration.result }}" == "failure" ||
                 "${{ needs.test-hana.result }}" == "failure" ]]; then
