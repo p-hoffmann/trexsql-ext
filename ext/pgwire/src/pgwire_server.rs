@@ -9,7 +9,8 @@ use serde_json;
 use base64::{Engine as _, engine::general_purpose};
 
 use pgwire::api::auth::StartupHandler;
-use pgwire::api::auth::scram::{gen_salted_password, SASLScramAuthStartupHandler};
+use pgwire::api::auth::sasl::SASLAuthStartupHandler;
+use pgwire::api::auth::sasl::scram::{gen_salted_password, ScramAuth};
 use pgwire::api::auth::{AuthSource, DefaultServerParameterProvider, LoginInfo, Password};
 use pgwire::api::query::{ExtendedQueryHandler, SimpleQueryHandler};
 use pgwire::api::stmt::NoopQueryParser;
@@ -175,6 +176,7 @@ pub fn random_salt() -> Vec<u8> {
     Vec::from(rand::random::<[u8; 10]>())
 }
 
+#[derive(Debug)]
 pub struct SimpleAuthSource {
     required_password: String,
 }
@@ -271,7 +273,7 @@ fn arrow_type_to_pg_type(arrow_type: &duckdb::arrow::datatypes::DataType) -> Typ
 
 #[async_trait]
 impl SimpleQueryHandler for DuckDBQueryHandler {
-    async fn do_query<'a, C>(&self, _client: &mut C, query: &str) -> PgWireResult<Vec<Response<'a>>>
+    async fn do_query<C>(&self, _client: &mut C, query: &str) -> PgWireResult<Vec<Response>>
     where
         C: ClientInfo + Unpin + Send + Sync,
     {
@@ -375,12 +377,12 @@ impl ExtendedQueryHandler for DuckDBQueryHandler {
         Arc::new(NoopQueryParser::new())
     }
 
-    async fn do_query<'a, C>(
+    async fn do_query<C>(
         &self,
         _client: &mut C,
         portal: &Portal<Self::Statement>,
         _max_rows: usize,
-    ) -> PgWireResult<Response<'a>>
+    ) -> PgWireResult<Response>
     where
         C: ClientInfo + Unpin + Send + Sync,
     {
@@ -496,7 +498,8 @@ impl ExtendedQueryHandler for DuckDBQueryHandler {
             }).map_err(|e| PgWireError::ApiError(Box::new(e)))?;
 
             let fields = row_desc_from_stmt(&stmt, &Format::UnifiedBinary)?;
-            Ok(DescribeStatementResponse::new(param_types, fields))
+            let param_types_unwrapped: Vec<Type> = param_types.into_iter().filter_map(|t| t).collect();
+            Ok(DescribeStatementResponse::new(param_types_unwrapped, fields))
         })
         .await
         .map_err(|e| {
@@ -632,12 +635,11 @@ impl PgWireServerHandlers for DuckDBPgWireServerWithAuth {
     fn startup_handler(&self) -> Arc<impl StartupHandler> {
         let auth_source = SimpleAuthSource::new(self.password.clone());
         let parameter_provider = DefaultServerParameterProvider::default();
-        let mut scram_handler = SASLScramAuthStartupHandler::new(
-            Arc::new(auth_source), 
-            Arc::new(parameter_provider)
-        );
-        scram_handler.set_iterations(SCRAM_ITERATIONS);
-        Arc::new(scram_handler)
+        let mut scram_auth = ScramAuth::new(Arc::new(auth_source));
+        scram_auth.set_iterations(SCRAM_ITERATIONS);
+        let sasl_handler = SASLAuthStartupHandler::new(Arc::new(parameter_provider))
+            .with_scram(scram_auth);
+        Arc::new(sasl_handler)
     }
 }
 
