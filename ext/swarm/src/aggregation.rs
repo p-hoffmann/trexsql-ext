@@ -1,20 +1,7 @@
 //! SQL aggregation decomposition for distributed queries.
 //!
-//! When a distributed query contains aggregate functions (COUNT, SUM, MIN,
-//! MAX, AVG), the aggregation must be decomposed into per-node partial
-//! queries and a final merge query that combines the partial results.
-//!
-//! # Decomposition Rules
-//!
-//! | Original     | Node SQL                          | Merge SQL                           |
-//! |--------------|-----------------------------------|-------------------------------------|
-//! | COUNT(*)     | COUNT(*) AS _count                | SUM(_count)                         |
-//! | COUNT(col)   | COUNT(col) AS _count_col          | SUM(_count_col)                     |
-//! | SUM(col)     | SUM(col) AS _sum_col              | SUM(_sum_col)                       |
-//! | MIN(col)     | MIN(col) AS _min_col              | MIN(_min_col)                       |
-//! | MAX(col)     | MAX(col) AS _max_col              | MAX(_max_col)                       |
-//! | AVG(col)     | SUM(col) AS _sum_col,             | SUM(_sum_col) / SUM(_count_col)     |
-//! |              | COUNT(col) AS _count_col           |                                     |
+//! Decomposes COUNT/SUM/MIN/MAX/AVG into per-node partial queries and a
+//! merge query. AVG is split into SUM+COUNT on nodes, then SUM/SUM on merge.
 
 use sqlparser::ast::{
     helpers::attached_token::AttachedToken, BinaryOperator, Expr, FunctionArg, FunctionArgExpr,
@@ -25,58 +12,29 @@ use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Span, Token, TokenWithSpan};
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
-/// The result of decomposing a SQL query for distributed execution.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DecomposedQuery {
-    /// SQL to send to each data node.
     pub node_sql: String,
-    /// SQL to execute locally on the merged results from all nodes.
     pub merge_sql: String,
-    /// Whether the query contains aggregations that need special merging.
     pub has_aggregations: bool,
 }
 
-// ---------------------------------------------------------------------------
-// Internal: classification of a single SELECT item
-// ---------------------------------------------------------------------------
-
-/// Describes how a single projection item should be handled.
 enum ProjectionItem {
-    /// A non-aggregate column expression (pass-through).
     PassThrough(SelectItem),
-    /// An aggregate that maps 1-to-1 between node and merge (COUNT, SUM, MIN, MAX).
     SimpleAggregate {
-        /// The function name (upper-cased), e.g. "COUNT", "SUM".
         func_name: String,
-        /// The original argument expression (or None for COUNT(*)).
         arg_expr: Option<Expr>,
-        /// True when the original was COUNT(*).
         is_count_star: bool,
-        /// The user-supplied alias, if any.
         user_alias: Option<Ident>,
     },
-    /// AVG(col) which decomposes into SUM + COUNT.
     Avg {
-        /// The column expression inside AVG(...).
         arg_expr: Expr,
-        /// The user-supplied alias, if any.
         user_alias: Option<Ident>,
     },
 }
 
-// ---------------------------------------------------------------------------
-// Entry point
-// ---------------------------------------------------------------------------
-
-/// Decompose a SQL query into a node query and a merge query suitable for
-/// distributed execution.
-///
-/// If the query cannot be parsed, or is too complex for decomposition,
-/// the function falls back to returning the original SQL for both queries.
+/// Decompose a SQL query for distributed execution. Falls back to passthrough
+/// for unparseable or unsupported queries.
 pub fn decompose_query(sql: &str) -> Result<DecomposedQuery, String> {
     let dialect = GenericDialect {};
     let statements = Parser::parse_sql(&dialect, sql).map_err(|e| format!("parse error: {e}"))?;
@@ -90,13 +48,11 @@ pub fn decompose_query(sql: &str) -> Result<DecomposedQuery, String> {
         _ => return fallback(sql),
     };
 
-    // We only handle top-level SELECT (not UNION, INTERSECT, etc.).
     let select = match query.body.as_ref() {
         SetExpr::Select(s) => s,
         _ => return fallback(sql),
     };
 
-    // Classify every projection item.
     let mut items: Vec<ProjectionItem> = Vec::new();
     let mut has_aggregates = false;
 
@@ -119,8 +75,6 @@ pub fn decompose_query(sql: &str) -> Result<DecomposedQuery, String> {
         return decompose_non_aggregate(query, select);
     }
 
-    // --- Build the node query and merge query for aggregate case ---
-
     let mut node_projection: Vec<SelectItem> = Vec::new();
     let mut merge_projection: Vec<SelectItem> = Vec::new();
     let mut counter: u32 = 0; // disambiguate when the same agg appears multiple times
@@ -140,7 +94,6 @@ pub fn decompose_query(sql: &str) -> Result<DecomposedQuery, String> {
                 counter += 1;
                 let alias_name = node_alias_for(func_name, arg_expr.as_ref(), *is_count_star, counter);
 
-                // Node: original aggregate AS _alias
                 let node_func = if *is_count_star {
                     make_count_star()
                 } else {
@@ -151,7 +104,6 @@ pub fn decompose_query(sql: &str) -> Result<DecomposedQuery, String> {
                     alias: Ident::new(&alias_name),
                 });
 
-                // Merge: combine partial results
                 let merge_func_name = merge_func_for(func_name);
                 let merge_expr =
                     Expr::Function(make_func(&merge_func_name, Expr::Identifier(Ident::new(&alias_name))));
@@ -168,7 +120,6 @@ pub fn decompose_query(sql: &str) -> Result<DecomposedQuery, String> {
                 let sum_alias = format!("_sum_{}{}", col_label, counter);
                 let count_alias = format!("_count_{}{}", col_label, counter);
 
-                // Node: SUM(col) AS _sum_col, COUNT(col) AS _count_col
                 node_projection.push(SelectItem::ExprWithAlias {
                     expr: Expr::Function(make_func("SUM", arg_expr.clone())),
                     alias: Ident::new(&sum_alias),
@@ -178,17 +129,33 @@ pub fn decompose_query(sql: &str) -> Result<DecomposedQuery, String> {
                     alias: Ident::new(&count_alias),
                 });
 
-                // Merge: SUM(_sum_col) / SUM(_count_col)
                 let merge_expr = Expr::BinaryOp {
                     left: Box::new(Expr::Function(make_func(
                         "SUM",
                         Expr::Identifier(Ident::new(&sum_alias)),
                     ))),
                     op: BinaryOperator::Divide,
-                    right: Box::new(Expr::Function(make_func(
-                        "SUM",
-                        Expr::Identifier(Ident::new(&count_alias)),
-                    ))),
+                    right: Box::new(Expr::Function(sqlparser::ast::Function {
+                        name: ObjectName(vec![Ident::new("NULLIF")]),
+                        uses_odbc_syntax: false,
+                        parameters: FunctionArguments::None,
+                        args: FunctionArguments::List(FunctionArgumentList {
+                            duplicate_treatment: None,
+                            args: vec![
+                                FunctionArg::Unnamed(FunctionArgExpr::Expr(
+                                    Expr::Function(make_func("SUM", Expr::Identifier(Ident::new(&count_alias))))
+                                )),
+                                FunctionArg::Unnamed(FunctionArgExpr::Expr(
+                                    Expr::Value(sqlparser::ast::Value::Number("0".to_string(), false))
+                                )),
+                            ],
+                            clauses: vec![],
+                        }),
+                        filter: None,
+                        null_treatment: None,
+                        over: None,
+                        within_group: vec![],
+                    })),
                 };
 
                 let merge_alias = match user_alias {
@@ -203,25 +170,17 @@ pub fn decompose_query(sql: &str) -> Result<DecomposedQuery, String> {
         }
     }
 
-    // GROUP BY: pass through to both node and merge queries.
     let group_by_exprs = extract_group_by_exprs(&select.group_by);
-
-    // Pass-through columns referenced in GROUP BY also need to appear in
-    // the node projection if they are not already there (they should be via
-    // PassThrough items, but this is a safety net).
-
-    // Node: include GROUP BY, exclude ORDER BY and LIMIT.
     let node_select = build_select(node_projection, &select.from, &group_by_exprs, &select.selection, &select.having);
     let node_query = build_query(node_select, None, None, None);
     let node_sql = format!("{}", sqlparser::ast::Statement::Query(Box::new(node_query)));
 
-    // Merge: include GROUP BY, ORDER BY, LIMIT.
     let merge_select = build_select(
         merge_projection,
         &[merged_table_source()],
         &group_by_exprs,
-        &None, // WHERE was already applied at node level
-        &None, // HAVING is re-evaluated at merge on the re-aggregated columns
+        &None,
+        &None,
     );
     let merge_query = build_query(merge_select, query.order_by.clone(), query.limit.clone(), query.offset.clone());
     let merge_sql = format!("{}", sqlparser::ast::Statement::Query(Box::new(merge_query)));
@@ -233,14 +192,8 @@ pub fn decompose_query(sql: &str) -> Result<DecomposedQuery, String> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Non-aggregate decomposition
-// ---------------------------------------------------------------------------
-
-/// For queries without aggregates: node_sql = original without ORDER BY /
-/// LIMIT; merge_sql = SELECT * FROM _merged with ORDER BY / LIMIT.
+/// Non-aggregate: node_sql = original sans ORDER BY/LIMIT; merge adds them back.
 fn decompose_non_aggregate(query: &Query, select: &Select) -> Result<DecomposedQuery, String> {
-    // Node query: strip ORDER BY and LIMIT but keep everything else.
     let node_select = select.clone();
     let node_query = build_query(node_select, None, None, None);
     let node_sql = format!("{}", sqlparser::ast::Statement::Query(Box::new(node_query)));
@@ -249,7 +202,6 @@ fn decompose_non_aggregate(query: &Query, select: &Select) -> Result<DecomposedQ
         query.order_by.is_some() || query.limit.is_some() || query.offset.is_some();
 
     if !has_order_or_limit {
-        // Simplest case: no ORDER BY / LIMIT, merge is just UNION ALL.
         return Ok(DecomposedQuery {
             node_sql: node_sql.clone(),
             merge_sql: format!("SELECT * FROM _merged"),
@@ -257,7 +209,6 @@ fn decompose_non_aggregate(query: &Query, select: &Select) -> Result<DecomposedQ
         });
     }
 
-    // Build merge as: SELECT * FROM _merged ORDER BY ... LIMIT ...
     let merge_select = build_select(
         vec![SelectItem::Wildcard(
             sqlparser::ast::WildcardAdditionalOptions {
@@ -287,15 +238,10 @@ fn decompose_non_aggregate(query: &Query, select: &Select) -> Result<DecomposedQ
     })
 }
 
-// ---------------------------------------------------------------------------
-// Projection classification
-// ---------------------------------------------------------------------------
-
 fn classify_projection(item: &SelectItem) -> Result<ProjectionItem, String> {
     match item {
         SelectItem::UnnamedExpr(expr) => classify_expr(expr, None),
         SelectItem::ExprWithAlias { expr, alias } => classify_expr(expr, Some(alias.clone())),
-        // Wildcard or QualifiedWildcard -- pass through
         other => Ok(ProjectionItem::PassThrough(other.clone())),
     }
 }
@@ -324,7 +270,6 @@ fn classify_expr(expr: &Expr, alias: Option<Ident>) -> Result<ProjectionItem, St
                         user_alias: alias,
                     })
                 }
-                // Unknown function or non-aggregate -- treat as pass-through.
                 _ => {
                     let item = match alias {
                         Some(a) => SelectItem::ExprWithAlias {
@@ -337,7 +282,6 @@ fn classify_expr(expr: &Expr, alias: Option<Ident>) -> Result<ProjectionItem, St
                 }
             }
         }
-        // Non-function expressions (columns, literals, etc.) are pass-through.
         _ => {
             let item = match alias {
                 Some(a) => SelectItem::ExprWithAlias {
@@ -351,10 +295,7 @@ fn classify_expr(expr: &Expr, alias: Option<Ident>) -> Result<ProjectionItem, St
     }
 }
 
-/// Extract the single argument from a function call.
-///
-/// Returns `(Some(expr), false)` for normal args like `SUM(x)`, and
-/// `(None, true)` for wildcard args like `COUNT(*)`.
+/// Returns `(Some(expr), false)` for normal args, `(None, true)` for `COUNT(*)`.
 fn extract_single_arg(f: &sqlparser::ast::Function) -> Result<(Option<Expr>, bool), String> {
     match &f.args {
         FunctionArguments::List(arg_list) => {
@@ -376,11 +317,6 @@ fn extract_single_arg(f: &sqlparser::ast::Function) -> Result<(Option<Expr>, boo
     }
 }
 
-// ---------------------------------------------------------------------------
-// Alias and label helpers
-// ---------------------------------------------------------------------------
-
-/// Produce a deterministic internal alias for a node-level partial aggregate.
 fn node_alias_for(func_name: &str, arg: Option<&Expr>, is_count_star: bool, counter: u32) -> String {
     if is_count_star {
         return format!("_count{}", counter);
@@ -389,7 +325,6 @@ fn node_alias_for(func_name: &str, arg: Option<&Expr>, is_count_star: bool, coun
     format!("_{}_{}{}", func_name.to_lowercase(), col, counter)
 }
 
-/// Generate a short label from an expression (used in alias names).
 fn col_label_for(expr: &Expr) -> String {
     match expr {
         Expr::Identifier(id) => sanitize_label(&id.value),
@@ -397,14 +332,12 @@ fn col_label_for(expr: &Expr) -> String {
             ids.iter().map(|id| sanitize_label(&id.value)).collect::<Vec<_>>().join("_")
         }
         _ => {
-            // For complex expressions, use a hash-like short name.
             let s = format!("{}", expr);
             sanitize_label(&s)
         }
     }
 }
 
-/// Keep only alphanumeric and underscore characters, lowercased.
 fn sanitize_label(s: &str) -> String {
     s.chars()
         .filter(|c| c.is_alphanumeric() || *c == '_')
@@ -412,15 +345,13 @@ fn sanitize_label(s: &str) -> String {
         .to_lowercase()
 }
 
-/// Determine the merge-level function to apply to partial results.
 fn merge_func_for(node_func: &str) -> String {
     match node_func {
-        "COUNT" => "SUM".to_string(), // SUM of partial counts
-        other => other.to_string(),   // SUM, MIN, MAX stay the same
+        "COUNT" => "SUM".to_string(), // partial counts must be summed
+        other => other.to_string(),
     }
 }
 
-/// Produce the final user-visible alias for the merge projection.
 fn final_alias(
     user_alias: Option<&Ident>,
     func_name: &str,
@@ -437,11 +368,6 @@ fn final_alias(
     format!("{}_{}", func_name.to_lowercase(), col)
 }
 
-// ---------------------------------------------------------------------------
-// AST construction helpers
-// ---------------------------------------------------------------------------
-
-/// Create a `Function` AST node for a simple single-argument function.
 fn make_func(name: &str, arg: Expr) -> sqlparser::ast::Function {
     sqlparser::ast::Function {
         name: ObjectName(vec![Ident::new(name)]),
@@ -459,7 +385,6 @@ fn make_func(name: &str, arg: Expr) -> sqlparser::ast::Function {
     }
 }
 
-/// Create `COUNT(*)`.
 fn make_count_star() -> sqlparser::ast::Function {
     sqlparser::ast::Function {
         name: ObjectName(vec![Ident::new("COUNT")]),
@@ -477,7 +402,6 @@ fn make_count_star() -> sqlparser::ast::Function {
     }
 }
 
-/// Build a `Select` node.
 fn build_select(
     projection: Vec<SelectItem>,
     from: &[TableWithJoins],
@@ -518,7 +442,6 @@ fn build_select(
     }
 }
 
-/// Build a `Query` node from a `Select` with optional ORDER BY, LIMIT, OFFSET.
 fn build_query(
     select: Select,
     order_by: Option<OrderBy>,
@@ -540,15 +463,13 @@ fn build_query(
     }
 }
 
-/// Extract `GROUP BY` expressions from a `GroupByExpr`.
 fn extract_group_by_exprs(group_by: &GroupByExpr) -> Vec<Expr> {
     match group_by {
         GroupByExpr::Expressions(exprs, _modifiers) => exprs.clone(),
-        GroupByExpr::All(_) => vec![], // GROUP BY ALL -- cannot decompose, treat as empty
+        GroupByExpr::All(_) => vec![],
     }
 }
 
-/// Build a `TableWithJoins` referencing the virtual `_merged` table.
 fn merged_table_source() -> TableWithJoins {
     TableWithJoins {
         relation: TableFactor::Table {
@@ -565,11 +486,6 @@ fn merged_table_source() -> TableWithJoins {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Fallback
-// ---------------------------------------------------------------------------
-
-/// When we cannot decompose, return the original SQL for both node and merge.
 fn fallback(sql: &str) -> Result<DecomposedQuery, String> {
     Ok(DecomposedQuery {
         node_sql: sql.to_string(),
@@ -577,10 +493,6 @@ fn fallback(sql: &str) -> Result<DecomposedQuery, String> {
         has_aggregations: false,
     })
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -600,10 +512,8 @@ mod tests {
         let sql = "SELECT id, name FROM users ORDER BY name LIMIT 10";
         let result = decompose_query(sql).unwrap();
         assert!(!result.has_aggregations);
-        // Node query should NOT have ORDER BY or LIMIT
         assert!(!result.node_sql.to_uppercase().contains("ORDER BY"));
         assert!(!result.node_sql.to_uppercase().contains("LIMIT"));
-        // Merge query should have ORDER BY and LIMIT
         assert!(result.merge_sql.to_uppercase().contains("ORDER BY"));
         assert!(result.merge_sql.to_uppercase().contains("LIMIT"));
     }
@@ -613,10 +523,8 @@ mod tests {
         let sql = "SELECT COUNT(*) FROM orders";
         let result = decompose_query(sql).unwrap();
         assert!(result.has_aggregations);
-        // Node should have COUNT(*) with an alias
         assert!(result.node_sql.to_uppercase().contains("COUNT(*)"));
         assert!(result.node_sql.to_uppercase().contains(" AS "));
-        // Merge should SUM the partial counts
         assert!(result.merge_sql.to_uppercase().contains("SUM("));
     }
 
@@ -635,7 +543,6 @@ mod tests {
         let result = decompose_query(sql).unwrap();
         assert!(result.has_aggregations);
         assert!(result.node_sql.to_uppercase().contains("SUM(PRICE)"));
-        // Merge should also be SUM of partial sums
         assert!(result.merge_sql.to_uppercase().contains("SUM("));
     }
 
@@ -655,12 +562,10 @@ mod tests {
         let sql = "SELECT AVG(price) FROM orders";
         let result = decompose_query(sql).unwrap();
         assert!(result.has_aggregations);
-        // Node should have SUM and COUNT instead of AVG
         let node_upper = result.node_sql.to_uppercase();
         assert!(node_upper.contains("SUM(PRICE)"));
         assert!(node_upper.contains("COUNT(PRICE)"));
         assert!(!node_upper.contains("AVG"));
-        // Merge should divide SUM by COUNT
         assert!(result.merge_sql.contains("/"));
     }
 
@@ -669,10 +574,8 @@ mod tests {
         let sql = "SELECT region, SUM(price) FROM orders GROUP BY region";
         let result = decompose_query(sql).unwrap();
         assert!(result.has_aggregations);
-        // Both node and merge should have GROUP BY
         assert!(result.node_sql.to_uppercase().contains("GROUP BY"));
         assert!(result.merge_sql.to_uppercase().contains("GROUP BY"));
-        // Region column should pass through
         assert!(result.node_sql.to_uppercase().contains("REGION"));
         assert!(result.merge_sql.to_uppercase().contains("REGION"));
     }
@@ -682,9 +585,7 @@ mod tests {
         let sql = "SELECT region, COUNT(*) FROM orders GROUP BY region ORDER BY region";
         let result = decompose_query(sql).unwrap();
         assert!(result.has_aggregations);
-        // Node should NOT have ORDER BY
         assert!(!result.node_sql.to_uppercase().contains("ORDER BY"));
-        // Merge should have ORDER BY
         assert!(result.merge_sql.to_uppercase().contains("ORDER BY"));
     }
 
@@ -695,7 +596,6 @@ mod tests {
         assert!(result.has_aggregations);
 
         let node_upper = result.node_sql.to_uppercase();
-        // Node should have region, SUM(price), COUNT(price), COUNT(*)
         assert!(node_upper.contains("REGION"));
         assert!(node_upper.contains("SUM(PRICE)"));
         assert!(node_upper.contains("COUNT(PRICE)"));
@@ -704,9 +604,8 @@ mod tests {
         assert!(!node_upper.contains("ORDER BY"));
 
         let merge_upper = result.merge_sql.to_uppercase();
-        // Merge should re-aggregate and have ORDER BY
         assert!(merge_upper.contains("REGION"));
-        assert!(merge_upper.contains("/"));     // AVG = SUM/COUNT
+        assert!(merge_upper.contains("/"));
         assert!(merge_upper.contains("SUM("));
         assert!(merge_upper.contains("GROUP BY"));
         assert!(merge_upper.contains("ORDER BY"));
@@ -718,7 +617,6 @@ mod tests {
         let sql = "SELECT SUM(price) AS total FROM orders";
         let result = decompose_query(sql).unwrap();
         assert!(result.has_aggregations);
-        // The merge query should use the user-supplied alias
         assert!(result.merge_sql.to_uppercase().contains("AS TOTAL"));
     }
 
@@ -751,7 +649,6 @@ mod tests {
         let result = decompose_query(sql).unwrap();
         assert!(result.has_aggregations);
         let node_upper = result.node_sql.to_uppercase();
-        // Both should be present with distinct aliases
         assert!(node_upper.contains("SUM(A)"));
         assert!(node_upper.contains("SUM(B)"));
     }
@@ -761,9 +658,7 @@ mod tests {
         let sql = "SELECT COUNT(*) FROM orders WHERE status = 'active'";
         let result = decompose_query(sql).unwrap();
         assert!(result.has_aggregations);
-        // WHERE should be in node query (filtering happens at data nodes)
         assert!(result.node_sql.to_uppercase().contains("WHERE"));
-        // WHERE should NOT be in merge query (already filtered)
         assert!(!result.merge_sql.to_uppercase().contains("WHERE"));
     }
 
@@ -772,10 +667,8 @@ mod tests {
         let sql = "SELECT id FROM t ORDER BY id LIMIT 10 OFFSET 5";
         let result = decompose_query(sql).unwrap();
         assert!(!result.has_aggregations);
-        // Node should not have LIMIT or OFFSET
         assert!(!result.node_sql.to_uppercase().contains("LIMIT"));
         assert!(!result.node_sql.to_uppercase().contains("OFFSET"));
-        // Merge should have both
         assert!(result.merge_sql.to_uppercase().contains("LIMIT"));
         assert!(result.merge_sql.to_uppercase().contains("OFFSET"));
     }
@@ -792,6 +685,19 @@ mod tests {
         let sql = "SELECT SUM(price) FROM orders";
         let result = decompose_query(sql).unwrap();
         assert!(result.node_sql.to_uppercase().contains("FROM ORDERS"));
+    }
+
+    #[test]
+    fn test_avg_empty_table_no_division_by_zero() {
+        let sql = "SELECT AVG(price) FROM orders";
+        let result = decompose_query(sql).unwrap();
+        assert!(result.has_aggregations);
+        // The merge SQL should use NULLIF to prevent division by zero
+        assert!(
+            result.merge_sql.to_uppercase().contains("NULLIF"),
+            "AVG merge should use NULLIF to prevent division by zero: {}",
+            result.merge_sql,
+        );
     }
 
     #[test]

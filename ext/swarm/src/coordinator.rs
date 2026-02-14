@@ -1,12 +1,5 @@
-//! Distributed query coordinator.
-//!
-//! Accepts a SQL query, resolves target data nodes through the catalog,
-//! fans the query out to each node in parallel via Arrow Flight, collects
-//! the partial results, and merges them into a single [`QueryResult`].
-//!
-//! Aggregation-aware merging is handled via [`aggregation::decompose_query`]:
-//! when the query contains aggregates the partial results are loaded into a
-//! temporary DuckDB table (`_merged`) and the merge SQL is executed locally.
+//! Distributed query coordinator: resolves nodes, fans out via Flight,
+//! collects partial results, and merges (with aggregation decomposition).
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -21,39 +14,13 @@ use crate::catalog;
 use crate::flight_client;
 use crate::logging::{LogLevel, SwarmLogger};
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
-/// The merged result of a distributed query execution.
 pub struct QueryResult {
-    /// Arrow schema shared by all result batches.
     pub schema: SchemaRef,
-    /// Zero or more record batches containing the query results.
     pub batches: Vec<RecordBatch>,
 }
 
-// ---------------------------------------------------------------------------
-// Main entry point
-// ---------------------------------------------------------------------------
-
-/// Execute a SQL query across the cluster.
-///
-/// 1. Parse the SQL to extract the target table name from the FROM clause.
-/// 2. Resolve which data nodes hold that table via the catalog.
-/// 3. Decompose the query into per-node SQL and (optional) merge SQL.
-/// 4. Fan out the node SQL to every target node in parallel via Flight.
-/// 5. Collect results; honour `partial_results` on per-node failures.
-/// 6. Merge:
-///    - No aggregations: concatenate all batches (UNION ALL).
-///    - Aggregations: load into DuckDB temp table, run merge SQL.
-///
-/// This function is synchronous.  Steps 1-3 and 6 are pure computation
-/// or use the gossip layer (which has its own runtime).  Step 4-5 require
-/// async I/O; a dedicated tokio runtime is created internally for that
-/// phase to avoid nesting `block_on` calls.
-///
-/// Returns [`QueryResult`] on success, or a descriptive error string.
+/// Execute a SQL query across the cluster. Creates an internal tokio runtime
+/// for the async fan-out phase to avoid nested `block_on` calls.
 pub fn execute_distributed_query(
     sql: &str,
     partial_results: bool,
@@ -68,11 +35,9 @@ pub fn execute_distributed_query(
         &format!("Received query: {sql}"),
     );
 
-    // --- 1. Extract target table name (sync) ---
     let table_name = match extract_table_name(sql) {
         Ok(name) => name,
         Err(e) if e.contains("No table found") => {
-            // No FROM clause (e.g. "SELECT 1 AS val") — execute locally.
             SwarmLogger::log_with_context(
                 LogLevel::Debug,
                 "coordinator",
@@ -91,7 +56,6 @@ pub fn execute_distributed_query(
         &format!("Extracted table name: {table_name}"),
     );
 
-    // --- 2. Resolve target nodes (sync — uses gossip runtime internally) ---
     let catalog_entries = catalog::resolve_table(&table_name)?;
 
     if catalog_entries.is_empty() {
@@ -100,7 +64,6 @@ pub fn execute_distributed_query(
         ));
     }
 
-    // Extract Flight endpoints from catalog entries (skip nodes without Flight)
     let target_nodes: Vec<String> = catalog_entries
         .iter()
         .filter_map(|e| e.flight_endpoint.clone())
@@ -126,7 +89,6 @@ pub fn execute_distributed_query(
         ),
     );
 
-    // --- 3. Decompose query (sync) ---
     let decomposed = aggregation::decompose_query(sql)?;
 
     SwarmLogger::log_with_context(
@@ -139,7 +101,6 @@ pub fn execute_distributed_query(
         ),
     );
 
-    // --- 4. Fan out to nodes in parallel (async — own runtime) ---
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -189,7 +150,6 @@ pub fn execute_distributed_query(
             }));
         }
 
-        // --- 5. Collect results ---
         let mut all_node_batches: Vec<Vec<RecordBatch>> = Vec::with_capacity(target_nodes.len());
         let mut errors: Vec<String> = Vec::new();
 
@@ -233,7 +193,6 @@ pub fn execute_distributed_query(
     let fan_out_ms = fan_out_start.elapsed().as_millis();
 
     if !errors.is_empty() {
-        // partial_results == false and at least one node failed
         return Err(format!(
             "Distributed query failed on {} node(s): {}",
             errors.len(),
@@ -254,15 +213,19 @@ pub fn execute_distributed_query(
             ),
         );
 
-        // Return an empty result with an empty schema.
-        let schema = Arc::new(arrow::datatypes::Schema::empty());
+        // Try to preserve schema from any batch (even zero-row ones)
+        let schema = all_node_batches
+            .iter()
+            .flat_map(|nb| nb.iter())
+            .find(|b| b.num_columns() > 0)
+            .map(|b| b.schema())
+            .unwrap_or_else(|| Arc::new(arrow::datatypes::Schema::empty()));
         return Ok(QueryResult {
             schema,
             batches: vec![],
         });
     }
 
-    // --- 6. Merge results (sync) ---
     let merge_start = Instant::now();
     let result = merge_batches(all_node_batches, &decomposed)?;
     let merge_ms = merge_start.elapsed().as_millis();
@@ -283,14 +246,7 @@ pub fn execute_distributed_query(
     Ok(result)
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Execute a query locally on the shared DuckDB connection.
-///
-/// Used for queries without a FROM clause (e.g. `SELECT 1 AS val`) that do
-/// not need distribution across the cluster.
+/// Execute locally for queries without a FROM clause.
 fn execute_local_query(sql: &str) -> Result<QueryResult, String> {
     let conn_arc = crate::get_shared_connection().ok_or_else(|| {
         "Shared DuckDB connection not available (extension not initialised?)".to_string()
@@ -317,10 +273,7 @@ fn execute_local_query(sql: &str) -> Result<QueryResult, String> {
     Ok(QueryResult { schema, batches })
 }
 
-/// Extract the first table name from the FROM clause of a SQL statement.
-///
-/// Uses `sqlparser` with the generic dialect. Returns an error if the SQL
-/// cannot be parsed or does not contain a recognisable FROM clause.
+/// Extract the first table name from the FROM clause of a SQL SELECT.
 pub fn extract_table_name(sql: &str) -> Result<String, String> {
     use sqlparser::ast::Statement;
     use sqlparser::dialect::GenericDialect;
@@ -334,7 +287,6 @@ pub fn extract_table_name(sql: &str) -> Result<String, String> {
         return Err("Empty SQL statement".to_string());
     }
 
-    // Walk the first statement looking for a table reference.
     let stmt = &statements[0];
 
     match stmt {
@@ -343,7 +295,6 @@ pub fn extract_table_name(sql: &str) -> Result<String, String> {
     }
 }
 
-/// Recursively extract the first table name from a [`Query`] AST node.
 fn extract_table_from_query(query: &sqlparser::ast::Query) -> Result<String, String> {
     use sqlparser::ast::SetExpr;
 
@@ -353,7 +304,6 @@ fn extract_table_from_query(query: &sqlparser::ast::Query) -> Result<String, Str
                 if let Some(name) = extract_table_from_factor(&table_with_joins.relation) {
                     return Ok(name);
                 }
-                // Also check JOINs
                 for join in &table_with_joins.joins {
                     if let Some(name) = extract_table_from_factor(&join.relation) {
                         return Ok(name);
@@ -364,7 +314,6 @@ fn extract_table_from_query(query: &sqlparser::ast::Query) -> Result<String, Str
         }
         SetExpr::Query(inner) => extract_table_from_query(inner),
         SetExpr::SetOperation { left, .. } => {
-            // Try the left side of a UNION/INTERSECT/EXCEPT
             if let SetExpr::Select(select) = left.as_ref() {
                 for table_with_joins in &select.from {
                     if let Some(name) =
@@ -380,14 +329,12 @@ fn extract_table_from_query(query: &sqlparser::ast::Query) -> Result<String, Str
     }
 }
 
-/// Try to extract a plain table name from a [`TableFactor`].
 fn extract_table_from_factor(factor: &sqlparser::ast::TableFactor) -> Option<String> {
     use sqlparser::ast::TableFactor;
 
     match factor {
         TableFactor::Table { name, .. } => {
-            // ObjectName is a Vec<Ident>; take the last part as the table
-            // name (ignoring schema qualifiers for now).
+            // Last ident, ignoring schema qualifiers.
             name.0.last().map(|ident| ident.value.clone())
         }
         TableFactor::Derived { subquery, .. } => {
@@ -400,17 +347,12 @@ fn extract_table_from_factor(factor: &sqlparser::ast::TableFactor) -> Option<Str
     }
 }
 
-/// Merge per-node record batches into a single [`QueryResult`].
-///
-/// When the decomposed query has no aggregations, all batches are simply
-/// concatenated (UNION ALL semantics). When aggregations are present, the
-/// batches are loaded into a temporary DuckDB table (`_merged`) and the
-/// merge SQL is executed against it.
+/// Merge per-node batches: concatenate for non-aggregates, or load into
+/// DuckDB and run merge SQL for aggregates.
 pub fn merge_batches(
     node_batches: Vec<Vec<RecordBatch>>,
     decomposed: &DecomposedQuery,
 ) -> Result<QueryResult, String> {
-    // Flatten all batches from all nodes into a single list.
     let all_batches: Vec<RecordBatch> = node_batches
         .into_iter()
         .flat_map(|nb| nb.into_iter())
@@ -424,28 +366,21 @@ pub fn merge_batches(
         });
     }
 
-    // Determine the unified schema from the first batch.
     let schema = all_batches[0].schema();
 
     if !decomposed.has_aggregations {
-        // Simple case: just return all batches concatenated.
         return Ok(QueryResult {
             schema,
             batches: all_batches,
         });
     }
 
-    // --- Aggregation merge: use DuckDB to execute merge_sql ---
     merge_with_duckdb(&schema, all_batches, &decomposed.merge_sql)
 }
 
-/// Load record batches into DuckDB via the Arrow table function and execute
-/// the merge SQL to produce the final aggregated result.
-///
-/// The merge SQL references `_merged` as the source table.  We replace that
-/// reference with a `(SELECT * FROM arrow(?, ?))` subquery so that prepared
-/// parameters work (DuckDB does not allow prepared params in DDL like
-/// CREATE VIEW).
+/// Load batches into DuckDB via arrow(?,?) and run merge SQL.
+/// Replaces `_merged` with an inline arrow subquery (DuckDB doesn't allow
+/// prepared params in DDL).
 fn merge_with_duckdb(
     schema: &SchemaRef,
     batches: Vec<RecordBatch>,
@@ -453,12 +388,9 @@ fn merge_with_duckdb(
 ) -> Result<QueryResult, String> {
     use duckdb::vtab::arrow::{arrow_recordbatch_to_query_params, ArrowVTab};
 
-    // Concatenate all batches into a single RecordBatch so we can pass it
-    // through the Arrow FFI bridge as one unit.
     let merged_batch = concat_batches(schema, &batches)
         .map_err(|e| format!("Failed to concatenate record batches: {e}"))?;
 
-    // Obtain the shared DuckDB connection.
     let conn_arc = crate::get_shared_connection().ok_or_else(|| {
         "Shared DuckDB connection not available (extension not initialised?)".to_string()
     })?;
@@ -467,17 +399,11 @@ fn merge_with_duckdb(
         .lock()
         .map_err(|e| format!("Failed to lock shared connection: {e}"))?;
 
-    // Register the ArrowVTab so we can use `arrow(?, ?)`.
-    // Ignore error if already registered.
     let _ = conn.register_table_function::<ArrowVTab>("arrow");
 
-    // Replace the `_merged` table reference in the merge SQL with an inline
-    // arrow subquery.  This avoids CREATE VIEW which doesn't support prepared
-    // parameters.
-    let rewritten_sql = merge_sql.replacen(
+    let rewritten_sql = merge_sql.replace(
         "FROM _merged",
         "FROM (SELECT * FROM arrow(?, ?)) AS _merged",
-        1,
     );
 
     let params = arrow_recordbatch_to_query_params(merged_batch);
@@ -503,15 +429,9 @@ fn merge_with_duckdb(
     })
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // --- extract_table_name tests ---
 
     #[test]
     fn extract_simple_table() {
@@ -582,8 +502,6 @@ mod tests {
         .unwrap();
         assert_eq!(result, "orders");
     }
-
-    // --- merge_batches tests (non-aggregation) ---
 
     #[test]
     fn merge_empty_batches_no_agg() {

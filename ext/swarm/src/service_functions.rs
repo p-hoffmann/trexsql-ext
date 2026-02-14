@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Service visibility SQL functions
-// ---------------------------------------------------------------------------
-
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
     vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab},
@@ -15,16 +11,7 @@ use std::{
 
 use crate::gossip::GossipRegistry;
 
-// ---------------------------------------------------------------------------
-// ServiceInfo – parsed JSON from gossip `service:*` keys
-// ---------------------------------------------------------------------------
-
-/// Represents a service advertisement stored in gossip as JSON.
-///
-/// Expected JSON shape:
-/// ```json
-/// {"host":"0.0.0.0","port":50051,"status":"running","uptime":3600,"config":{}}
-/// ```
+/// Parsed gossip `service:*` JSON advertisement.
 #[derive(Debug, Clone)]
 pub struct ServiceInfo {
     pub host: String,
@@ -34,11 +21,7 @@ pub struct ServiceInfo {
     pub config: String,
 }
 
-/// Parse a JSON value from a gossip `service:*` key into a `ServiceInfo`.
-///
-/// Tolerant of missing or differently-typed fields — all fields fall back to
-/// sensible defaults so that partially-formed advertisements still produce
-/// rows.
+/// Tolerant parser -- missing fields fall back to defaults.
 pub fn parse_service_json(json: &str) -> Option<ServiceInfo> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
     let obj = v.as_object()?;
@@ -81,13 +64,8 @@ pub fn parse_service_json(json: &str) -> Option<ServiceInfo> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Helper: known start-service SQL mapping
-// ---------------------------------------------------------------------------
-
-/// Return the SQL statement that starts the given service extension by parsing
-/// a JSON config string.  Returns `Ok(None)` for unknown extensions,
-/// `Ok(Some(sql))` on success, or `Err` when the JSON is malformed.
+/// Map extension name + JSON config to the SQL that starts it.
+/// Returns `Ok(None)` for unknown extensions.
 pub fn get_start_service_sql(extension: &str, config_json: &str) -> Result<Option<String>, String> {
     let config: serde_json::Value = serde_json::from_str(config_json)
         .map_err(|e| format!("Invalid JSON config: {e}"))?;
@@ -153,13 +131,26 @@ pub fn get_start_service_sql(extension: &str, config_json: &str) -> Result<Optio
                 batch_size, batch_timeout_ms, retry_delay_ms, retry_max_attempts
             )))
         }
+        "distributed-scheduler" => {
+            let host = config["host"].as_str().unwrap_or("0.0.0.0");
+            let port = config["port"].as_u64().unwrap_or(50050);
+            Ok(Some(format!(
+                "SELECT swarm_start_distributed_scheduler('{host}', {port})"
+            )))
+        }
+        "distributed-executor" => {
+            let host = config["host"].as_str().unwrap_or("0.0.0.0");
+            let port = config["port"].as_u64().unwrap_or(50051);
+            let scheduler = config["scheduler_url"]
+                .as_str()
+                .unwrap_or("http://localhost:50050");
+            Ok(Some(format!(
+                "SELECT swarm_start_distributed_executor('{host}', {port}, '{scheduler}')"
+            )))
+        }
         _ => Ok(None),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Table function: swarm_services()
-// ---------------------------------------------------------------------------
 
 pub struct SwarmServicesTable;
 
@@ -217,7 +208,6 @@ impl VTab for SwarmServicesTable {
             }
         };
 
-        // Collect service rows: one row per (node, service:*) key.
         struct ServiceRow {
             node_name: String,
             service_name: String,
@@ -297,10 +287,6 @@ impl VTab for SwarmServicesTable {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Scalar: swarm_start_service(extension, config_json)
-// ---------------------------------------------------------------------------
-
 pub struct SwarmStartServiceScalar;
 
 impl VScalar for SwarmStartServiceScalar {
@@ -315,7 +301,6 @@ impl VScalar for SwarmStartServiceScalar {
             return Err("No input provided".into());
         }
 
-        // Read parameters: extension name + JSON config string
         let ext_vector = input.flat_vector(0);
         let cfg_vector = input.flat_vector(1);
 
@@ -331,7 +316,6 @@ impl VScalar for SwarmStartServiceScalar {
             .as_str()
             .to_string();
 
-        // Look up known SQL for this service extension
         let sql = match get_start_service_sql(&extension, &config_json) {
             Ok(Some(sql)) => sql,
             Ok(None) => {
@@ -350,7 +334,6 @@ impl VScalar for SwarmStartServiceScalar {
             }
         };
 
-        // Execute the start SQL via the shared connection
         let conn_arc = crate::get_shared_connection().ok_or("No shared connection")?;
         let conn = conn_arc
             .lock()
@@ -363,12 +346,10 @@ impl VScalar for SwarmStartServiceScalar {
             return Ok(());
         }
 
-        // Extract host/port from JSON for gossip registration
         let config: serde_json::Value = serde_json::from_str(&config_json).unwrap_or_default();
         let host = config["host"].as_str().unwrap_or("");
         let port = config["port"].as_u64().unwrap_or(0);
 
-        // Build the service JSON and publish to gossip
         let service_json = serde_json::json!({
             "host": host,
             "port": port,
@@ -408,10 +389,6 @@ impl VScalar for SwarmStartServiceScalar {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Scalar: swarm_stop_service(extension)
-// ---------------------------------------------------------------------------
-
 pub struct SwarmStopServiceScalar;
 
 impl VScalar for SwarmStopServiceScalar {
@@ -433,14 +410,8 @@ impl VScalar for SwarmStopServiceScalar {
             .as_str()
             .to_string();
 
-        // Mark the service as stopped in gossip.  We update the JSON to
-        // reflect a "stopped" status rather than removing the key entirely,
-        // so that `swarm_services()` can still show the entry until it is
-        // garbage-collected by gossip TTL.
+        // Update to "stopped" rather than removing, so swarm_services() still shows it.
         let gossip_key = format!("service:{}", extension);
-
-        // Try to read the existing service JSON so we can preserve host/port
-        // for display.  If the key does not exist we still mark it stopped.
         let existing_json = Self::read_own_service_key(&gossip_key);
 
         let stopped_json = match existing_json {
@@ -489,14 +460,8 @@ impl VScalar for SwarmStopServiceScalar {
 }
 
 impl SwarmStopServiceScalar {
-    /// Attempt to read the current service info for the given gossip key from
-    /// this node's own state.  Returns `None` if gossip is not running or the
-    /// key does not exist.
     fn read_own_service_key(gossip_key: &str) -> Option<ServiceInfo> {
         let nodes = GossipRegistry::instance().get_node_key_values().ok()?;
-        // The first entry whose node_name matches our own config, or simply
-        // look through all nodes for a matching key on *our* node.  Since
-        // `get_self_config` gives us our node_id, we use that to filter.
         let self_config = GossipRegistry::instance().get_self_config().ok()?;
         let self_node_id = self_config
             .iter()
@@ -515,10 +480,6 @@ impl SwarmStopServiceScalar {
         None
     }
 }
-
-// ---------------------------------------------------------------------------
-// Scalar: swarm_load(extension)
-// ---------------------------------------------------------------------------
 
 pub struct SwarmLoadScalar;
 
@@ -540,6 +501,12 @@ impl VScalar for SwarmLoadScalar {
         let extension = duckdb::types::DuckString::new(&mut { ext_slice[0] })
             .as_str()
             .to_string();
+
+        if !crate::catalog::is_valid_extension_name(&extension) {
+            let flat = output.flat_vector();
+            flat.insert(0, &format!("Invalid extension name: '{}'", extension));
+            return Ok(());
+        }
 
         let load_sql = format!("LOAD '{}.trex'", extension);
 
@@ -565,14 +532,6 @@ impl VScalar for SwarmLoadScalar {
         )]
     }
 }
-
-// ---------------------------------------------------------------------------
-// Scalar: swarm_register_service(name, host, port)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Scalar: swarm_set_key(key, value)
-// ---------------------------------------------------------------------------
 
 pub struct SwarmSetKeyScalar;
 
@@ -624,10 +583,6 @@ impl VScalar for SwarmSetKeyScalar {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Scalar: swarm_delete_key(key)
-// ---------------------------------------------------------------------------
-
 pub struct SwarmDeleteKeyScalar;
 
 impl VScalar for SwarmDeleteKeyScalar {
@@ -667,10 +622,6 @@ impl VScalar for SwarmDeleteKeyScalar {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Scalar: swarm_register_service(name, host, port)
-// ---------------------------------------------------------------------------
-
 pub struct SwarmRegisterServiceScalar;
 
 impl VScalar for SwarmRegisterServiceScalar {
@@ -707,8 +658,7 @@ impl VScalar for SwarmRegisterServiceScalar {
         }
         let port = port_raw as u16;
 
-        // Build and publish the service JSON to gossip — no actual server is
-        // started.  This allows ad-hoc registration of external services.
+        // Publish to gossip only (no server started). Allows ad-hoc registration.
         let service_json = serde_json::json!({
             "host": host,
             "port": port,
@@ -721,9 +671,7 @@ impl VScalar for SwarmRegisterServiceScalar {
         let gossip_key = format!("service:{}", name);
         let gossip_result = GossipRegistry::instance().set_key(&gossip_key, &service_json);
 
-        // When a flight service is registered, also advertise local tables
-        // and start the catalog refresh thread so that swarm_tables() and
-        // swarm_query() work in the manual startup flow.
+        // Flight registration also triggers catalog advertisement and refresh.
         if name == "flight" {
             let _ = crate::catalog::advertise_local_tables();
             let _ = crate::catalog::start_catalog_refresh();
