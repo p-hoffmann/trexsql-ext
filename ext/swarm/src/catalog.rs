@@ -1,76 +1,43 @@
-//! Distributed table catalog reader for the swarm extension.
-//!
-//! Reads catalog and service information from the gossip layer to resolve
-//! table names to data node endpoints.  Each data node publishes two kinds
-//! of gossip keys:
-//!
-//! - **`catalog:{table_name}`** — JSON value `{"rows": N, "schema_hash": H}`
-//!   indicating that the node holds a copy (or shard) of the named table.
-//! - **`service:flight`** — JSON value
-//!   `{"host": "...", "port": ..., "status": "running"}` advertising an
-//!   Arrow Flight SQL endpoint.
-//!
-//! The functions in this module combine these two pieces of information to
-//! produce [`CatalogEntry`] values that the query planner can use to decide
-//! which Flight endpoints to contact for a given table.
-//!
-//! # Gossip integration
-//!
-//! The [`GossipRegistry::get_node_key_values`] method returns every key-value
-//! pair published by every node known to the gossip layer.  This module is
-//! the primary consumer of that method, using the returned
-//! [`NodeKeyValueInfo`] values to build catalog entries.
+//! Distributed table catalog: resolves table names to node endpoints via gossip.
 
 use duckdb::arrow::array::Array as _;
 use duckdb::arrow::array::RecordBatch as DuckRecordBatch;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use crate::gossip::{GossipRegistry, NodeKeyValueInfo};
 use crate::logging::SwarmLogger;
 
-// ---------------------------------------------------------------------------
-// Data model
-// ---------------------------------------------------------------------------
+/// Escape a SQL identifier by doubling internal double-quotes.
+pub fn escape_identifier(name: &str) -> String {
+    name.replace('"', "\"\"")
+}
 
-/// A single catalog entry representing one table on one node.
-///
-/// A table that is replicated across three data nodes will produce three
-/// `CatalogEntry` values — one per node.  The `flight_endpoint` field is
-/// `Some` only when the node is also running a Flight SQL server.
+/// Validate that an extension name contains only alphanumeric, `_`, or `-` characters.
+pub fn is_valid_extension_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+}
+
+/// One table on one node; a replicated table produces one entry per node.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogEntry {
-    /// Human-readable node name (e.g. `"node-a"`).
     pub node_name: String,
-    /// UUID assigned to the node by the gossip layer.
     pub node_id: String,
-    /// Fully-qualified table name as published by the node.
     pub table_name: String,
-    /// Approximate row count reported by the node.
     pub approx_rows: u64,
-    /// Hash of the table schema; nodes with the same hash are assumed to
-    /// have compatible schemas.
+    /// Matching hashes across nodes implies compatible schemas.
     pub schema_hash: u64,
-    /// Flight SQL endpoint URL (e.g. `"http://10.0.0.1:8815"`), or `None`
-    /// if the node does not advertise a running Flight service.
     pub flight_endpoint: Option<String>,
 }
 
-// ---------------------------------------------------------------------------
-// Gossip value schemas
-// ---------------------------------------------------------------------------
-
-/// JSON payload stored under `catalog:{table_name}` gossip keys.
 #[derive(Debug, Deserialize)]
 struct CatalogValue {
     rows: u64,
     schema_hash: u64,
 }
 
-/// JSON payload stored under the `service:flight` gossip key.
 #[derive(Debug, Deserialize)]
 struct FlightServiceValue {
     host: String,
@@ -78,14 +45,6 @@ struct FlightServiceValue {
     status: String,
 }
 
-// ---------------------------------------------------------------------------
-// Pure catalog resolution (no gossip dependency)
-// ---------------------------------------------------------------------------
-
-/// Parse a `service:flight` JSON value into a Flight endpoint URL.
-///
-/// Returns `Some("http://{host}:{port}")` when the service status is
-/// `"running"`, or `None` otherwise.
 fn parse_flight_endpoint(json_value: &str) -> Option<String> {
     let svc: FlightServiceValue = serde_json::from_str(json_value).ok()?;
     if svc.status == "running" {
@@ -95,16 +54,10 @@ fn parse_flight_endpoint(json_value: &str) -> Option<String> {
     }
 }
 
-/// Parse a `catalog:{table}` JSON value into row count and schema hash.
 fn parse_catalog_value(json_value: &str) -> Option<CatalogValue> {
     serde_json::from_str(json_value).ok()
 }
 
-/// Resolve a single table across all nodes.
-///
-/// This is a pure function: it takes pre-fetched node key-value data and
-/// returns `CatalogEntry` values for every node that advertises the
-/// requested table.
 fn resolve_table_from_states(
     table_name: &str,
     nodes: &[NodeKeyValueInfo],
@@ -113,7 +66,6 @@ fn resolve_table_from_states(
     let mut entries = Vec::new();
 
     for node in nodes {
-        // Look for the catalog key.
         let catalog_json = node
             .key_values
             .iter()
@@ -139,7 +91,6 @@ fn resolve_table_from_states(
             }
         };
 
-        // Look for the flight service key.
         let flight_endpoint = node
             .key_values
             .iter()
@@ -159,21 +110,16 @@ fn resolve_table_from_states(
     entries
 }
 
-/// Collect all tables advertised across all nodes.
-///
-/// Pure function — see [`resolve_table_from_states`] for the pattern.
 fn get_all_tables_from_states(nodes: &[NodeKeyValueInfo]) -> Vec<CatalogEntry> {
     let mut entries = Vec::new();
 
     for node in nodes {
-        // Extract the flight endpoint once per node.
         let flight_endpoint = node
             .key_values
             .iter()
             .find(|(k, _)| k == "service:flight")
             .and_then(|(_, v)| parse_flight_endpoint(v));
 
-        // Iterate over all catalog:* keys.
         for (key, value) in &node.key_values {
             let table_name = match key.strip_prefix("catalog:") {
                 Some(name) if !name.is_empty() => name,
@@ -208,9 +154,6 @@ fn get_all_tables_from_states(nodes: &[NodeKeyValueInfo]) -> Vec<CatalogEntry> {
     entries
 }
 
-/// Build a deduplicated list of table names known across the cluster.
-///
-/// Returns table names in sorted order.
 fn list_table_names_from_states(nodes: &[NodeKeyValueInfo]) -> Vec<String> {
     let mut names: Vec<String> = nodes
         .iter()
@@ -224,24 +167,11 @@ fn list_table_names_from_states(nodes: &[NodeKeyValueInfo]) -> Vec<String> {
     names
 }
 
-// ---------------------------------------------------------------------------
-// Gossip-integrated public API
-// ---------------------------------------------------------------------------
-
-/// Fetch all node key-value data from the gossip layer.
 fn fetch_node_key_values() -> Result<Vec<NodeKeyValueInfo>, String> {
     GossipRegistry::instance().get_node_key_values()
 }
 
-/// Resolve a table name to the set of data nodes that hold it.
-///
-/// Returns one [`CatalogEntry`] per node that advertises the table via
-/// a `catalog:{table_name}` gossip key.  Each entry includes the Flight
-/// endpoint URL if the node is running a Flight SQL server.
-///
-/// # Errors
-///
-/// Returns `Err` if the gossip layer is not running.
+/// Resolve a table name to the set of nodes that hold it.
 pub fn resolve_table(table_name: &str) -> Result<Vec<CatalogEntry>, String> {
     let nodes = fetch_node_key_values()?;
 
@@ -268,14 +198,7 @@ pub fn resolve_table(table_name: &str) -> Result<Vec<CatalogEntry>, String> {
     Ok(entries)
 }
 
-/// Return catalog entries for every table advertised in the cluster.
-///
-/// Scans all gossip keys with the `catalog:` prefix across all nodes and
-/// returns a [`CatalogEntry`] for each (node, table) pair.
-///
-/// # Errors
-///
-/// Returns `Err` if the gossip layer is not running.
+/// Return catalog entries for every table in the cluster.
 pub fn get_all_tables() -> Result<Vec<CatalogEntry>, String> {
     let nodes = fetch_node_key_values()?;
 
@@ -304,21 +227,12 @@ pub fn get_all_tables() -> Result<Vec<CatalogEntry>, String> {
     Ok(entries)
 }
 
-/// Return a sorted, deduplicated list of all table names in the cluster.
-///
-/// # Errors
-///
-/// Returns `Err` if the gossip layer is not running.
+/// Return sorted, deduplicated table names across the cluster.
 pub fn list_tables() -> Result<Vec<String>, String> {
     let nodes = fetch_node_key_values()?;
     Ok(list_table_names_from_states(&nodes))
 }
 
-/// Group catalog entries by table name, returning a map from table name
-/// to the list of nodes that hold it.
-///
-/// This is a convenience wrapper around [`get_all_tables`] for callers
-/// that need a per-table view.
 pub fn tables_by_name() -> Result<HashMap<String, Vec<CatalogEntry>>, String> {
     let entries = get_all_tables()?;
     let mut map: HashMap<String, Vec<CatalogEntry>> = HashMap::new();
@@ -328,54 +242,39 @@ pub fn tables_by_name() -> Result<HashMap<String, Vec<CatalogEntry>>, String> {
     Ok(map)
 }
 
-// ---------------------------------------------------------------------------
-// Catalog advertising (write/publish side)
-// ---------------------------------------------------------------------------
-
-/// Compute a deterministic hash over an Arrow schema (standalone arrow crate).
-///
-/// The hash is computed from the concatenation of each field's name and
-/// data-type debug representation.  Two schemas with the same column names
-/// and types (in the same order) will produce the same hash.
+/// FNV-1a hash of field names and types. Stable across processes (unlike DefaultHasher).
 fn compute_schema_hash(schema: &arrow::datatypes::SchemaRef) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut hash: u64 = 0xcbf29ce484222325;
     for field in schema.fields() {
-        field.name().hash(&mut hasher);
-        format!("{:?}", field.data_type()).hash(&mut hasher);
+        for byte in field.name().bytes() {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        for byte in format!("{:?}", field.data_type()).bytes() {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
     }
-    hasher.finish()
+    hash
 }
 
-/// Compute a deterministic hash over a DuckDB Arrow schema.
-///
-/// This is the same algorithm as [`compute_schema_hash`] but accepts the
-/// `SchemaRef` re-exported by the `duckdb` crate, which may be a different
-/// arrow version than the standalone `arrow` dependency.
+/// FNV-1a schema hash for duckdb-reexported arrow types.
 fn compute_schema_hash_duckdb(schema: &duckdb::arrow::datatypes::SchemaRef) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut hash: u64 = 0xcbf29ce484222325;
     for field in schema.fields() {
-        field.name().hash(&mut hasher);
-        format!("{:?}", field.data_type()).hash(&mut hasher);
+        for byte in field.name().bytes() {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        for byte in format!("{:?}", field.data_type()).bytes() {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
     }
-    hasher.finish()
+    hash
 }
 
-/// Scan local DuckDB tables and publish `catalog:{table}` gossip keys.
-///
-/// For each table found via `SHOW TABLES`:
-/// 1. Executes `SELECT COUNT(*) FROM "{table}"` to get an approximate row
-///    count.
-/// 2. Computes a schema hash from the column metadata obtained via
-///    `SELECT * FROM "{table}" LIMIT 0`.
-/// 3. Publishes a `catalog:{table}` gossip key with a JSON payload
-///    containing the row count and schema hash.
-///
-/// Returns the number of tables successfully advertised.
-///
-/// # Errors
-///
-/// Returns `Err` if the shared DuckDB connection is unavailable or the
-/// gossip layer is not running.
+/// Publish `catalog:{table}` gossip keys for all local tables.
 pub fn advertise_local_tables() -> Result<usize, String> {
     let conn_arc = crate::get_shared_connection()
         .ok_or_else(|| "Shared DuckDB connection not available".to_string())?;
@@ -384,7 +283,6 @@ pub fn advertise_local_tables() -> Result<usize, String> {
         .lock()
         .map_err(|e| format!("Failed to lock shared connection: {e}"))?;
 
-    // Retrieve the list of table names via SHOW TABLES.
     let table_names: Vec<String> = {
         let mut stmt = conn
             .prepare("SHOW TABLES")
@@ -423,9 +321,8 @@ pub fn advertise_local_tables() -> Result<usize, String> {
     let mut count = 0;
 
     for table in &table_names {
-        // Get the row count.
         let row_count: u64 = {
-            let count_sql = format!("SELECT COUNT(*) FROM \"{}\"", table);
+            let count_sql = format!("SELECT COUNT(*) FROM \"{}\"", escape_identifier(table));
             let mut stmt = conn
                 .prepare(&count_sql)
                 .map_err(|e| format!("Failed to prepare COUNT for table '{}': {e}", table))?;
@@ -438,13 +335,11 @@ pub fn advertise_local_tables() -> Result<usize, String> {
             if let Some(batch) = batches.first() {
                 if batch.num_columns() > 0 && batch.num_rows() > 0 {
                     let col = batch.column(0);
-                    // COUNT(*) returns an i64 in DuckDB.
                     if let Some(arr) =
                         col.as_any().downcast_ref::<duckdb::arrow::array::Int64Array>()
                     {
                         arr.value(0) as u64
                     } else {
-                        // Fall back to string parsing.
                         let s =
                             duckdb::arrow::util::display::array_value_to_string(col, 0)
                                 .unwrap_or_default();
@@ -458,9 +353,8 @@ pub fn advertise_local_tables() -> Result<usize, String> {
             }
         };
 
-        // Get the schema hash by executing a zero-row query.
         let schema_hash: u64 = {
-            let schema_sql = format!("SELECT * FROM \"{}\" LIMIT 0", table);
+            let schema_sql = format!("SELECT * FROM \"{}\" LIMIT 0", escape_identifier(table));
             let mut stmt = conn
                 .prepare(&schema_sql)
                 .map_err(|e| format!("Failed to prepare schema query for '{}': {e}", table))?;
@@ -477,7 +371,6 @@ pub fn advertise_local_tables() -> Result<usize, String> {
             }
         };
 
-        // Publish the catalog key to gossip.
         let key = format!("catalog:{}", table);
         let value = format!(r#"{{"rows": {}, "schema_hash": {}}}"#, row_count, schema_hash);
 
@@ -509,14 +402,7 @@ pub fn advertise_local_tables() -> Result<usize, String> {
     Ok(count)
 }
 
-/// Remove all `catalog:*` gossip keys published by this node.
-///
-/// This is used when a node transitions from `data_node=true` to
-/// `data_node=false` so that other nodes no longer route queries to it.
-///
-/// # Errors
-///
-/// Returns `Err` if the gossip layer is not running.
+/// Remove all `catalog:*` gossip keys from this node.
 pub fn remove_catalog_keys() -> Result<usize, String> {
     let gossip = GossipRegistry::instance();
 
@@ -542,38 +428,18 @@ pub fn remove_catalog_keys() -> Result<usize, String> {
     Ok(count)
 }
 
-// ---------------------------------------------------------------------------
-// Periodic catalog refresh
-// ---------------------------------------------------------------------------
-
-/// Handle for the background catalog refresh thread.
-///
-/// The thread periodically calls [`advertise_local_tables`] to keep gossip
-/// keys up to date as local tables are created or dropped.
 struct CatalogRefreshHandle {
     stop_flag: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
-/// Process-wide singleton for the catalog refresh handle.
 static CATALOG_REFRESH: OnceLock<std::sync::Mutex<Option<CatalogRefreshHandle>>> = OnceLock::new();
 
 fn catalog_refresh_lock() -> &'static std::sync::Mutex<Option<CatalogRefreshHandle>> {
     CATALOG_REFRESH.get_or_init(|| std::sync::Mutex::new(None))
 }
 
-/// Spawn a background thread that periodically re-scans local tables and
-/// updates gossip catalog keys.
-///
-/// The refresh interval defaults to 30 seconds and can be overridden via
-/// the `SWARM_CATALOG_INTERVAL` environment variable (value in seconds).
-///
-/// Calling this function when a refresh thread is already running is a
-/// no-op and returns `Ok(())`.
-///
-/// # Errors
-///
-/// Returns `Err` if the background thread could not be spawned.
+/// Spawn a background thread that re-advertises local tables every `SWARM_CATALOG_INTERVAL` seconds (default 30). No-op if already running.
 pub fn start_catalog_refresh() -> Result<(), String> {
     let mut guard = catalog_refresh_lock()
         .lock()
@@ -638,10 +504,7 @@ pub fn start_catalog_refresh() -> Result<(), String> {
     Ok(())
 }
 
-/// Signal the background catalog refresh thread to stop.
-///
-/// Signal the background catalog refresh thread to stop and wait for it to
-/// exit (up to one refresh interval).
+/// Stop the background catalog refresh thread and wait for it to exit.
 pub fn stop_catalog_refresh() {
     let mut guard = match catalog_refresh_lock().lock() {
         Ok(g) => g,
@@ -665,15 +528,311 @@ pub fn stop_catalog_refresh() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+/// Register gossip-discovered tables in a DataFusion session. `local_only` restricts to this node.
+pub fn register_tables_in_datafusion(
+    ctx: &datafusion::execution::context::SessionContext,
+    local_only: bool,
+) -> Result<usize, String> {
+    use std::sync::Arc;
+    use crate::duckdb_table_provider::DuckDBTableProvider;
+    use crate::duckdb_sql_executor::DuckDBSQLExecutor;
+
+    let entries = get_all_tables()?;
+
+    let filtered: Vec<CatalogEntry> = if local_only {
+        let self_node_id = get_self_node_id();
+        match self_node_id {
+            Some(id) => entries.into_iter().filter(|e| e.node_id == id).collect(),
+            None => entries,
+        }
+    } else {
+        entries
+    };
+
+    let mut seen = std::collections::HashSet::new();
+    let unique_tables: Vec<CatalogEntry> = filtered
+        .into_iter()
+        .filter(|e| seen.insert(e.table_name.clone()))
+        .collect();
+
+    let executor = Arc::new(DuckDBSQLExecutor);
+    let mut count = 0;
+
+    for entry in &unique_tables {
+        let provider = match DuckDBTableProvider::new(&entry.table_name, Arc::clone(&executor)) {
+            Ok(p) => p,
+            Err(e) => {
+                SwarmLogger::warn(
+                    "catalog",
+                    &format!(
+                        "Failed to create TableProvider for '{}': {}",
+                        entry.table_name, e
+                    ),
+                );
+                continue;
+            }
+        };
+
+        if let Err(e) = ctx.register_table(&entry.table_name, Arc::new(provider)) {
+            SwarmLogger::warn(
+                "catalog",
+                &format!(
+                    "Failed to register '{}' in DataFusion: {}",
+                    entry.table_name, e
+                ),
+            );
+            continue;
+        }
+
+        count += 1;
+    }
+
+    SwarmLogger::debug(
+        "catalog",
+        &format!("Registered {} table(s) in DataFusion session", count),
+    );
+
+    Ok(count)
+}
+
+/// Resolve via gossip catalog, falling back to local tables.
+pub fn resolve_table_with_fallback(table_name: &str) -> Result<Vec<CatalogEntry>, String> {
+    match resolve_table(table_name) {
+        Ok(entries) if !entries.is_empty() => return Ok(entries),
+        Ok(_) => {}
+        Err(e) => return Err(e),
+    }
+
+    let conn_arc = crate::get_shared_connection()
+        .ok_or_else(|| format!(
+            "Table '{}' not found in distributed catalog or local database",
+            table_name,
+        ))?;
+
+    let conn = conn_arc
+        .lock()
+        .map_err(|e| format!("Failed to lock shared connection: {e}"))?;
+
+    let check_sql = format!("SELECT COUNT(*) FROM \"{}\"", escape_identifier(table_name));
+    match conn.prepare(&check_sql) {
+        Ok(mut stmt) => {
+            let batches: Vec<DuckRecordBatch> = stmt
+                .query_arrow([])
+                .map_err(|e| format!(
+                    "Table '{}' not found in distributed catalog or local database: {e}",
+                    table_name,
+                ))?
+                .collect();
+
+            let approx_rows = batches.first().and_then(|batch| {
+                if batch.num_columns() > 0 && batch.num_rows() > 0 {
+                    let col = batch.column(0);
+                    col.as_any()
+                        .downcast_ref::<duckdb::arrow::array::Int64Array>()
+                        .map(|arr| arr.value(0) as u64)
+                } else {
+                    None
+                }
+            }).unwrap_or(0);
+
+            SwarmLogger::debug(
+                "catalog",
+                &format!(
+                    "Table '{}' resolved via local fallback (rows={})",
+                    table_name, approx_rows,
+                ),
+            );
+
+            Ok(vec![CatalogEntry {
+                node_name: "local".to_string(),
+                node_id: "local".to_string(),
+                table_name: table_name.to_string(),
+                approx_rows,
+                schema_hash: 0,
+                flight_endpoint: None,
+            }])
+        }
+        Err(_) => Err(format!(
+            "Table '{}' not found in distributed catalog or local database",
+            table_name,
+        )),
+    }
+}
+
+/// Verify schema hash consistency across nodes for the given tables.
+pub fn validate_join_key_types(table_names: &[String]) -> Result<(), String> {
+    let nodes = fetch_node_key_values()?;
+    let all_entries = get_all_tables_from_states(&nodes);
+
+    let mut by_table: HashMap<&str, Vec<&CatalogEntry>> = HashMap::new();
+    for entry in &all_entries {
+        by_table.entry(&entry.table_name).or_default().push(entry);
+    }
+
+    for table_name in table_names {
+        let entries = match by_table.get(table_name.as_str()) {
+            Some(entries) => entries,
+            None => continue,
+        };
+
+        if entries.is_empty() {
+            continue;
+        }
+
+        let expected_hash = entries[0].schema_hash;
+        let mismatched: Vec<&str> = entries
+            .iter()
+            .filter(|e| e.schema_hash != expected_hash)
+            .map(|e| e.node_name.as_str())
+            .collect();
+
+        if !mismatched.is_empty() {
+            let first_node = &entries[0].node_name;
+            return Err(format!(
+                "Schema mismatch for table '{}': node '{}' has schema_hash 0x{:X} \
+                 but node(s) {} have different hashes",
+                table_name,
+                first_node,
+                expected_hash,
+                mismatched
+                    .iter()
+                    .map(|n| format!("'{}'", n))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Look up the approximate row count for a table from the gossip catalog.
+/// Returns `None` if the table is not found or gossip is unavailable.
+pub fn get_table_row_count(table_name: &str) -> Option<u64> {
+    let entries = resolve_table(table_name).ok()?;
+    // Sum across all nodes (for sharded tables) or return the single entry.
+    if entries.is_empty() {
+        return None;
+    }
+    Some(entries.iter().map(|e| e.approx_rows).sum())
+}
+
+pub fn get_self_node_id() -> Option<String> {
+    let config = GossipRegistry::instance().get_self_config().ok()?;
+    config
+        .into_iter()
+        .find(|(k, _)| k == "node_id")
+        .map(|(_, v)| v)
+}
+
+/// One shard of a distributed table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShardInfo {
+    pub node_name: String,
+    pub flight_endpoint: String,
+}
+
+/// How a table is routed in the distributed session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TableClassification {
+    Local,
+    RemoteUnique {
+        node_name: String,
+        flight_endpoint: String,
+    },
+    Sharded { shards: Vec<ShardInfo> },
+}
+
+/// Classify all cluster tables relative to the local node.
+pub fn classify_tables() -> Result<HashMap<String, TableClassification>, String> {
+    let nodes = fetch_node_key_values()?;
+    let self_node_id = get_self_node_id();
+    Ok(classify_tables_from_states(&nodes, self_node_id.as_deref()))
+}
+
+pub fn classify_tables_from_states(
+    nodes: &[NodeKeyValueInfo],
+    self_node_id: Option<&str>,
+) -> HashMap<String, TableClassification> {
+    let entries = get_all_tables_from_states(nodes);
+
+    let mut by_table: HashMap<String, Vec<&CatalogEntry>> = HashMap::new();
+    for entry in &entries {
+        by_table.entry(entry.table_name.clone()).or_default().push(entry);
+    }
+
+    let mut result = HashMap::new();
+
+    for (table_name, table_entries) in by_table {
+        if table_entries.len() == 1 {
+            let entry = &table_entries[0];
+            let is_local = self_node_id
+                .map(|id| entry.node_id == id)
+                .unwrap_or(true);
+
+            if is_local {
+                result.insert(table_name, TableClassification::Local);
+            } else if let Some(ref ep) = entry.flight_endpoint {
+                result.insert(
+                    table_name,
+                    TableClassification::RemoteUnique {
+                        node_name: entry.node_name.clone(),
+                        flight_endpoint: ep.clone(),
+                    },
+                );
+            } else {
+                // Remote node without Flight — treat as local fallback
+                result.insert(table_name, TableClassification::Local);
+            }
+        } else {
+            let shards: Vec<ShardInfo> = table_entries
+                .iter()
+                .filter_map(|e| {
+                    e.flight_endpoint.as_ref().map(|ep| ShardInfo {
+                        node_name: e.node_name.clone(),
+                        flight_endpoint: ep.clone(),
+                    })
+                })
+                .collect();
+
+            if shards.len() > 1 {
+                result.insert(table_name, TableClassification::Sharded { shards });
+            } else if shards.len() == 1 {
+                // Only one node has Flight — treat as remote unique
+                let shard = &shards[0];
+                let is_local = self_node_id
+                    .map(|id| {
+                        table_entries
+                            .iter()
+                            .any(|e| e.node_id == id && e.flight_endpoint.is_some())
+                    })
+                    .unwrap_or(false);
+
+                if is_local {
+                    result.insert(table_name, TableClassification::Local);
+                } else {
+                    result.insert(
+                        table_name,
+                        TableClassification::RemoteUnique {
+                            node_name: shard.node_name.clone(),
+                            flight_endpoint: shard.flight_endpoint.clone(),
+                        },
+                    );
+                }
+            } else {
+                // No Flight endpoints at all — local fallback
+                result.insert(table_name, TableClassification::Local);
+            }
+        }
+    }
+
+    result
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Build a `NodeKeyValueInfo` with the given keys for testing.
     fn make_node(
         node_id: &str,
         node_name: &str,
@@ -697,8 +856,6 @@ mod tests {
     fn flight_json(host: &str, port: u16, status: &str) -> String {
         format!(r#"{{"host": "{host}", "port": {port}, "status": "{status}"}}"#)
     }
-
-    // -- parse_flight_endpoint -----------------------------------------------
 
     #[test]
     fn parse_flight_endpoint_running() {
@@ -725,8 +882,6 @@ mod tests {
         assert_eq!(parse_flight_endpoint(""), None);
     }
 
-    // -- parse_catalog_value -------------------------------------------------
-
     #[test]
     fn parse_catalog_value_valid() {
         let json = catalog_json(42_000, 0xDEAD);
@@ -739,8 +894,6 @@ mod tests {
     fn parse_catalog_value_invalid() {
         assert!(parse_catalog_value("nope").is_none());
     }
-
-    // -- resolve_table_from_states -------------------------------------------
 
     #[test]
     fn resolve_table_single_node() {
@@ -847,8 +1000,6 @@ mod tests {
         assert!(entries.is_empty());
     }
 
-    // -- get_all_tables_from_states ------------------------------------------
-
     #[test]
     fn get_all_tables_multiple_nodes_and_tables() {
         let flt_a = flight_json("10.0.0.1", 8815, "running");
@@ -878,7 +1029,6 @@ mod tests {
         let entries = get_all_tables_from_states(&nodes);
         assert_eq!(entries.len(), 3);
 
-        // node-a has orders + lineitem, node-b has orders
         let orders: Vec<_> = entries
             .iter()
             .filter(|e| e.table_name == "orders")
@@ -919,8 +1069,6 @@ mod tests {
         assert!(entries.is_empty());
     }
 
-    // -- list_table_names_from_states ----------------------------------------
-
     #[test]
     fn list_table_names_deduplicates_and_sorts() {
         let nodes = vec![
@@ -949,8 +1097,6 @@ mod tests {
         assert!(names.is_empty());
     }
 
-    // -- CatalogEntry --------------------------------------------------------
-
     #[test]
     fn catalog_entry_clone_and_debug() {
         let entry = CatalogEntry {
@@ -965,11 +1111,8 @@ mod tests {
         let cloned = entry.clone();
         assert_eq!(entry, cloned);
 
-        // Debug impl should not panic.
         let _ = format!("{:?}", entry);
     }
-
-    // -- compute_schema_hash -------------------------------------------------
 
     #[test]
     fn compute_schema_hash_deterministic() {
@@ -1031,7 +1174,6 @@ mod tests {
         use std::sync::Arc;
 
         let schema = Arc::new(Schema::empty());
-        // Should not panic; the exact value is not important.
         let _h = compute_schema_hash(&schema);
     }
 
@@ -1056,44 +1198,282 @@ mod tests {
         );
     }
 
-    // -- catalog_refresh_lock initialization ---------------------------------
-
     #[test]
     fn catalog_refresh_lock_initializes() {
-        // Just verify the singleton initializes without panicking.
         let lock = catalog_refresh_lock();
         let guard = lock.lock().unwrap();
-        // Initially no handle is present (unless another test started one).
-        // We just verify the lock works.
         drop(guard);
     }
 
-    // -- stop_catalog_refresh when not running -------------------------------
-
     #[test]
     fn stop_catalog_refresh_when_not_running_does_not_panic() {
-        // Calling stop when nothing is running should be a no-op.
         stop_catalog_refresh();
     }
 
-    // -- advertise_local_tables requires connection --------------------------
-
     #[test]
     fn advertise_local_tables_without_connection() {
-        // When no shared connection is stored, should return an error.
-        // Note: this test relies on SHARED_CONNECTION not being set in the
-        // test binary.  If another test stores a connection first, this
-        // will still pass because the gossip layer will not be running.
         let result = advertise_local_tables();
         assert!(result.is_err());
     }
 
-    // -- remove_catalog_keys requires gossip --------------------------------
-
     #[test]
     fn remove_catalog_keys_without_gossip() {
-        // When gossip is not running, should return an error.
         let result = remove_catalog_keys();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_matching_schemas_succeeds() {
+        let hash = 0xABCD;
+        let nodes = vec![
+            make_node(
+                "id-a",
+                "node-a",
+                vec![("catalog:orders", &catalog_json(100, hash))],
+            ),
+            make_node(
+                "id-b",
+                "node-b",
+                vec![("catalog:orders", &catalog_json(200, hash))],
+            ),
+        ];
+
+        let all_entries = get_all_tables_from_states(&nodes);
+
+        let mut by_table: HashMap<&str, Vec<&CatalogEntry>> = HashMap::new();
+        for entry in &all_entries {
+            by_table.entry(&entry.table_name).or_default().push(entry);
+        }
+
+        let table_names = vec!["orders".to_string()];
+        let mut ok = true;
+        for name in &table_names {
+            if let Some(entries) = by_table.get(name.as_str()) {
+                let expected = entries[0].schema_hash;
+                if entries.iter().any(|e| e.schema_hash != expected) {
+                    ok = false;
+                }
+            }
+        }
+        assert!(ok, "All nodes have the same schema_hash; validation should pass");
+    }
+
+    #[test]
+    fn validate_mismatched_schemas_fails() {
+        let nodes = vec![
+            make_node(
+                "id-a",
+                "node-a",
+                vec![("catalog:orders", &catalog_json(100, 0xAAAA))],
+            ),
+            make_node(
+                "id-b",
+                "node-b",
+                vec![("catalog:orders", &catalog_json(200, 0xBBBB))],
+            ),
+        ];
+
+        let all_entries = get_all_tables_from_states(&nodes);
+
+        let mut by_table: HashMap<&str, Vec<&CatalogEntry>> = HashMap::new();
+        for entry in &all_entries {
+            by_table.entry(&entry.table_name).or_default().push(entry);
+        }
+
+        let table_names = vec!["orders".to_string()];
+        let mut mismatch_table: Option<String> = None;
+        for name in &table_names {
+            if let Some(entries) = by_table.get(name.as_str()) {
+                let expected = entries[0].schema_hash;
+                if entries.iter().any(|e| e.schema_hash != expected) {
+                    mismatch_table = Some(name.clone());
+                }
+            }
+        }
+        assert!(
+            mismatch_table.is_some(),
+            "Should detect schema mismatch across nodes",
+        );
+        assert_eq!(mismatch_table.unwrap(), "orders");
+    }
+
+    #[test]
+    fn resolve_fallback_returns_error_for_missing_table() {
+        let result = resolve_table_with_fallback("nonexistent_table");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn escape_identifier_no_quotes() {
+        assert_eq!(escape_identifier("orders"), "orders");
+    }
+
+    #[test]
+    fn escape_identifier_with_quotes() {
+        assert_eq!(escape_identifier(r#"my"table"#), r#"my""table"#);
+    }
+
+    #[test]
+    fn escape_identifier_empty() {
+        assert_eq!(escape_identifier(""), "");
+    }
+
+    #[test]
+    fn is_valid_extension_name_valid() {
+        assert!(is_valid_extension_name("flight"));
+        assert!(is_valid_extension_name("my_ext"));
+        assert!(is_valid_extension_name("ext-name"));
+        assert!(is_valid_extension_name("ext123"));
+    }
+
+    #[test]
+    fn is_valid_extension_name_invalid() {
+        assert!(!is_valid_extension_name(""));
+        assert!(!is_valid_extension_name("ext.trex"));
+        assert!(!is_valid_extension_name("ext;drop"));
+        assert!(!is_valid_extension_name("ext name"));
+        assert!(!is_valid_extension_name("ext'name"));
+    }
+
+    #[test]
+    fn compute_schema_hash_stable_across_calls() {
+        use arrow::datatypes::{DataType, Field, Schema};
+        use std::sync::Arc;
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+
+        let h1 = compute_schema_hash(&schema);
+        let h2 = compute_schema_hash(&schema);
+        let h3 = compute_schema_hash(&schema);
+        assert_eq!(h1, h2);
+        assert_eq!(h2, h3);
+        assert_ne!(h1, 0);
+    }
+
+    #[test]
+    fn classify_local_only_table() {
+        let cat = catalog_json(100, 1);
+        let flt = flight_json("10.0.0.1", 8815, "running");
+        let nodes = vec![make_node(
+            "id-a",
+            "node-a",
+            vec![("catalog:orders", &cat), ("service:flight", &flt)],
+        )];
+
+        let result = classify_tables_from_states(&nodes, Some("id-a"));
+        assert_eq!(result.get("orders"), Some(&TableClassification::Local));
+    }
+
+    #[test]
+    fn classify_remote_unique_table() {
+        let cat = catalog_json(100, 1);
+        let flt = flight_json("10.0.0.2", 8815, "running");
+        let nodes = vec![make_node(
+            "id-b",
+            "node-b",
+            vec![("catalog:orders", &cat), ("service:flight", &flt)],
+        )];
+
+        let result = classify_tables_from_states(&nodes, Some("id-a"));
+        assert_eq!(
+            result.get("orders"),
+            Some(&TableClassification::RemoteUnique {
+                node_name: "node-b".to_string(),
+                flight_endpoint: "http://10.0.0.2:8815".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn classify_sharded_table() {
+        let cat = catalog_json(500, 42);
+        let flt_a = flight_json("10.0.0.1", 8815, "running");
+        let flt_b = flight_json("10.0.0.2", 8815, "running");
+
+        let nodes = vec![
+            make_node(
+                "id-a",
+                "node-a",
+                vec![("catalog:orders", &cat), ("service:flight", &flt_a)],
+            ),
+            make_node(
+                "id-b",
+                "node-b",
+                vec![("catalog:orders", &cat), ("service:flight", &flt_b)],
+            ),
+        ];
+
+        let result = classify_tables_from_states(&nodes, Some("id-a"));
+        match result.get("orders") {
+            Some(TableClassification::Sharded { shards }) => {
+                assert_eq!(shards.len(), 2);
+                let endpoints: Vec<&str> = shards.iter().map(|s| s.flight_endpoint.as_str()).collect();
+                assert!(endpoints.contains(&"http://10.0.0.1:8815"));
+                assert!(endpoints.contains(&"http://10.0.0.2:8815"));
+            }
+            other => panic!("Expected Sharded, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn classify_mixed_tables() {
+        let cat = catalog_json(100, 1);
+        let flt_a = flight_json("10.0.0.1", 8815, "running");
+        let flt_b = flight_json("10.0.0.2", 8815, "running");
+
+        let nodes = vec![
+            make_node(
+                "id-a",
+                "node-a",
+                vec![
+                    ("catalog:local_table", &cat),
+                    ("catalog:shared_table", &cat),
+                    ("service:flight", &flt_a),
+                ],
+            ),
+            make_node(
+                "id-b",
+                "node-b",
+                vec![
+                    ("catalog:remote_table", &cat),
+                    ("catalog:shared_table", &cat),
+                    ("service:flight", &flt_b),
+                ],
+            ),
+        ];
+
+        let result = classify_tables_from_states(&nodes, Some("id-a"));
+        assert_eq!(result.get("local_table"), Some(&TableClassification::Local));
+        assert_eq!(
+            result.get("remote_table"),
+            Some(&TableClassification::RemoteUnique {
+                node_name: "node-b".to_string(),
+                flight_endpoint: "http://10.0.0.2:8815".to_string(),
+            })
+        );
+        assert!(matches!(result.get("shared_table"), Some(TableClassification::Sharded { .. })));
+    }
+
+    #[test]
+    fn classify_empty_cluster() {
+        let result = classify_tables_from_states(&[], Some("id-a"));
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn classify_no_self_node_id_treats_as_local() {
+        let cat = catalog_json(100, 1);
+        let flt = flight_json("10.0.0.1", 8815, "running");
+        let nodes = vec![make_node(
+            "id-a",
+            "node-a",
+            vec![("catalog:orders", &cat), ("service:flight", &flt)],
+        )];
+
+        let result = classify_tables_from_states(&nodes, None);
+        assert_eq!(result.get("orders"), Some(&TableClassification::Local));
     }
 }

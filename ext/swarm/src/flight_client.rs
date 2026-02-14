@@ -2,22 +2,13 @@ use arrow::array::RecordBatch;
 use arrow::datatypes::SchemaRef;
 use arrow_flight::decode::FlightRecordBatchStream;
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::Ticket;
+use arrow_flight::{Action, Ticket};
 use futures::TryStreamExt;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 
 use crate::logging::SwarmLogger;
 
-// ---------------------------------------------------------------------------
-// FlightClient
-// ---------------------------------------------------------------------------
-
-/// A lightweight wrapper around an Arrow Flight gRPC client that connects to
-/// a remote DuckDB Flight server and executes SQL queries via the DoGet RPC.
-///
-/// Each `FlightClient` holds an open gRPC channel to a single endpoint.
-/// The channel is established once during [`FlightClient::connect`] and
-/// reused for all subsequent queries.
+/// Arrow Flight gRPC client for executing SQL queries via DoGet.
 #[derive(Debug)]
 pub struct FlightClient {
     endpoint: String,
@@ -25,9 +16,6 @@ pub struct FlightClient {
 }
 
 impl FlightClient {
-    /// Open a gRPC channel to `endpoint` and return a ready-to-use client.
-    ///
-    /// The endpoint should include the scheme, e.g. `"http://10.0.0.1:50051"`.
     pub async fn connect(endpoint: &str) -> Result<Self, String> {
         SwarmLogger::debug(
             "flight-client",
@@ -53,17 +41,7 @@ impl FlightClient {
         })
     }
 
-    /// Open a gRPC channel to `endpoint` with mutual TLS (mTLS) and return a
-    /// ready-to-use client.
-    ///
-    /// The caller supplies paths to:
-    /// * `cert_path` / `key_path` -- the client's own certificate and private
-    ///   key (PEM-encoded).  These are presented to the server during the TLS
-    ///   handshake so that the server can authenticate the client.
-    /// * `ca_cert_path` -- the CA certificate (PEM-encoded) used to verify the
-    ///   server's identity.
-    ///
-    /// The endpoint should use the `https://` scheme.
+    /// Connect with mutual TLS (mTLS). Endpoint should use `https://`.
     pub async fn connect_with_tls(
         endpoint: &str,
         cert_path: &str,
@@ -110,11 +88,7 @@ impl FlightClient {
         })
     }
 
-    /// Execute a SQL query on the connected Flight server via DoGet.
-    ///
-    /// The query is encoded as a JSON ticket: `{"query": "<sql>"}`.
-    /// All returned `RecordBatch`es are collected into a `Vec` along with
-    /// the schema extracted from the Flight stream.
+    /// Execute SQL via DoGet with a JSON ticket `{"query": "<sql>"}`.
     pub async fn execute_query(
         &mut self,
         sql: &str,
@@ -140,7 +114,6 @@ impl FlightClient {
         );
 
         let mut batches: Vec<RecordBatch> = Vec::new();
-        let mut schema: Option<SchemaRef> = None;
 
         futures::pin_mut!(flight_stream);
 
@@ -150,18 +123,16 @@ impl FlightClient {
                 self.endpoint
             )
         })? {
-            if schema.is_none() {
-                schema = Some(batch.schema());
-            }
             batches.push(batch);
         }
 
-        let schema = schema.ok_or_else(|| {
-            format!(
-                "Failed to decode Flight response from {}: empty response with no schema",
-                self.endpoint
-            )
-        })?;
+        // The stream parses the schema from the first Flight message
+        // (even for 0-row results where no RecordBatch is yielded).
+        let schema = flight_stream
+            .schema()
+            .cloned()
+            .or_else(|| batches.first().map(|b| b.schema()))
+            .unwrap_or_else(|| std::sync::Arc::new(arrow::datatypes::Schema::empty()));
 
         SwarmLogger::debug(
             "flight-client",
@@ -175,39 +146,81 @@ impl FlightClient {
 
         Ok((schema, batches))
     }
+
+    /// Execute a Flight action (e.g. DDL/DML via "query") and return the response body.
+    pub async fn do_action(&mut self, action_type: &str, body: &str) -> Result<String, String> {
+        SwarmLogger::debug(
+            "flight-client",
+            &format!("DoAction '{}' on {}: {body}", action_type, self.endpoint),
+        );
+
+        let action = Action {
+            r#type: action_type.to_string(),
+            body: body.as_bytes().to_vec().into(),
+        };
+
+        let mut response = self
+            .client
+            .do_action(action)
+            .await
+            .map_err(|e| format!("DoAction '{}' failed on {}: {e}", action_type, self.endpoint))?
+            .into_inner();
+
+        let result_body = if let Some(result) = response
+            .message()
+            .await
+            .map_err(|e| format!("Failed to read DoAction response from {}: {e}", self.endpoint))?
+        {
+            String::from_utf8(result.body.to_vec())
+                .unwrap_or_else(|_| "<non-utf8 response>".to_string())
+        } else {
+            String::new()
+        };
+
+        SwarmLogger::debug(
+            "flight-client",
+            &format!("DoAction '{}' on {} succeeded", action_type, self.endpoint),
+        );
+
+        Ok(result_body)
+    }
 }
 
-// ---------------------------------------------------------------------------
-// Convenience helper
-// ---------------------------------------------------------------------------
+/// One-shot: connect, execute SQL remotely via DoAction("query"). Must be called within tokio.
+pub async fn execute_remote_sql(endpoint: &str, sql: &str) -> Result<(), String> {
+    let mut client = FlightClient::connect(endpoint).await?;
+    let body = serde_json::json!({ "query": sql }).to_string();
+    client.do_action("query", &body).await?;
+    Ok(())
+}
 
-/// One-shot helper: connect to `endpoint`, execute `sql`, and return the
-/// resulting record batches.
-///
-/// This is the simplest entry-point for callers that do not need to reuse a
-/// connection across multiple queries.
-///
-/// # Async runtime
-///
-/// This function is `async` and must be called within a tokio context.  When
-/// calling from synchronous DuckDB extension code, wrap the call with the
-/// tokio runtime handle, e.g. `runtime.block_on(query_node(endpoint, sql))`.
+/// One-shot: trigger catalog refresh on a remote node.
+pub async fn refresh_remote_catalog(endpoint: &str) -> Result<(), String> {
+    let mut client = FlightClient::connect(endpoint).await?;
+    client.do_action("refresh_catalog", "{}").await?;
+    Ok(())
+}
+
+/// One-shot: connect, execute, return batches. Must be called within tokio.
 pub async fn query_node(endpoint: &str, sql: &str) -> Result<Vec<RecordBatch>, String> {
     let mut client = FlightClient::connect(endpoint).await?;
     let (_schema, batches) = client.execute_query(sql).await?;
     Ok(batches)
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+/// One-shot: connect, execute, return schema and batches.
+pub async fn query_node_with_schema(
+    endpoint: &str,
+    sql: &str,
+) -> Result<(SchemaRef, Vec<RecordBatch>), String> {
+    let mut client = FlightClient::connect(endpoint).await?;
+    client.execute_query(sql).await
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Verifies that connecting to a non-existent server produces the
-    /// expected error message format.
     #[tokio::test]
     async fn connect_to_invalid_endpoint_fails() {
         let result = FlightClient::connect("http://127.0.0.1:1").await;
@@ -219,7 +232,6 @@ mod tests {
         );
     }
 
-    /// Verifies that a completely invalid URI is caught early.
     #[tokio::test]
     async fn connect_to_malformed_uri_fails() {
         let result = FlightClient::connect("not a uri").await;
@@ -231,7 +243,6 @@ mod tests {
         );
     }
 
-    /// Verifies query_node surfaces connection errors.
     #[tokio::test]
     async fn query_node_connection_error() {
         let result = query_node("http://127.0.0.1:1", "SELECT 1").await;
