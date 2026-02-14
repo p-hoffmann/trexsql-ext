@@ -118,7 +118,22 @@ jobs:
           else
             jq --arg v "-$(date +%s)-$GITHUB_SHA" '.version+=$v' package.json > tmppkg; mv tmppkg package.json
           fi
-      - name: Set up Java 17
+      - name: Set up Rust toolchain
+        if: matrix.PKGPATH == './ext/bao'
+        uses: dtolnay/rust-toolchain@stable
+      - name: Download libtrexsql and build native library
+        if: matrix.PKGPATH == './ext/bao'
+        run: |
+          mkdir -p /tmp/trexsql
+          wget -q -O /tmp/libtrexsql.zip \
+            https://github.com/p-hoffmann/trexsql-rs/releases/download/v1.4.4-trex/libtrexsql-linux-amd64.zip
+          unzip -o /tmp/libtrexsql.zip -d /tmp/trexsql
+          ln -sf /tmp/trexsql/libtrexsql.so /tmp/trexsql/libduckdb.so
+          TREXSQL_LIB_DIR=/tmp/trexsql cargo build --release
+          mkdir -p ext/bao/java/resources/linux-x86-64
+          cp target/release/libtrexsql_engine.so ext/bao/java/resources/linux-x86-64/
+          cp /tmp/trexsql/libtrexsql.so ext/bao/java/resources/linux-x86-64/libduckdb.so
+      - name: Set up Java 21
         if: matrix.PKGPATH == './ext/bao'
         uses: actions/setup-java@v4
         with:

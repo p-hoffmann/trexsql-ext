@@ -30,7 +30,7 @@
         cache-dir (File. cache-path)
         jobs-file (File. cache-dir (str jobs-db-name ".db"))
         file-path (.getAbsolutePath jobs-file)
-        conn-hash (System/identityHashCode (:connection trexsql-db))]
+        conn-hash (System/identityHashCode (:handle trexsql-db))]
     (when (not= conn-hash (get @jobs-db-initialized file-path))
       (when-not (.exists cache-dir)
         (.mkdirs cache-dir))

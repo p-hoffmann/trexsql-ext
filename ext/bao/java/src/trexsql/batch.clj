@@ -3,6 +3,7 @@
    Implements streaming data transfer from JDBC sources to TrexSQL cache files
    with progress reporting and resume capability."
   (:require [trexsql.db :as db]
+            [trexsql.native :as native]
             [trexsql.jobs :as jobs]
             [trexsql.jdbc-types :as jdbc-types]
             [trexsql.errors :as errors]
@@ -11,7 +12,7 @@
             [honey.sql :as sql])
   (:import [java.sql Connection DriverManager PreparedStatement ResultSet ResultSetMetaData SQLException]
            [java.util Properties HashMap]
-           [org.trex TrexSQLConnection TrexSQLAppender]
+           [com.sun.jna Pointer]
            [java.io File]
            [com.zaxxer.hikari HikariConfig HikariDataSource]))
 
@@ -178,24 +179,24 @@
     (db/execute! trexsql-db ddl)))
 
 (defn copy-rows-batched!
-  "Copy rows from ResultSet to TrexSQL using Appender API.
+  "Copy rows from ResultSet to TrexSQL using native Appender API.
    Returns total rows copied.
    progress-fn is called with {:phase :row-progress :table :rows-processed :estimated-rows}"
-  [^TrexSQLConnection trexsql-conn schema table-name ^ResultSet rs columns config progress-fn]
+  [^Pointer db-handle schema table-name ^ResultSet rs columns config progress-fn]
   (let [batch-size (or (:batch-size config) default-batch-size)
         progress-interval (or (:progress-interval config) default-progress-interval)
-        estimated-rows (:estimated-rows config)]
-    (with-open [appender (.createAppender trexsql-conn schema table-name)]
+        estimated-rows (:estimated-rows config)
+        appender (native/appender-create db-handle schema table-name)]
+    (try
       (loop [total 0]
         (if (.next rs)
           (do
-            (.beginRow appender)
             (doseq [[idx col] (map-indexed vector columns)]
               (let [value (jdbc-types/read-typed-value rs (inc idx) (:trexsql-type col))]
                 (jdbc-types/append-typed-value! appender value (:trexsql-type col))))
-            (.endRow appender)
+            (native/appender-end-row! appender)
             (when (zero? (mod (inc total) batch-size))
-              (.flush appender))
+              (native/appender-flush! appender))
             (when (and progress-fn (zero? (mod (inc total) progress-interval)))
               (progress-fn {:phase :row-progress
                             :table table-name
@@ -203,8 +204,10 @@
                             :estimated-rows estimated-rows}))
             (recur (inc total)))
           (do
-            (.flush appender)
-            total))))))
+            (native/appender-flush! appender)
+            total)))
+      (finally
+        (native/appender-close! appender)))))
 
 (declare copy-table-jdbc-impl)
 
@@ -216,21 +219,18 @@
    (with-trexsql-transaction [trexsql-db]
      (do-work ...))"
   [[db-sym] & body]
-  `(let [conn# (db/get-raw-connection ~db-sym)
-         auto-commit# (.getAutoCommit conn#)]
+  `(let [handle# (db/get-raw-handle ~db-sym)]
+     (native/execute! handle# "BEGIN TRANSACTION")
      (try
-       (.setAutoCommit conn# false)
        (let [result# (do ~@body)]
-         (.commit conn#)
+         (native/execute! handle# "COMMIT")
          result#)
        (catch Exception e#
          (try
-           (.rollback conn#)
+           (native/execute! handle# "ROLLBACK")
            (catch Exception rollback-err#
              (log/warn (format "Rollback failed: %s" (.getMessage rollback-err#)))))
-         (throw e#))
-       (finally
-         (.setAutoCommit conn# auto-commit#)))))
+         (throw e#)))))
 
 (defn copy-table-with-transaction
   "Copy a table within a TrexSQL transaction.
@@ -266,9 +266,9 @@
 
           (with-open [rs (.executeQuery stmt)]
             (let [columns (jdbc-types/get-column-info (.getMetaData rs))
-                  trexsql-conn ^TrexSQLConnection (db/get-raw-connection trexsql-db)]
+                  db-handle (db/get-raw-handle trexsql-db)]
               (create-table-schema! trexsql-db cache-alias table-name columns)
-              (let [rows-copied (copy-rows-batched! trexsql-conn cache-alias table-name rs columns config progress-fn)
+              (let [rows-copied (copy-rows-batched! db-handle cache-alias table-name rs columns config progress-fn)
                     duration-ms (- (System/currentTimeMillis) start-time)]
                 {:success? true
                  :table-name table-name
