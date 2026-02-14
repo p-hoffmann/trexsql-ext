@@ -34,7 +34,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_hana_load(node_factory):
-    """Extension loads and basic DuckDB SQL works."""
+    """Extension loads and basic trexsql SQL works."""
     node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
     result = node.execute("SELECT 1")
     assert result == [(1,)]
@@ -272,7 +272,7 @@ def test_hana_attach_replacement_scan(node_factory):
 
 
 def test_hana_attach_schema_view(node_factory):
-    """After attach, <dbname>_<schema>.<table> resolves via DuckDB view."""
+    """After attach, <dbname>_<schema>.<table> resolves via trexsql view."""
     node = node_factory(load_hana=True, load_flight=False, load_swarm=False)
     _ensure_test_schema(node)
     node.execute(
@@ -323,7 +323,7 @@ def test_hana_attach_replacement_scan_case_insensitive(node_factory):
     node.execute(
         f"SELECT * FROM hana_attach('{HANA_TEST_URL}', 'test', '{ATTACH_SCHEMA}')"
     )
-    # DuckDB uppercases unquoted identifiers, so lowercase should resolve
+    # trexsql uppercases unquoted identifiers, so lowercase should resolve
     result = node.execute(f"SELECT * FROM hana__test_{ATTACH_SCHEMA.lower()}_t1")
     assert len(result) >= 1
 

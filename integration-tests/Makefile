@@ -20,7 +20,7 @@ VENV=./venv
 
 configure:
 	$(PYTHON_BIN) -m venv $(VENV)
-	$(VENV)/bin/pip install 'duckdb==1.4.0' pytest psycopg2-binary
+	$(VENV)/bin/pip install 'duckdb==1.4.4' pytest psycopg2-binary
 
 check-extensions:
 	@test -f $(FLIGHT_EXT) || (echo "Build flight first: cd ../ext/flight && make configure && make debug" && exit 1)

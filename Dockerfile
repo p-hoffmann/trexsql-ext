@@ -1,11 +1,11 @@
 # Stage 1: Build the trex binary
 FROM debian:trixie-slim AS builder
 
-ARG TREXSQL_VERSION=v1.4.0-trex
+ARG TREXSQL_VERSION=v1.4.4-trex
 ARG CHDB_VERSION=v3.6.0
 
 RUN apt-get update && apt-get install -y curl unzip wget gcc libc6-dev && rm -rf /var/lib/apt/lists/*
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.84.0
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.85.1
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Download libtrexsql from GitHub release
@@ -13,7 +13,8 @@ RUN mkdir -p /opt/trexsql && \
     wget -O /tmp/libtrexsql.zip \
       https://github.com/p-hoffmann/trexsql-rs/releases/download/${TREXSQL_VERSION}/libtrexsql-linux-amd64.zip && \
     unzip /tmp/libtrexsql.zip -d /opt/trexsql && \
-    rm /tmp/libtrexsql.zip
+    rm /tmp/libtrexsql.zip && \
+    ln -sf /opt/trexsql/libtrexsql.so /opt/trexsql/libduckdb.so
 
 ENV TREXSQL_LIB_DIR=/opt/trexsql
 ENV TREXSQL_INCLUDE_DIR=/opt/trexsql
@@ -27,7 +28,7 @@ RUN cd /tmp && \
     rm -f libchdb.tar.gz chdb.h
 
 # Cache dependency build: copy manifests first, build with dummy src, then replace
-COPY Cargo.toml /usr/src/trexsql/
+COPY Cargo.toml Cargo.lock /usr/src/trexsql/
 WORKDIR /usr/src/trexsql
 RUN mkdir src && echo "fn main() {}" > src/main.rs && \
     cargo build --release && \

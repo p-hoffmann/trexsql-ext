@@ -1,6 +1,6 @@
 FROM postgres:17
 
-ARG TREXSQL_VERSION=v1.4.0-trex
+ARG TREXSQL_VERSION=v1.4.4-trex
 
 # Download libtrexsql from GitHub release
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget unzip \
@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && unzip /tmp/libtrexsql.zip -d /tmp/trexsql \
     && cp /tmp/trexsql/libtrexsql.so /usr/lib/postgresql/17/lib/ \
     && ln -sf /usr/lib/postgresql/17/lib/libtrexsql.so /usr/lib/postgresql/17/lib/libtrexsql.so.1.4 \
+    && ln -sf /usr/lib/postgresql/17/lib/libtrexsql.so /usr/lib/postgresql/17/lib/libduckdb.so \
     && echo "/usr/lib/postgresql/17/lib" >> /etc/ld.so.conf.d/pg_trex.conf \
     && ldconfig \
     && rm -rf /tmp/libtrexsql.zip /tmp/trexsql \

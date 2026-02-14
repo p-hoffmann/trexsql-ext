@@ -22,7 +22,7 @@ TPM_EXT_TREX = f"{REPO_ROOT}/ext/tpm/build/debug/extension/tpm/tpm.trex"
 ETL_EXT_TREX = f"{REPO_ROOT}/ext/etl/build/debug/extension/etl/etl.trex"
 MIGRATION_EXT_TREX = f"{REPO_ROOT}/ext/migration/build/debug/extension/migration/migration.trex"
 
-# DuckDB Python API requires .duckdb_extension suffix for LOAD.
+# trexsql Python API requires .duckdb_extension suffix for LOAD.
 FLIGHT_EXT = f"{REPO_ROOT}/ext/flight/build/debug/extension/flight/flight.duckdb_extension"
 SWARM_EXT = f"{REPO_ROOT}/ext/swarm/build/debug/extension/swarm/swarm.duckdb_extension"
 PGWIRE_EXT = f"{REPO_ROOT}/ext/pgwire/build/debug/extension/pgwire/pgwire.duckdb_extension"
@@ -69,7 +69,7 @@ def alloc_ports():
 # ---------------------------------------------------------------------------
 
 def _node_worker(ext_paths, cmd_queue, result_queue):
-    """Child process: create DuckDB connection, load extensions, run commands."""
+    """Child process: create trexsql connection, load extensions, run commands."""
     try:
         conn = duckdb.connect(":memory:", config={"allow_unsigned_extensions": "true"})
         for path in ext_paths:
@@ -97,7 +97,7 @@ def _node_worker(ext_paths, cmd_queue, result_queue):
 
 
 class Node:
-    """A DuckDB node running in a separate process with extensions loaded."""
+    """A trexsql node running in a separate process with extensions loaded."""
 
     def __init__(self, ext_paths, gossip_port, flight_port, pgwire_port):
         self.gossip_port = gossip_port
@@ -157,7 +157,7 @@ def wait_for(node, sql, check, timeout=10, interval=0.5):
 
 @pytest.fixture
 def node_factory():
-    """Factory that creates DuckDB nodes (each in a separate process)."""
+    """Factory that creates trexsql nodes (each in a separate process)."""
     nodes = []
 
     def create_node(load_flight=True, load_swarm=True, load_pgwire=False,
