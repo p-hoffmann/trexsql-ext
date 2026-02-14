@@ -22,7 +22,7 @@ jobs:
   # ===========================================================================
 
   build-rust-core:
-    name: "Build flight + swarm"
+    name: "Build swarm"
     runs-on: ubuntu-24.04
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     steps:
@@ -37,24 +37,13 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ext/flight/target
             ext/swarm/target
-          key: rust-core-${{ runner.os }}-${{ hashFiles('ext/flight/Cargo.lock', 'ext/swarm/Cargo.lock') }}
+          key: rust-core-${{ runner.os }}-${{ hashFiles('ext/swarm/Cargo.lock') }}
           restore-keys: rust-core-${{ runner.os }}-
-
-      - name: Build flight
-        run: make configure && make debug
-        working-directory: ext/flight
 
       - name: Build swarm
         run: make configure && make debug
         working-directory: ext/swarm
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ext-flight
-          path: ext/flight/build/debug/extension/flight/flight.trex
-          retention-days: 1
 
       - uses: actions/upload-artifact@v4
         with:
@@ -376,11 +365,6 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ext-flight
-          path: ext/flight/build/debug/extension/flight/
-
-      - uses: actions/download-artifact@v4
-        with:
           name: ext-swarm
           path: ext/swarm/build/debug/extension/swarm/
 
@@ -410,11 +394,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ext-flight
-          path: ext/flight/build/debug/extension/flight/
 
       - uses: actions/download-artifact@v4
         with:
@@ -500,11 +479,6 @@ jobs:
       - name: Install chdb native library
         run: sudo bash ./install_chdb.sh
         working-directory: ext/chdb
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ext-flight
-          path: ext/flight/build/debug/extension/flight/
 
       - uses: actions/download-artifact@v4
         with:
@@ -674,11 +648,6 @@ jobs:
         with:
           name: pg-trex-build
           path: ext/pg_trex/target/debug/
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ext-flight
-          path: ext/pg_trex/extensions/
 
       - uses: actions/download-artifact@v4
         with:

@@ -30,7 +30,7 @@ ENV POSTGRES_HOST_AUTH_METHOD=trust
 RUN mkdir -p /var/lib/postgresql/data \
     && chown postgres:postgres /var/lib/postgresql/data \
     && su postgres -c "initdb -D /var/lib/postgresql/data --auth=trust --no-sync" \
-    && su postgres -c "pg_ctl -D /var/lib/postgresql/data -o '-c shared_preload_libraries=pg_trex -c pg_trex.swarm_extension_path=/usr/lib/trexsql/extensions/swarm.trex -c pg_trex.flight_extension_path=/usr/lib/trexsql/extensions/flight.trex' -w start" \
+    && su postgres -c "pg_ctl -D /var/lib/postgresql/data -o '-c shared_preload_libraries=pg_trex -c pg_trex.swarm_extension_path=/usr/lib/trexsql/extensions/swarm.trex' -w start" \
     && su postgres -c "psql -c \"CREATE EXTENSION pg_trex;\"" \
     && echo "host all all 0.0.0.0/0 trust" >> /var/lib/postgresql/data/pg_hba.conf \
     && su postgres -c "pg_ctl -D /var/lib/postgresql/data -m immediate stop"

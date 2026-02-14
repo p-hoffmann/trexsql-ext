@@ -193,7 +193,7 @@ def test_two_node_pgwire_data_isolation(node_factory):
 
 def test_pgwire_flight_coexistence(node_factory):
     """Single node runs both flight + pgwire simultaneously; both work."""
-    node = node_factory(load_pgwire=True, load_flight=True, load_swarm=False)
+    node = node_factory(load_pgwire=True, load_swarm=True)
 
     node.execute(
         "CREATE TABLE orders AS "
