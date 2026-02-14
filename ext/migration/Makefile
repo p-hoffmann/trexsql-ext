@@ -7,7 +7,7 @@ EXTENSION_NAME=migration
 # Required by duckdb-rs which relies on unstable C API
 USE_UNSTABLE_C_API=1
 
-TARGET_DUCKDB_VERSION=v1.4.0
+TARGET_DUCKDB_VERSION=v1.4.4
 
 # Pin test DuckDB to match target version
 DUCKDB_TEST_VERSION=$(TARGET_DUCKDB_VERSION)

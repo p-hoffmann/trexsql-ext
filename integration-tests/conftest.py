@@ -66,7 +66,7 @@ def alloc_ports():
 # ---------------------------------------------------------------------------
 
 def _node_worker(ext_paths, cmd_queue, result_queue):
-    """Child process: create DuckDB connection, load extensions, run commands."""
+    """Child process: create trexsql connection, load extensions, run commands."""
     try:
         conn = duckdb.connect(":memory:", config={"allow_unsigned_extensions": "true"})
         for path in ext_paths:
@@ -94,7 +94,7 @@ def _node_worker(ext_paths, cmd_queue, result_queue):
 
 
 class Node:
-    """A DuckDB node running in a separate process with extensions loaded."""
+    """A trexsql node running in a separate process with extensions loaded."""
 
     def __init__(self, ext_paths, gossip_port, flight_port, pgwire_port):
         self.gossip_port = gossip_port
@@ -154,7 +154,7 @@ def wait_for(node, sql, check, timeout=10, interval=0.5):
 
 @pytest.fixture
 def node_factory():
-    """Factory that creates DuckDB nodes (each in a separate process)."""
+    """Factory that creates trexsql nodes (each in a separate process)."""
     nodes = []
 
     def create_node(load_swarm=True, load_pgwire=False,

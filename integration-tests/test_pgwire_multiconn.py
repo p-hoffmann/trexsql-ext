@@ -2,7 +2,7 @@
 
 Verifies that the pgwire QueryExecutor thread pool correctly handles
 concurrent queries from multiple clients. The executor clones a single
-DuckDB connection across N worker threads and dispatches incoming queries
+trexsql connection across N worker threads and dispatches incoming queries
 via a shared channel — these tests exercise that path.
 """
 

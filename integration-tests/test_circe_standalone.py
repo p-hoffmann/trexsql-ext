@@ -93,7 +93,7 @@ def test_circe_json_to_sql(node_factory):
 
 
 def test_circe_generate_and_translate(node_factory):
-    """circe_generate_and_translate() produces DuckDB-dialect SQL from cohort JSON."""
+    """circe_generate_and_translate() produces trexsql-dialect SQL from cohort JSON."""
     node = node_factory(load_circe=True, load_flight=False, load_swarm=False)
     result = node.execute(
         f"SELECT circe_generate_and_translate('{COHORT_B64}', '{OPTIONS_JSON}')"
