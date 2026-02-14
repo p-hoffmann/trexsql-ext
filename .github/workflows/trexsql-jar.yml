@@ -14,6 +14,9 @@ on:
 permissions:
   contents: write
 
+env:
+  TREXSQL_VERSION: v1.4.4-trex
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -28,6 +31,29 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Download libtrexsql
+        working-directory: .
+        run: |
+          mkdir -p /tmp/trexsql
+          wget -q -O /tmp/libtrexsql.zip \
+            https://github.com/p-hoffmann/trexsql-rs/releases/download/${{ env.TREXSQL_VERSION }}/libtrexsql-linux-amd64.zip
+          unzip -o /tmp/libtrexsql.zip -d /tmp/trexsql
+          ln -sf /tmp/trexsql/libtrexsql.so /tmp/trexsql/libduckdb.so
+
+      - name: Build native library
+        working-directory: .
+        run: |
+          TREXSQL_LIB_DIR=/tmp/trexsql cargo build --release
+          ls -lh target/release/libtrexsql_engine.so
+
+      - name: Bundle native libraries in resources
+        run: |
+          mkdir -p resources/linux-x86-64
+          cp ../../../target/release/libtrexsql_engine.so resources/linux-x86-64/
+          cp /tmp/trexsql/libtrexsql.so resources/linux-x86-64/libduckdb.so
 
       - name: Install Leiningen
         run: |
