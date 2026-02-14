@@ -8,7 +8,7 @@ LIB_DIR="$PROJECT_DIR/lib"
 JAR_FILE="$LIB_DIR/trexsql.jar"
 
 # Version of trexsql-java to use (must have public signing key embedded)
-TREXSQL_VERSION="v0.1.4"
+TREXSQL_VERSION="v0.1.5"
 DOWNLOAD_URL="https://github.com/p-hoffmann/trexsql-java/releases/download/${TREXSQL_VERSION}/trexsql-${TREXSQL_VERSION#v}.jar"
 
 mkdir -p "$LIB_DIR"
@@ -46,7 +46,7 @@ if curl -fsSL -o "/tmp/trexsql-jdbc.jar" "$DOWNLOAD_URL"; then
   <modelVersion>4.0.0</modelVersion>
   <groupId>com.github.p-hoffmann</groupId>
   <artifactId>trexsql-java</artifactId>
-  <version>v0.1.2</version>
+  <version>v0.1.5</version>
   <packaging>jar</packaging>
 </project>
 POMEOF

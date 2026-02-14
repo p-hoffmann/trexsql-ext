@@ -14,7 +14,7 @@
                ch.qos.logback/logback-core]
 
   :dependencies [[org.clojure/clojure "1.11.1"]
-                 [com.github.p-hoffmann/trexsql-java "v0.1.4"]
+                 [com.github.p-hoffmann/trexsql-java "v0.1.5"]
                  [org.clojure/tools.cli "1.1.230"]
                  [org.clojure/data.json "2.5.0"]
                  ;; HoneySQL for SQL generation (005-jdbc-batch-cache)
