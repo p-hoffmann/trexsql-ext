@@ -1,6 +1,6 @@
 """Tier 1: Single-node smoke tests.
 
-Verifies that a single DuckDB instance can load both extensions,
+Verifies that a single trexsql instance can load both extensions,
 start a Flight server, start swarm, and register itself.
 """
 

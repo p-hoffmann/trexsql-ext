@@ -100,10 +100,10 @@ def test_pgwire_psycopg2_create_and_query(node_factory):
 
 
 def test_pgwire_data_visibility(node_factory):
-    """Table created via DuckDB node is visible through pgwire."""
+    """Table created via trexsql node is visible through pgwire."""
     node = node_factory(load_pgwire=True, load_flight=False, load_swarm=False)
 
-    # Create table through the DuckDB node directly
+    # Create table through the trexsql node directly
     node.execute(
         "CREATE TABLE orders AS "
         "SELECT i as id, 'US' as region FROM range(10) t(i)"
