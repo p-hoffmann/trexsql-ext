@@ -27,7 +27,7 @@ RUN cd /tmp && \
     rm -f libchdb.tar.gz chdb.h
 
 # Cache dependency build: copy manifests first, build with dummy src, then replace
-COPY Cargo.toml /usr/src/trexsql/
+COPY Cargo.toml Cargo.lock /usr/src/trexsql/
 WORKDIR /usr/src/trexsql
 RUN mkdir src && echo "fn main() {}" > src/main.rs && \
     cargo build --release && \
