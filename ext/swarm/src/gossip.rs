@@ -7,12 +7,6 @@ use uuid::Uuid;
 
 use crate::logging::SwarmLogger;
 
-// ---------------------------------------------------------------------------
-// Data model
-// ---------------------------------------------------------------------------
-
-/// Information about a single node in the gossip cluster, constructed from
-/// the key-value pairs published by that node via chitchat.
 pub struct NodeInfo {
     pub node_id: String,
     pub node_name: String,
@@ -21,8 +15,7 @@ pub struct NodeInfo {
     pub status: String,
 }
 
-/// Extended node information including all key-value pairs published via
-/// gossip.  Used by the catalog module to resolve table locations.
+/// All key-value pairs for a node. Used by the catalog module to resolve table locations.
 pub struct NodeKeyValueInfo {
     pub node_id: String,
     pub node_name: String,
@@ -30,21 +23,42 @@ pub struct NodeKeyValueInfo {
     pub key_values: Vec<(String, String)>,
 }
 
-/// Wraps a running chitchat instance together with the tokio runtime that
-/// drives it.  Dropping this struct shuts down the gossip layer.
-pub struct GossipHandle {
+struct GossipHandle {
     chitchat_handle: ChitchatHandle,
     runtime: tokio::runtime::Runtime,
     node_id: String,
 }
 
-// ---------------------------------------------------------------------------
-// Singleton registry
-// ---------------------------------------------------------------------------
+/// Execute `future` on the gossip runtime via `Handle::spawn()` + a blocking
+/// `std::sync::mpsc` channel.  Unlike `runtime.block_on()`, this is safe to
+/// call from within another tokio runtime because it never enters a nested
+/// tokio context — it only blocks the current thread passively on a channel.
+fn exec_on_runtime<F, T>(handle: &tokio::runtime::Handle, future: F) -> T
+where
+    F: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    handle.spawn(async move {
+        let _ = tx.send(future.await);
+    });
+    rx.recv().expect("gossip runtime is alive")
+}
 
-/// Process-wide singleton that owns the optional `GossipHandle`.  At most one
-/// gossip instance may be active at a time — this mirrors the `ServerRegistry`
-/// pattern used by the flight extension.
+/// Process-wide singleton owning at most one active gossip instance.
+///
+/// # Tokio Runtime Safety
+///
+/// `GossipRegistry` owns its own `tokio::runtime::Runtime` for chitchat's
+/// background tasks.  All public methods (except `start`/`stop`) use
+/// `exec_on_runtime()` internally, which spawns work onto the gossip runtime
+/// and waits via a plain `std::sync::mpsc` channel.  This means they are
+/// **safe to call from any context**, including from within another tokio
+/// runtime's `block_on()`.
+///
+/// Only `start()` and `stop()` use `runtime.block_on()` directly (for
+/// lifecycle operations).  These are only called from SQL function handlers
+/// which do not run inside a tokio context.
 pub struct GossipRegistry {
     handle: Arc<Mutex<Option<GossipHandle>>>,
 }
@@ -56,28 +70,16 @@ impl GossipRegistry {
         }
     }
 
-    /// Return the process-wide `GossipRegistry` singleton.
     pub fn instance() -> &'static GossipRegistry {
         static INSTANCE: OnceLock<GossipRegistry> = OnceLock::new();
         INSTANCE.get_or_init(|| GossipRegistry::new())
     }
 
-    /// Returns `true` when a gossip instance is currently active.
     pub fn is_running(&self) -> bool {
         self.handle.lock().map(|g| g.is_some()).unwrap_or(false)
     }
 
-    /// Start the gossip layer.
-    ///
-    /// # Arguments
-    /// * `host`       – IP address to bind the gossip UDP socket to
-    /// * `port`       – UDP port for gossip traffic
-    /// * `cluster_id` – logical cluster identifier (must match on all nodes)
-    /// * `node_name`  – human-readable node name from configuration
-    /// * `data_node`  – `"true"` or `"false"` – whether this node stores data
-    /// * `seeds`      – list of `"host:port"` strings for seed nodes
-    ///
-    /// Returns the generated UUID node-id on success.
+    /// Start the gossip layer. Returns the generated UUID node-id on success.
     pub fn start(
         &self,
         host: &str,
@@ -92,10 +94,7 @@ impl GossipRegistry {
             return Err("Gossip is already running".to_string());
         }
 
-        // Build a dedicated tokio runtime for gossip I/O.  Must be
-        // multi-threaded so that chitchat's spawned tasks (UDP send/recv,
-        // failure detection) run continuously in the background, even
-        // between SQL commands.
+        // Multi-threaded so chitchat's background tasks run between SQL commands.
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()
@@ -108,8 +107,7 @@ impl GossipRegistry {
             .parse()
             .map_err(|e| format!("Invalid gossip address {host}:{port}: {e}"))?;
 
-        // Parse seed addresses, skipping entries that resolve to our own
-        // listen address (chitchat does not need to seed itself).
+        // Skip our own address -- chitchat does not need to seed itself.
         let seed_addrs: Vec<SocketAddr> = seeds
             .iter()
             .filter_map(|s| {
@@ -172,17 +170,13 @@ impl GossipRegistry {
         Ok(node_id)
     }
 
-    /// Gracefully stop the gossip layer.  The local node is first marked for
-    /// deletion so that peers will eventually garbage-collect its state, and
-    /// then the chitchat handle is dropped which tears down the UDP socket.
+    /// Mark this node as draining, then tear down the gossip layer.
     pub fn stop(&self) -> Result<String, String> {
         let mut guard = self.handle.lock().map_err(|_| "Gossip lock poisoned".to_string())?;
         let gossip = guard
             .as_ref()
             .ok_or_else(|| "Gossip is not running".to_string())?;
 
-        // Mark this node for deletion so peers remove us after the grace
-        // period even if the shutdown notification does not reach them.
         let chitchat = gossip.chitchat_handle.chitchat();
         let _ = gossip.runtime.block_on(async {
             tokio::time::timeout(Duration::from_secs(5), async {
@@ -194,7 +188,6 @@ impl GossipRegistry {
 
         let node_id = gossip.node_id.clone();
 
-        // Take the handle and explicitly shut down the runtime.
         if let Some(handle) = guard.take() {
             handle.runtime.shutdown_timeout(Duration::from_secs(5));
         }
@@ -209,25 +202,32 @@ impl GossipRegistry {
         Ok(format!("Gossip stopped for node {node_id}"))
     }
 
-    /// Set a key-value pair on this node's gossip state.  The update will be
-    /// propagated to all peers within a few gossip rounds.
+    /// Set a key-value pair on this node's gossip state.
     pub fn set_key(&self, key: &str, value: &str) -> Result<(), String> {
-        let guard = self.handle.lock().map_err(|_| "Gossip lock poisoned".to_string())?;
-        let gossip = guard
-            .as_ref()
-            .ok_or_else(|| "Gossip is not running".to_string())?;
+        let (handle, chitchat, node_id) = {
+            let guard = self.handle.lock().map_err(|_| "Gossip lock poisoned".to_string())?;
+            let gossip = guard
+                .as_ref()
+                .ok_or_else(|| "Gossip is not running".to_string())?;
+            (
+                gossip.runtime.handle().clone(),
+                gossip.chitchat_handle.chitchat(),
+                gossip.node_id.clone(),
+            )
+        };
 
-        let chitchat = gossip.chitchat_handle.chitchat();
-        gossip.runtime.block_on(async {
+        let key_owned = key.to_string();
+        let value_owned = value.to_string();
+        exec_on_runtime(&handle, async move {
             let mut cc = chitchat.lock().await;
-            cc.self_node_state().set(key, value);
+            cc.self_node_state().set(&key_owned, &value_owned);
         });
 
         SwarmLogger::log_with_context(
             crate::logging::LogLevel::Debug,
             "gossip",
             &[
-                ("node_id", &gossip.node_id),
+                ("node_id", &node_id),
                 ("operation", "set_key"),
                 ("key", key),
             ],
@@ -237,17 +237,21 @@ impl GossipRegistry {
         Ok(())
     }
 
-    /// Return the state of every node currently known to the gossip layer.
-    /// Each entry contains the identity keys (`node_name`, `data_node`,
-    /// `status`) published by that node.
+    /// Return the state of every node known to the gossip layer.
     pub fn get_node_states(&self) -> Result<Vec<NodeInfo>, String> {
-        let guard = self.handle.lock().map_err(|_| "Gossip lock poisoned".to_string())?;
-        let gossip = guard
-            .as_ref()
-            .ok_or_else(|| "Gossip is not running".to_string())?;
+        let (handle, chitchat, node_id) = {
+            let guard = self.handle.lock().map_err(|_| "Gossip lock poisoned".to_string())?;
+            let gossip = guard
+                .as_ref()
+                .ok_or_else(|| "Gossip is not running".to_string())?;
+            (
+                gossip.runtime.handle().clone(),
+                gossip.chitchat_handle.chitchat(),
+                gossip.node_id.clone(),
+            )
+        };
 
-        let chitchat = gossip.chitchat_handle.chitchat();
-        let nodes = gossip.runtime.block_on(async {
+        let nodes = exec_on_runtime(&handle, async move {
             let cc = chitchat.lock().await;
             cc.node_states()
                 .iter()
@@ -280,7 +284,7 @@ impl GossipRegistry {
             crate::logging::LogLevel::Debug,
             "gossip",
             &[
-                ("node_id", &gossip.node_id),
+                ("node_id", &node_id),
                 ("operation", "get_node_states"),
                 ("count", &nodes.len().to_string()),
             ],
@@ -290,16 +294,20 @@ impl GossipRegistry {
         Ok(nodes)
     }
 
-    /// Return this node's current gossip configuration as a list of
-    /// key-value pairs.  Useful for `swarm_config()` table functions.
+    /// Return this node's current gossip configuration as key-value pairs.
     pub fn get_self_config(&self) -> Result<Vec<(String, String)>, String> {
-        let guard = self.handle.lock().map_err(|_| "Gossip lock poisoned".to_string())?;
-        let gossip = guard
-            .as_ref()
-            .ok_or_else(|| "Gossip is not running".to_string())?;
+        let (handle, chitchat) = {
+            let guard = self.handle.lock().map_err(|_| "Gossip lock poisoned".to_string())?;
+            let gossip = guard
+                .as_ref()
+                .ok_or_else(|| "Gossip is not running".to_string())?;
+            (
+                gossip.runtime.handle().clone(),
+                gossip.chitchat_handle.chitchat(),
+            )
+        };
 
-        let chitchat = gossip.chitchat_handle.chitchat();
-        let config = gossip.runtime.block_on(async {
+        let config = exec_on_runtime(&handle, async move {
             let mut cc = chitchat.lock().await;
             let id = cc.self_chitchat_id();
             let mut pairs = vec![
@@ -312,7 +320,6 @@ impl GossipRegistry {
                 ("cluster_id".to_string(), cc.cluster_id().to_string()),
             ];
 
-            // Append every key-value from our own node state.
             let self_state = cc.self_node_state();
             for (key, value) in self_state.key_values() {
                 pairs.push((key.to_string(), value.to_string()));
@@ -324,25 +331,31 @@ impl GossipRegistry {
         Ok(config)
     }
 
-    /// Delete a key from this node's gossip state.  The key is marked with a
-    /// tombstone and will be garbage-collected after the configured grace period.
+    /// Delete a key from this node's gossip state (tombstoned until GC).
     pub fn delete_key(&self, key: &str) -> Result<(), String> {
-        let guard = self.handle.lock().map_err(|_| "Gossip lock poisoned".to_string())?;
-        let gossip = guard
-            .as_ref()
-            .ok_or_else(|| "Gossip is not running".to_string())?;
+        let (handle, chitchat, node_id) = {
+            let guard = self.handle.lock().map_err(|_| "Gossip lock poisoned".to_string())?;
+            let gossip = guard
+                .as_ref()
+                .ok_or_else(|| "Gossip is not running".to_string())?;
+            (
+                gossip.runtime.handle().clone(),
+                gossip.chitchat_handle.chitchat(),
+                gossip.node_id.clone(),
+            )
+        };
 
-        let chitchat = gossip.chitchat_handle.chitchat();
-        gossip.runtime.block_on(async {
+        let key_owned = key.to_string();
+        exec_on_runtime(&handle, async move {
             let mut cc = chitchat.lock().await;
-            cc.self_node_state().delete(key);
+            cc.self_node_state().delete(&key_owned);
         });
 
         SwarmLogger::log_with_context(
             crate::logging::LogLevel::Debug,
             "gossip",
             &[
-                ("node_id", &gossip.node_id),
+                ("node_id", &node_id),
                 ("operation", "delete_key"),
                 ("key", key),
             ],
@@ -352,16 +365,21 @@ impl GossipRegistry {
         Ok(())
     }
 
-    /// List all keys with a given prefix from this node's gossip state.
     pub fn list_keys_with_prefix(&self, prefix: &str) -> Result<Vec<String>, String> {
-        let guard = self.handle.lock().map_err(|_| "Gossip lock poisoned".to_string())?;
-        let gossip = guard
-            .as_ref()
-            .ok_or_else(|| "Gossip is not running".to_string())?;
+        let (handle, chitchat, node_id) = {
+            let guard = self.handle.lock().map_err(|_| "Gossip lock poisoned".to_string())?;
+            let gossip = guard
+                .as_ref()
+                .ok_or_else(|| "Gossip is not running".to_string())?;
+            (
+                gossip.runtime.handle().clone(),
+                gossip.chitchat_handle.chitchat(),
+                gossip.node_id.clone(),
+            )
+        };
 
         let prefix_owned = prefix.to_string();
-        let chitchat = gossip.chitchat_handle.chitchat();
-        let keys = gossip.runtime.block_on(async {
+        let keys = exec_on_runtime(&handle, async move {
             let mut cc = chitchat.lock().await;
             let state = cc.self_node_state();
             state
@@ -375,7 +393,7 @@ impl GossipRegistry {
             crate::logging::LogLevel::Debug,
             "gossip",
             &[
-                ("node_id", &gossip.node_id),
+                ("node_id", &node_id),
                 ("operation", "list_keys_with_prefix"),
                 ("prefix", prefix),
                 ("count", &keys.len().to_string()),
@@ -386,20 +404,21 @@ impl GossipRegistry {
         Ok(keys)
     }
 
-    /// Return all key-value pairs for every node known to the gossip layer.
-    ///
-    /// Unlike [`get_node_states`], which returns only identity-level keys
-    /// (`node_name`, `data_node`, `status`), this method returns *every*
-    /// key-value pair — including `catalog:*` and `service:*` keys used by
-    /// the distributed catalog.
+    /// Return all key-value pairs for every node (including `catalog:*` and `service:*`).
     pub fn get_node_key_values(&self) -> Result<Vec<NodeKeyValueInfo>, String> {
-        let guard = self.handle.lock().map_err(|_| "Gossip lock poisoned".to_string())?;
-        let gossip = guard
-            .as_ref()
-            .ok_or_else(|| "Gossip is not running".to_string())?;
+        let (handle, chitchat, node_id) = {
+            let guard = self.handle.lock().map_err(|_| "Gossip lock poisoned".to_string())?;
+            let gossip = guard
+                .as_ref()
+                .ok_or_else(|| "Gossip is not running".to_string())?;
+            (
+                gossip.runtime.handle().clone(),
+                gossip.chitchat_handle.chitchat(),
+                gossip.node_id.clone(),
+            )
+        };
 
-        let chitchat = gossip.chitchat_handle.chitchat();
-        let nodes = gossip.runtime.block_on(async {
+        let nodes = exec_on_runtime(&handle, async move {
             let cc = chitchat.lock().await;
             cc.node_states()
                 .iter()
@@ -430,7 +449,7 @@ impl GossipRegistry {
             crate::logging::LogLevel::Debug,
             "gossip",
             &[
-                ("node_id", &gossip.node_id),
+                ("node_id", &node_id),
                 ("operation", "get_node_key_values"),
                 ("count", &nodes.len().to_string()),
             ],
@@ -441,37 +460,4 @@ impl GossipRegistry {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Gossip payload encryption
-// ---------------------------------------------------------------------------
-
-/// Derive a symmetric encryption key from the cluster CA certificate.
-pub fn derive_encryption_key(ca_cert_path: &str) -> Result<Vec<u8>, String> {
-    let cert_bytes = std::fs::read(ca_cert_path)
-        .map_err(|e| format!("Failed to read CA certificate {ca_cert_path}: {e}"))?;
-
-    let mut key = vec![0u8; 32];
-    for (i, &b) in cert_bytes.iter().enumerate() {
-        key[i % 32] ^= b;
-    }
-
-    SwarmLogger::debug(
-        "gossip-encryption",
-        &format!(
-            "Derived placeholder encryption key from CA cert ({} bytes read)",
-            cert_bytes.len()
-        ),
-    );
-
-    Ok(key)
-}
-
-/// Encrypt a gossip value before publishing it to the cluster.
-pub fn encrypt_value(value: &str, _key: &[u8]) -> String {
-    value.to_string()
-}
-
-/// Decrypt a gossip value received from a peer.
-pub fn decrypt_value(value: &str, _key: &[u8]) -> String {
-    value.to_string()
-}
+// TODO: implement gossip encryption (derive key from CA cert, encrypt/decrypt values)

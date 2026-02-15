@@ -3,19 +3,7 @@ use crate::gossip::GossipRegistry;
 use crate::logging::SwarmLogger;
 use crate::service_functions::get_start_service_sql;
 
-// ---------------------------------------------------------------------------
-// Orchestrator
-// ---------------------------------------------------------------------------
-
-/// Process a list of extension configurations:
-///
-/// 1. `LOAD` each extension via the shared DuckDB connection.
-/// 2. For extensions that declare a host **and** port, look up the known
-///    start-function mapping and execute it via SQL.
-/// 3. On successful start, publish the service endpoint to gossip so that
-///    other nodes in the cluster can discover it.
-///
-/// Returns a status message for every extension in the input list.
+/// Load extensions, start their services, and publish endpoints to gossip.
 pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
     let conn_arc = match crate::get_shared_connection() {
         Some(c) => c,
@@ -41,7 +29,12 @@ pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
     let mut statuses: Vec<String> = Vec::with_capacity(extensions.len());
 
     for ext in extensions {
-        // Step 1: LOAD the extension
+        if !crate::catalog::is_valid_extension_name(&ext.name) {
+            let msg = format!("{}: invalid extension name", ext.name);
+            SwarmLogger::error("orchestrator", &msg);
+            statuses.push(msg);
+            continue;
+        }
         let load_sql = format!("LOAD '{}.trex'", ext.name);
         SwarmLogger::info("orchestrator", &format!("Loading extension: {}", ext.name));
 
@@ -52,7 +45,6 @@ pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
             continue;
         }
 
-        // Step 2: Start the service if config is provided
         let config_json = match &ext.config {
             Some(cfg) => serde_json::to_string(cfg).unwrap_or_else(|_| "{}".to_string()),
             None => {
@@ -84,7 +76,6 @@ pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
             }
         };
 
-        // Extract host/port from config for logging and gossip
         let cfg_val: serde_json::Value =
             serde_json::from_str(&config_json).unwrap_or_default();
         let host = cfg_val["host"].as_str().unwrap_or("");
@@ -102,7 +93,6 @@ pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
             continue;
         }
 
-        // Step 3: Publish to gossip if running
         let registry = GossipRegistry::instance();
         if registry.is_running() {
             let gossip_key = format!("service:{}", ext.name);
@@ -130,15 +120,93 @@ pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
     statuses
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+/// Start distributed scheduler/executor based on node roles.
+pub fn start_distributed_for_roles(
+    roles: &[String],
+    gossip_addr: &str,
+) -> Vec<String> {
+    let mut statuses = Vec::new();
+
+    for role in roles {
+        match role.as_str() {
+            "scheduler" => {
+                let host = gossip_addr
+                    .split(':')
+                    .next()
+                    .unwrap_or("0.0.0.0");
+
+                let config = crate::distributed_scheduler::SchedulerConfig {
+                    bind_addr: format!("{}:50050", host),
+                };
+
+                match crate::distributed_scheduler::start_scheduler(config) {
+                    Ok(()) => {
+                        let msg = format!("distributed-scheduler: started on {}:50050", host);
+                        SwarmLogger::info("orchestrator", &msg);
+                        statuses.push(msg);
+
+                        let registry = GossipRegistry::instance();
+                        if registry.is_running() {
+                            let value = serde_json::json!({
+                                "host": host,
+                                "port": 50050,
+                                "status": "running",
+                            })
+                            .to_string();
+                            if let Err(e) = registry.set_key("service:distributed-scheduler", &value)
+                            {
+                                SwarmLogger::warn(
+                                    "orchestrator",
+                                    &format!(
+                                        "Failed to publish service:distributed-scheduler to gossip: {}",
+                                        e
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let msg = format!("distributed-scheduler: failed — {}", e);
+                        SwarmLogger::error("orchestrator", &msg);
+                        statuses.push(msg);
+                    }
+                }
+            }
+            "executor" => {
+                // Executor nodes serve queries via Flight — warn if not configured.
+                let has_flight = crate::config::ClusterConfig::from_env()
+                    .ok()
+                    .and_then(|cfg| {
+                        crate::config::get_this_node_config(&cfg)
+                            .map(|(_, node)| node.extensions.iter().any(|e| e.name == "flight"))
+                    })
+                    .unwrap_or(false);
+
+                if has_flight {
+                    let msg =
+                        "distributed-executor: Flight extension configured (handles remote queries)"
+                            .to_string();
+                    SwarmLogger::info("orchestrator", &msg);
+                    statuses.push(msg);
+                } else {
+                    let msg =
+                        "distributed-executor: WARNING — no Flight extension configured; \
+                         this executor node cannot serve remote queries"
+                            .to_string();
+                    SwarmLogger::warn("orchestrator", &msg);
+                    statuses.push(msg);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    statuses
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // -- get_start_service_sql lookup tests (via service_functions) ----------
 
     #[test]
     fn start_sql_flight() {
@@ -225,13 +293,6 @@ mod tests {
         assert!(get_start_service_sql("flight", "not json").is_err());
     }
 
-    // -- orchestrate_extensions: load-only path -----------------------------
-    //
-    // Without a real DuckDB connection available via the OnceLock, the
-    // orchestrator returns an error status for every extension.  We verify
-    // that the early-exit "no shared connection" path produces one message
-    // per extension.
-
     #[test]
     fn orchestrate_without_connection_returns_error_per_extension() {
         let extensions = vec![
@@ -247,10 +308,7 @@ mod tests {
 
         let statuses = orchestrate_extensions(&extensions);
 
-        // One status message per extension
         assert_eq!(statuses.len(), 2);
-
-        // Both should indicate the missing connection
         for status in &statuses {
             assert!(
                 status.contains("no shared connection"),

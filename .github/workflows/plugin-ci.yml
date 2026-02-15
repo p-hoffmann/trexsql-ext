@@ -81,7 +81,6 @@ jobs:
           - PKGPATH: ./ext/tpm
           - PKGPATH: ./ext/migration
           - PKGPATH: ./ext/swarm
-          - PKGPATH: ./ext/flight
           - PKGPATH: ./ext/etl
           - PKGPATH: ./ext/bao
             RUNNER: ubuntu-24.04
@@ -214,6 +213,36 @@ jobs:
           path: ${{ matrix.PKGPATH }}/*.trex
           retention-days: 1
 
+  create-release:
+    needs: [build]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_BRANCH_NAME }}
+          repository: ${{ env.GIT_REPO_FULL_NAME }}
+      - name: Download all extension artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ext-*
+          path: release-assets/
+          merge-multiple: true
+      - name: List release assets
+        run: ls -la release-assets/
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag }}
+          name: ${{ github.event.inputs.release }}
+          prerelease: ${{ github.event.inputs.prerelease }}
+          files: release-assets/*.trex
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build-docker:
     needs: [build]
     runs-on: ubuntu-24.04
@@ -323,8 +352,7 @@ jobs:
             pg-trex-test \
             postgres \
             -c shared_preload_libraries=pg_trex \
-            -c pg_trex.swarm_extension_path=/usr/lib/trexsql/extensions/swarm.trex \
-            -c pg_trex.flight_extension_path=/usr/lib/trexsql/extensions/flight.trex
+            -c pg_trex.swarm_extension_path=/usr/lib/trexsql/extensions/swarm.trex
           sleep 8
           docker exec pg-trex-smoke pg_isready -U postgres
           docker exec pg-trex-smoke psql -U postgres -c "SELECT state FROM pg_trex_status()"
@@ -347,13 +375,13 @@ jobs:
           docker push ghcr.io/p-hoffmann/pg-trex:sha-${{ github.sha }}
 
   success:
-    needs: [build, build-docker, build-pg-trex]
+    needs: [build, build-docker, build-pg-trex, create-release]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check
         run: |
-          if [[ "${{ needs.build.result }}" == "failure" || "${{ needs.build-docker.result }}" == "failure" || "${{ needs.build-pg-trex.result }}" == "failure" ]]; then
+          if [[ "${{ needs.build.result }}" == "failure" || "${{ needs.build-docker.result }}" == "failure" || "${{ needs.build-pg-trex.result }}" == "failure" || "${{ needs.create-release.result }}" == "failure" ]]; then
             echo "::error::One or more jobs failed"
             exit 1
           fi
