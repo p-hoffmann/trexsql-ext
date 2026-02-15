@@ -1,11 +1,12 @@
 (ns trexsql.extensions
   "TrexSQL extension discovery and loading."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [trexsql.native :as native])
   (:import [java.io File InputStream FileOutputStream]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
-           [java.sql Connection Statement SQLException]))
+           [com.sun.jna Pointer]))
 
 (def ^:private embedded-extensions-resource-path "extensions/")
 (def ^:private embedded-extensions-temp-dir (atom nil))
@@ -90,7 +91,7 @@
 (defn load-extension
   "Load a single extension into the TrexSQL connection.
    Returns {:name <string> :loaded <boolean> :error <string or nil>}"
-  [^Connection conn {:keys [name path requires-avx]}]
+  [^Pointer handle {:keys [name path requires-avx]}]
   (let [avx-available? (has-avx-support?)]
     (cond
       ;; Skip llama if no AVX support
@@ -102,10 +103,9 @@
       :else
       (try
         (println (str "Loading extension: " name))
-        (with-open [stmt (.createStatement conn)]
-          (.execute stmt (str "LOAD '" path "'")))
+        (native/execute! handle (str "LOAD '" path "'"))
         {:name name :loaded true :error nil}
-        (catch SQLException e
+        (catch Exception e
           (println (str "Failed to load extension: " path))
           (println (str "  Error: " (.getMessage e)))
           {:name name :loaded false :error (.getMessage e)})))))
@@ -114,7 +114,7 @@
   "Load a single embedded extension by name.
    Extracts from JAR resources if available.
    Returns {:name <string> :loaded <boolean> :error <string or nil>}"
-  [^Connection conn ext-name]
+  [^Pointer handle ext-name]
   (let [avx-available? (has-avx-support?)
         requires-avx? (= ext-name "llama")]
     (cond
@@ -128,10 +128,9 @@
       (if-let [ext-file (extract-embedded-extension ext-name)]
         (try
           (println (str "Loading embedded extension: " ext-name))
-          (with-open [stmt (.createStatement conn)]
-            (.execute stmt (str "LOAD '" (.getAbsolutePath ext-file) "'")))
+          (native/execute! handle (str "LOAD '" (.getAbsolutePath ext-file) "'"))
           {:name ext-name :loaded true :error nil}
-          (catch SQLException e
+          (catch Exception e
             (println (str "Failed to load embedded extension: " ext-name))
             (println (str "  Error: " (.getMessage e)))
             {:name ext-name :loaded false :error (.getMessage e)}))
@@ -140,13 +139,13 @@
 (defn load-all-embedded-extensions
   "Load all embedded extensions from JAR resources.
    Returns set of successfully loaded extension names."
-  [^Connection conn]
+  [^Pointer handle]
   (let [embedded (find-embedded-extensions)]
     (if (empty? embedded)
       (do
         (println "No embedded extensions found in JAR")
         #{})
-      (let [results (map #(load-embedded-extension conn %) embedded)
+      (let [results (map #(load-embedded-extension handle %) embedded)
             loaded (filter :loaded results)]
         (println (str "Loaded " (count loaded) " embedded extension(s)"))
         (set (map :name loaded))))))
@@ -154,16 +153,16 @@
 (defn load-extensions
   "Load all extensions from the configured directory and embedded resources.
    Returns set of successfully loaded extension names."
-  [^Connection conn extensions-path]
+  [^Pointer handle extensions-path]
   ;; First load embedded extensions
-  (let [embedded-loaded (load-all-embedded-extensions conn)
+  (let [embedded-loaded (load-all-embedded-extensions handle)
         ;; Then load from external directory
         external-extensions (find-extensions extensions-path)
         ;; Filter out extensions already loaded from embedded
         external-to-load (remove #(contains? embedded-loaded (:name %)) external-extensions)]
     (if (empty? external-to-load)
       embedded-loaded
-      (let [results (map #(load-extension conn %) external-to-load)
+      (let [results (map #(load-extension handle %) external-to-load)
             loaded (filter :loaded results)]
         (into embedded-loaded (map :name loaded))))))
 

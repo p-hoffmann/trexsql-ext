@@ -64,9 +64,9 @@
    (let [env-config (parse-trex-init)
          merged-config (merge config/default-config (or env-config {}) config)
          extensions-path (config/get-extensions-path merged-config)
-         conn (db/create-connection merged-config)
-         loaded (ext/load-extensions conn extensions-path)
-         database (db/make-database conn merged-config)]
+         handle (db/create-connection merged-config)
+         loaded (ext/load-extensions handle extensions-path)
+         database (db/make-database handle merged-config)]
      (reset! (:extensions-loaded database) loaded)
      (reset! current-database database)
      (when env-config
