@@ -8,15 +8,12 @@ CHDB_EXT=$(REPO_ROOT)/ext/chdb/build/debug/extension/chdb/chdb.trex
 HANA_EXT=$(REPO_ROOT)/ext/hana/build/debug/extension/hana_scan/hana_scan.trex
 TPM_EXT=$(REPO_ROOT)/ext/tpm/build/debug/extension/tpm/tpm.trex
 ETL_EXT=$(REPO_ROOT)/ext/etl/build/debug/extension/etl/etl.trex
-PYTHON_BIN?=python3
-VENV=./venv
-
-.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-swarm test-circe test-llama test-chdb test-chdb-swarm test-hana test-tpm test-etl test-etl-swarm check-extensions check-pgwire check-circe check-llama check-chdb check-hana check-tpm check-etl check-swarm hana-up hana-down hana-clean clean
 MIGRATION_EXT=$(REPO_ROOT)/ext/migration/build/debug/extension/migration/migration.trex
+FHIR_EXT=$(REPO_ROOT)/ext/fhir/target/release/libfhir.so
 PYTHON_BIN?=python3
 VENV=./venv
 
-.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-swarm test-circe test-llama test-chdb test-chdb-swarm test-hana test-tpm test-pg-trex check-extensions check-pgwire check-circe check-llama check-chdb check-hana check-tpm check-migration hana-up hana-down hana-clean pg-trex-up pg-trex-down clean
+.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-swarm test-circe test-llama test-chdb test-chdb-swarm test-hana test-tpm test-etl test-etl-swarm test-fhir test-pg-trex check-extensions check-pgwire check-circe check-llama check-chdb check-hana check-tpm check-etl check-fhir check-migration check-swarm hana-up hana-down hana-clean pg-trex-up pg-trex-down clean
 
 configure:
 	$(PYTHON_BIN) -m venv $(VENV)
@@ -125,6 +122,12 @@ check-migration:
 
 test-migration: check-migration
 	$(VENV)/bin/pytest -v test_migration_standalone.py
+
+check-fhir:
+	@test -f $(FHIR_EXT) || (echo "Build fhir first: cd ../ext/fhir && cargo build --release" && exit 1)
+
+test-fhir: check-fhir
+	$(VENV)/bin/pytest -v test_fhir_standalone.py
 
 clean:
 	rm -rf venv __pycache__ .pytest_cache
