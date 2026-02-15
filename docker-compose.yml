@@ -1,0 +1,38 @@
+volumes:
+  core-pgdata:
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: trexsql-postgres
+    ports:
+      - 65433:5432
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mypass
+      POSTGRES_DB: testdb
+    volumes:
+      - core-pgdata:/var/lib/postgresql/data
+      - ./core/seed.sql:/docker-entrypoint-initdb.d/seed.sql
+      - ./core/schema:/docker-entrypoint-initdb.d/schema
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  trex:
+    build:
+      context: .
+      dockerfile: Dockerfile.core
+    ports:
+      - 8001:8001
+    volumes:
+      - ./core:/usr/src/core
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:mypass@postgres:5432/testdb
+      BETTER_AUTH_SECRET: dev-secret-at-least-32-characters-long!!
+      BETTER_AUTH_URL: http://localhost:8001

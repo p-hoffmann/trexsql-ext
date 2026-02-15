@@ -1,0 +1,12 @@
+{
+  "name": "@trexsql/ext",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@trex/as": "latest",
+    "@trex/circe": "latest",
+    "@trex/hana": "latest",
+    "@trex/pgwire": "latest",
+    "@trex/tpm": "latest"
+  }
+}

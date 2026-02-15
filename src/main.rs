@@ -24,7 +24,8 @@ fn main() {
             Ok(entries) => {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if path.extension().and_then(|e| e.to_str()) == Some("trex") {
+                    let ext = path.extension().and_then(|e| e.to_str());
+                    if ext == Some("trex") || ext == Some("duckdb_extension") {
                         let path_str = path.display().to_string();
                         let safe_path = path_str.replace("'", "''");
                         print!("Loading extension: {path_str} ... ");
