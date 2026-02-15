@@ -84,6 +84,7 @@ jobs:
           - PKGPATH: ./ext/flight
           - PKGPATH: ./ext/etl
           - PKGPATH: ./ext/bao
+            RUNNER: ubuntu-24.04
 
     runs-on: ${{ matrix.RUNNER || needs.pick_runner.outputs.random_runner }}
 
