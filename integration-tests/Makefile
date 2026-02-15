@@ -1,5 +1,4 @@
 REPO_ROOT=$(shell cd .. && pwd)
-FLIGHT_EXT=$(REPO_ROOT)/ext/flight/build/debug/extension/flight/flight.trex
 SWARM_EXT=$(REPO_ROOT)/ext/swarm/build/debug/extension/swarm/swarm.trex
 PGWIRE_EXT=$(REPO_ROOT)/ext/pgwire/build/debug/extension/pgwire/pgwire.trex
 CIRCE_EXT=$(REPO_ROOT)/ext/circe/build/release/extension/circe/circe.trex
@@ -20,7 +19,6 @@ configure:
 	$(VENV)/bin/pip install 'duckdb==1.4.4' pytest psycopg2-binary
 
 check-extensions:
-	@test -f $(FLIGHT_EXT) || (echo "Build flight first: cd ../ext/flight && make configure && make debug" && exit 1)
 	@test -f $(SWARM_EXT) || (echo "Build swarm first: cd ../ext/swarm && make configure && make debug" && exit 1)
 
 check-pgwire:
@@ -46,6 +44,27 @@ test-tier2: check-extensions
 
 test-tier3: check-extensions
 	$(VENV)/bin/pytest -v test_tier3_aggregation.py
+
+test-tier4: check-extensions
+	$(VENV)/bin/pytest -v test_tier4_cross_node_joins.py
+
+test-tier5: check-extensions
+	$(VENV)/bin/pytest -v test_tier5_workload_mgmt.py
+
+test-tier6: check-extensions
+	$(VENV)/bin/pytest -v test_tier6_ballista.py
+
+test-distributed: test-tier6
+
+test-tier7: check-extensions
+	SWARM_BROADCAST_THRESHOLD=0 $(VENV)/bin/pytest -v test_tier7_shuffle.py
+
+test-shuffle: test-tier7
+
+test-tier8: check-extensions
+	$(VENV)/bin/pytest -v test_tier8_partitioning.py
+
+test-partitioning: test-tier8
 
 test-pgwire: check-pgwire
 	$(VENV)/bin/pytest -v test_pgwire_standalone.py

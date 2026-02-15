@@ -81,9 +81,9 @@ jobs:
           - PKGPATH: ./ext/tpm
           - PKGPATH: ./ext/migration
           - PKGPATH: ./ext/swarm
-          - PKGPATH: ./ext/flight
           - PKGPATH: ./ext/etl
           - PKGPATH: ./ext/bao
+            RUNNER: ubuntu-24.04
 
     runs-on: ${{ matrix.RUNNER || needs.pick_runner.outputs.random_runner }}
 
@@ -118,7 +118,22 @@ jobs:
           else
             jq --arg v "-$(date +%s)-$GITHUB_SHA" '.version+=$v' package.json > tmppkg; mv tmppkg package.json
           fi
-      - name: Set up Java 17
+      - name: Set up Rust toolchain
+        if: matrix.PKGPATH == './ext/bao'
+        uses: dtolnay/rust-toolchain@stable
+      - name: Download libtrexsql and build native library
+        if: matrix.PKGPATH == './ext/bao'
+        run: |
+          mkdir -p /tmp/trexsql
+          wget -q -O /tmp/libtrexsql.zip \
+            https://github.com/p-hoffmann/trexsql-rs/releases/download/v1.4.4-trex/libtrexsql-linux-amd64.zip
+          unzip -o /tmp/libtrexsql.zip -d /tmp/trexsql
+          ln -sf /tmp/trexsql/libtrexsql.so /tmp/trexsql/libduckdb.so
+          TREXSQL_LIB_DIR=/tmp/trexsql cargo build --release
+          mkdir -p ext/bao/java/resources/linux-x86-64
+          cp target/release/libtrexsql_engine.so ext/bao/java/resources/linux-x86-64/
+          cp /tmp/trexsql/libtrexsql.so ext/bao/java/resources/linux-x86-64/libduckdb.so
+      - name: Set up Java 21
         if: matrix.PKGPATH == './ext/bao'
         uses: actions/setup-java@v4
         with:
@@ -197,6 +212,36 @@ jobs:
           name: ext-${{ steps.extname.outputs.name }}
           path: ${{ matrix.PKGPATH }}/*.trex
           retention-days: 1
+
+  create-release:
+    needs: [build]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_BRANCH_NAME }}
+          repository: ${{ env.GIT_REPO_FULL_NAME }}
+      - name: Download all extension artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ext-*
+          path: release-assets/
+          merge-multiple: true
+      - name: List release assets
+        run: ls -la release-assets/
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag }}
+          name: ${{ github.event.inputs.release }}
+          prerelease: ${{ github.event.inputs.prerelease }}
+          files: release-assets/*.trex
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-docker:
     needs: [build]
@@ -307,8 +352,7 @@ jobs:
             pg-trex-test \
             postgres \
             -c shared_preload_libraries=pg_trex \
-            -c pg_trex.swarm_extension_path=/usr/lib/trexsql/extensions/swarm.trex \
-            -c pg_trex.flight_extension_path=/usr/lib/trexsql/extensions/flight.trex
+            -c pg_trex.swarm_extension_path=/usr/lib/trexsql/extensions/swarm.trex
           sleep 8
           docker exec pg-trex-smoke pg_isready -U postgres
           docker exec pg-trex-smoke psql -U postgres -c "SELECT state FROM pg_trex_status()"
@@ -331,13 +375,13 @@ jobs:
           docker push ghcr.io/p-hoffmann/pg-trex:sha-${{ github.sha }}
 
   success:
-    needs: [build, build-docker, build-pg-trex]
+    needs: [build, build-docker, build-pg-trex, create-release]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check
         run: |
-          if [[ "${{ needs.build.result }}" == "failure" || "${{ needs.build-docker.result }}" == "failure" || "${{ needs.build-pg-trex.result }}" == "failure" ]]; then
+          if [[ "${{ needs.build.result }}" == "failure" || "${{ needs.build-docker.result }}" == "failure" || "${{ needs.build-pg-trex.result }}" == "failure" || "${{ needs.create-release.result }}" == "failure" ]]; then
             echo "::error::One or more jobs failed"
             exit 1
           fi

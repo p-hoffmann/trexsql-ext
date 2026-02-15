@@ -7,10 +7,6 @@ JAVA_DIR="$PROJECT_DIR/java"
 LIB_DIR="$PROJECT_DIR/lib"
 JAR_FILE="$LIB_DIR/trexsql.jar"
 
-# Version of trexsql-java to use (must have public signing key embedded)
-TREXSQL_VERSION="v0.1.5"
-DOWNLOAD_URL="https://github.com/p-hoffmann/trexsql-java/releases/download/${TREXSQL_VERSION}/trexsql-${TREXSQL_VERSION#v}.jar"
-
 mkdir -p "$LIB_DIR"
 
 # Check if JAR already exists
@@ -31,29 +27,29 @@ if ! command -v lein &> /dev/null; then
     exit 1
 fi
 
-# Download pre-built JDBC JAR from GitHub Releases (has signing key embedded)
-# and install to local Maven repository so lein uses it instead of JitPack
-M2_DIR="$HOME/.m2/repository/com/github/p-hoffmann/trexsql-java/${TREXSQL_VERSION}"
-echo "Downloading JDBC driver from GitHub Releases (${TREXSQL_VERSION})..."
-if curl -fsSL -o "/tmp/trexsql-jdbc.jar" "$DOWNLOAD_URL"; then
-    echo "Downloaded JDBC driver, installing to local Maven repo..."
-    mkdir -p "$M2_DIR"
-    cp "/tmp/trexsql-jdbc.jar" "$M2_DIR/trexsql-java-${TREXSQL_VERSION}.jar"
-    # Create minimal POM
-    cat > "$M2_DIR/trexsql-java-${TREXSQL_VERSION}.pom" << 'POMEOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<project>
-  <modelVersion>4.0.0</modelVersion>
-  <groupId>com.github.p-hoffmann</groupId>
-  <artifactId>trexsql-java</artifactId>
-  <version>v0.1.5</version>
-  <packaging>jar</packaging>
-</project>
-POMEOF
-    rm -f "/tmp/trexsql-jdbc.jar"
-    echo "Installed JDBC driver with signing key to local Maven repo"
+# Ensure native libraries are in resources for JNA classpath loading
+RESOURCE_DIR="$JAVA_DIR/resources/linux-x86-64"
+REPO_ROOT="$(cd "$PROJECT_DIR/../.." && pwd)"
+NATIVE_LIB="$REPO_ROOT/target/release/libtrexsql_engine.so"
+
+if [[ -f "$RESOURCE_DIR/libtrexsql_engine.so" ]]; then
+    echo "Native libraries already in resources (placed by CI)"
+elif [[ -f "$NATIVE_LIB" ]]; then
+    mkdir -p "$RESOURCE_DIR"
+    cp "$NATIVE_LIB" "$RESOURCE_DIR/"
+    echo "Bundled: $NATIVE_LIB"
+    # Bundle libduckdb.so (trexsql_engine's runtime dependency)
+    for DUCKDB_LIB in /usr/local/lib/libduckdb.so /usr/lib/libduckdb.so /usr/lib/libtrexsql.so; do
+        if [[ -f "$DUCKDB_LIB" ]]; then
+            cp "$DUCKDB_LIB" "$RESOURCE_DIR/libduckdb.so"
+            echo "Bundled: $DUCKDB_LIB -> libduckdb.so"
+            break
+        fi
+    done
 else
-    echo "Download failed, will use JitPack (extensions may fail signature verification)"
+    echo "Error: libtrexsql_engine.so not found"
+    echo "Build it first with: cargo build --release"
+    exit 1
 fi
 
 echo "Building trexsql.jar from source..."

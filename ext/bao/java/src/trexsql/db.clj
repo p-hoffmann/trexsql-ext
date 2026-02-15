@@ -1,9 +1,10 @@
 (ns trexsql.db
-  "TrexSQL connection management and query execution."
+  "TrexSQL connection management and query execution via native C API."
   (:require [clojure.string :as str]
             [clojure.tools.logging :as log]
+            [trexsql.native :as native]
             [trexsql.errors :as errors])
-  (:import [java.sql Connection DriverManager ResultSet ResultSetMetaData SQLException]
+  (:import [com.sun.jna Pointer]
            [java.util ArrayList HashMap]))
 
 (def ^:private identifier-pattern
@@ -46,35 +47,27 @@
   (str "\"" (str/replace s "\"" "\"\"") "\""))
 
 (defn create-connection
-  "Create a TrexSQL connection.
-   Returns a java.sql.Connection to an in-memory database.
+  "Create a TrexSQL native connection.
+   Returns a JNA Pointer handle to the database.
    Config options:
    - :allow-unsigned-extensions - enable loading unsigned extensions"
   ([]
    (create-connection {}))
   ([config]
-   (let [props (java.util.Properties.)]
-     ;; Set allow_unsigned_extensions via connection properties (must be set at connection time)
-     (when (:allow-unsigned-extensions config)
-       (.setProperty props "allow_unsigned_extensions" "true"))
-     (let [conn (DriverManager/getConnection "jdbc:trex:" props)]
-       (try
-         (with-open [stmt (.createStatement conn)]
-           (.execute stmt "CALL disable_logging()"))
-         (catch SQLException _))
-       conn))))
+   (let [flags (if (:allow-unsigned-extensions config) 1 0)]
+     (native/open ":memory:" flags))))
 
-(defrecord TrexsqlDatabase [^Connection connection
-                            extensions-loaded  ; atom of set
+(defrecord TrexsqlDatabase [handle                ; JNA Pointer to native TrexDatabase
+                            extensions-loaded      ; atom of set
                             config
-                            servers-running?   ; atom of boolean
-                            closed?])          ; atom of boolean
+                            servers-running?       ; atom of boolean
+                            closed?])              ; atom of boolean
 
 (defn make-database
   "Create a new TrexsqlDatabase record.
    Uses atoms for mutable state (closed?, extensions-loaded, servers-running?)."
-  [conn config]
-  (map->TrexsqlDatabase {:connection conn
+  [handle config]
+  (map->TrexsqlDatabase {:handle handle
                          :extensions-loaded (atom #{})
                          :config config
                          :servers-running? (atom false)
@@ -90,8 +83,8 @@
   "Close the database connection and mark as closed."
   [^TrexsqlDatabase db]
   (when-not @(:closed? db)
-    (when-let [conn (:connection db)]
-      (.close conn))
+    (when-let [handle (:handle db)]
+      (native/close! handle))
     (reset! (:closed? db) true)))
 
 (defn closed?
@@ -117,63 +110,30 @@
                           (format "INSTALL %s FROM %s" ext-name source)
                           (format "INSTALL %s" ext-name))]
         (try
-          (with-open [stmt (.createStatement (:connection db))]
-            (.execute stmt install-sql))
-          (catch SQLException e
+          (native/execute! (:handle db) install-sql)
+          (catch Exception e
             (log/debug (format "Extension %s install returned: %s (may already be installed)"
                                ext-name (.getMessage e)))))
-        (with-open [stmt (.createStatement (:connection db))]
-          (.execute stmt (format "LOAD %s" ext-name))))
+        (native/execute! (:handle db) (format "LOAD %s" ext-name)))
       (swap! (:extensions-loaded db) conj ext-name)
       true)))
 
-(defn- resultset->row
-  "Convert current ResultSet row to a HashMap."
-  [^ResultSet rs ^ResultSetMetaData meta col-count]
-  (let [row (HashMap.)]
-    (doseq [i (range 1 (inc col-count))]
-      (let [col-name (.getColumnLabel meta i)
-            value (.getObject rs i)]
-        (.put row col-name value)))
-    row))
-
-(defn result-set->list
-  "Convert a ResultSet to an ArrayList of HashMaps.
-   Each row is a HashMap<String, Object> with column names as keys."
-  [^ResultSet rs]
-  (let [meta (.getMetaData rs)
-        col-count (.getColumnCount meta)
-        results (ArrayList.)]
-    (while (.next rs)
-      (.add results (resultset->row rs meta col-count)))
-    results))
-
 (defn query
   "Execute a SQL query and return results as ArrayList<HashMap>.
-   Throws sql-error on SQLException.
+   Throws sql-error on error.
    Throws resource-error if database is closed."
   [^TrexsqlDatabase db ^String sql]
   (ensure-open! db)
-  (try
-    (with-open [stmt (.createStatement (:connection db))
-                rs (.executeQuery stmt sql)]
-      (result-set->list rs))
-    (catch SQLException e
-      (throw (errors/sql-error (str "SQL error: " (.getMessage e)) sql e)))))
+  (native/query (:handle db) sql))
 
 (defn execute!
   "Execute a non-query SQL statement (DDL, DML, LOAD, etc.).
    Returns true on success.
-   Throws sql-error on SQLException.
+   Throws sql-error on error.
    Throws resource-error if database is closed."
   [^TrexsqlDatabase db ^String sql]
   (ensure-open! db)
-  (try
-    (with-open [stmt (.createStatement (:connection db))]
-      (.execute stmt sql)
-      true)
-    (catch SQLException e
-      (throw (errors/sql-error (str "SQL error: " (.getMessage e)) sql e)))))
+  (native/execute! (:handle db) sql))
 
 (defn attach-cache-file!
   "Attach a TrexSQL cache file using ATTACH IF NOT EXISTS.
@@ -246,7 +206,7 @@
 (defn is-attached?
   "Check if a database with the given alias is currently attached.
    Returns true if attached, false otherwise.
-   Throws RuntimeException on SQL errors (T3.1.4 - don't silently swallow)."
+   Throws RuntimeException on SQL errors."
   [^TrexsqlDatabase db ^String database-alias]
   (ensure-open! db)
   (let [results (query db "SELECT database_name FROM duckdb_databases()")]
@@ -266,39 +226,27 @@
 (defn query-with-params
   "Execute a parameterized SQL query and return results as ArrayList<HashMap>.
    Params is a vector of values to bind to ? placeholders in the SQL.
-   Throws sql-error on SQLException.
+   Uses string interpolation with proper escaping.
+   Throws sql-error on error.
    Throws resource-error if database is closed."
   [^TrexsqlDatabase db ^String sql params]
   (ensure-open! db)
-  (try
-    (with-open [stmt (.prepareStatement (:connection db) sql)]
-      (doseq [[idx param] (map-indexed vector params)]
-        (.setObject stmt (inc idx) param))
-      (with-open [rs (.executeQuery stmt)]
-        (result-set->list rs)))
-    (catch SQLException e
-      (throw (errors/sql-error (str "SQL error: " (.getMessage e)) sql e)))))
+  (native/query-with-params (:handle db) sql params))
 
 (defn execute-with-params!
   "Execute a parameterized non-query SQL statement (INSERT, UPDATE, DELETE).
    Params is a vector of values to bind to ? placeholders in the SQL.
-   Returns the number of affected rows.
-   Throws sql-error on SQLException.
+   Uses string interpolation with proper escaping.
+   Throws sql-error on error.
    Throws resource-error if database is closed."
   [^TrexsqlDatabase db ^String sql params]
   (ensure-open! db)
-  (try
-    (with-open [stmt (.prepareStatement (:connection db) sql)]
-      (doseq [[idx param] (map-indexed vector params)]
-        (.setObject stmt (inc idx) param))
-      (.executeUpdate stmt))
-    (catch SQLException e
-      (throw (errors/sql-error (str "SQL error: " (.getMessage e)) sql e)))))
+  (native/execute-with-params! (:handle db) sql params))
 
-(defn get-raw-connection
-  "Get the underlying JDBC connection. Use with caution - prefer using
+(defn get-raw-handle
+  "Get the underlying native database handle. Use with caution - prefer using
    query, execute!, etc. for normal operations.
    Throws resource-error if database is closed."
-  ^Connection [^TrexsqlDatabase db]
+  ^Pointer [^TrexsqlDatabase db]
   (ensure-open! db)
-  (:connection db))
+  (:handle db))

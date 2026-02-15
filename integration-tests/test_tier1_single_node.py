@@ -1,22 +1,23 @@
 """Tier 1: Single-node smoke tests.
 
-Verifies that a single trexsql instance can load both extensions,
-start a Flight server, start swarm, and register itself.
+Verifies that a single trexsql instance can load the swarm extension
+(which includes flight), start a Flight server, start swarm, and
+register itself.
 """
 
 from conftest import wait_for
 
 
 def test_load_extensions(node_factory):
-    """Both extensions load without error."""
-    node = node_factory(load_flight=True, load_swarm=True)
+    """Swarm extension loads without error."""
+    node = node_factory(load_swarm=True)
     result = node.execute("SELECT 1")
     assert result == [(1,)]
 
 
 def test_flight_server_lifecycle(node_factory):
     """Start flight server, check status, stop it."""
-    node = node_factory(load_flight=True, load_swarm=False)
+    node = node_factory(load_swarm=True)
 
     # Create test data
     node.execute(
@@ -38,7 +39,7 @@ def test_flight_server_lifecycle(node_factory):
 
 def test_swarm_self_discovery(node_factory):
     """Start swarm, register flight service, see self in swarm_nodes()."""
-    node = node_factory(load_flight=True, load_swarm=True)
+    node = node_factory(load_swarm=True)
 
     # Create test data
     node.execute(
@@ -66,7 +67,7 @@ def test_swarm_self_discovery(node_factory):
 
 def test_swarm_tables_single_node(node_factory):
     """Single-node swarm_tables() shows local table."""
-    node = node_factory(load_flight=True, load_swarm=True)
+    node = node_factory(load_swarm=True)
 
     node.execute(
         "CREATE TABLE orders AS "

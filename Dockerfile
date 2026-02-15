@@ -30,9 +30,10 @@ RUN cd /tmp && \
 # Cache dependency build: copy manifests first, build with dummy src, then replace
 COPY Cargo.toml Cargo.lock /usr/src/trexsql/
 WORKDIR /usr/src/trexsql
-RUN mkdir src && echo "fn main() {}" > src/main.rs && \
+RUN mkdir src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs && \
     cargo build --release && \
-    rm -rf src target/release/trex target/release/deps/trexsql-* target/release/.fingerprint/trexsql-*
+    rm -rf src target/release/trex target/release/libtrexsql_engine* \
+      target/release/deps/trexsql* target/release/.fingerprint/trexsql-*
 
 COPY src/ /usr/src/trexsql/src/
 RUN cargo build --release
@@ -47,6 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /opt/trexsql/libtrexsql.so /usr/lib/
 COPY --from=builder /opt/libchdb.so /usr/lib/
 COPY --from=builder /usr/src/trexsql/target/release/trex /usr/bin/
+COPY --from=builder /usr/src/trexsql/target/release/libtrexsql_engine.so /usr/lib/
 
 RUN mkdir -p /usr/lib/trexsql/extensions
 COPY extensions/*.trex /usr/lib/trexsql/extensions/

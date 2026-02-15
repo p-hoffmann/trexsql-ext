@@ -2,11 +2,12 @@
   "JDBC to TrexSQL type mapping and value conversion."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.tools.logging :as log])
+            [clojure.tools.logging :as log]
+            [trexsql.native :as native])
   (:import [java.sql ResultSet ResultSetMetaData Types]
            [java.time LocalDate LocalDateTime LocalTime]
            [java.math BigDecimal]
-           [org.trex TrexSQLAppender]))
+           [com.sun.jna Pointer]))
 
 (def jdbc-to-trexsql-types
   "JDBC type codes to TrexSQL type names. Loaded from jdbc-type-mappings.edn."
@@ -87,30 +88,31 @@
     :else (LocalDateTime/parse (str value))))
 
 (defn append-typed-value!
-  "Append value to TrexSQL Appender with type conversion."
-  [^TrexSQLAppender appender value trexsql-type]
+  "Append value to TrexSQL native Appender with type conversion.
+   Uses native C API appender functions."
+  [^Pointer appender value trexsql-type]
   (if (nil? value)
-    (.appendNull appender)
+    (native/appender-append-null! appender)
     (case trexsql-type
-      "BIGINT"    (.append appender (long value))
-      "INTEGER"   (.append appender (int value))
-      "SMALLINT"  (.append appender (short value))
-      "TINYINT"   (.append appender (byte value))
-      "DOUBLE"    (.append appender (double value))
-      "FLOAT"     (.append appender (float value))
-      "REAL"      (.append appender (float value))
-      "DECIMAL"   (.append appender (if (instance? BigDecimal value)
-                                       value
-                                       (BigDecimal. (str value))))
-      "VARCHAR"   (.append appender (str value))
-      "BOOLEAN"   (.append appender (boolean value))
-      "DATE"      (.append appender (to-local-date value))
-      "TIME"      (.append appender (to-local-time value))
-      "TIMESTAMP" (.append appender (to-local-datetime value))
-      "BLOB"      (.append appender (if (bytes? value)
-                                       value
-                                       (.getBytes (str value) "UTF-8")))
-      (.append appender (str value)))))
+      "BIGINT"    (native/appender-append-long! appender (long value))
+      "INTEGER"   (native/appender-append-int! appender (int value))
+      "SMALLINT"  (native/appender-append-int! appender (int (short value)))
+      "TINYINT"   (native/appender-append-int! appender (int (byte value)))
+      "DOUBLE"    (native/appender-append-double! appender (double value))
+      "FLOAT"     (native/appender-append-double! appender (double (float value)))
+      "REAL"      (native/appender-append-double! appender (double (float value)))
+      "DECIMAL"   (native/appender-append-string! appender (str (if (instance? BigDecimal value)
+                                                                    value
+                                                                    (BigDecimal. (str value)))))
+      "VARCHAR"   (native/appender-append-string! appender (str value))
+      "BOOLEAN"   (native/appender-append-boolean! appender (boolean value))
+      "DATE"      (native/appender-append-string! appender (str (to-local-date value)))
+      "TIME"      (native/appender-append-string! appender (str (to-local-time value)))
+      "TIMESTAMP" (native/appender-append-string! appender (str (to-local-datetime value)))
+      "BLOB"      (native/appender-append-string! appender (if (bytes? value)
+                                                               (String. ^bytes value "UTF-8")
+                                                               (str value)))
+      (native/appender-append-string! appender (str value)))))
 
 (defn read-typed-value
   "Read value from ResultSet with type handling. Returns nil for SQL NULL."

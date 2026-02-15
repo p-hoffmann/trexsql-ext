@@ -3,54 +3,77 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::net::SocketAddr;
 
-// ---------------------------------------------------------------------------
-// Data model
-// ---------------------------------------------------------------------------
-
-/// Top-level cluster configuration parsed from the `SWARM_CONFIG` env var.
+/// Cluster configuration parsed from the `SWARM_CONFIG` env var.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusterConfig {
     pub cluster_id: String,
     #[serde(default)]
     pub tls: Option<TlsConfig>,
+    /// When true, `swarm_query()` uses DataFusion instead of the legacy coordinator.
+    #[serde(default)]
+    pub distributed_engine: bool,
+    #[serde(default)]
+    pub admission: Option<AdmissionConfig>,
     pub nodes: HashMap<String, NodeConfig>,
 }
 
-/// Cluster-wide TLS configuration (shared CA certificate).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdmissionConfig {
+    #[serde(default = "default_max_concurrent")]
+    pub default_max_concurrent: u32,
+    /// Reject queries when cluster memory exceeds this percentage.
+    #[serde(default = "default_memory_threshold")]
+    pub memory_rejection_threshold_pct: f64,
+    #[serde(default = "default_priority")]
+    pub default_priority: String,
+}
+
+fn default_max_concurrent() -> u32 {
+    10
+}
+
+fn default_memory_threshold() -> f64 {
+    85.0
+}
+
+fn default_priority() -> String {
+    "interactive".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TlsConfig {
     pub ca_cert: String,
 }
 
-/// Per-node TLS configuration (certificate + private key).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeTlsConfig {
     pub cert: String,
     pub key: String,
 }
 
-/// Configuration for a single node in the cluster.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeConfig {
     pub gossip_addr: String,
     #[serde(default = "default_true")]
     pub data_node: bool,
+    #[serde(default = "default_roles")]
+    pub roles: Vec<String>,
     #[serde(default)]
     pub tls: Option<NodeTlsConfig>,
     #[serde(default)]
     pub extensions: Vec<ExtensionConfig>,
 }
 
+fn default_roles() -> Vec<String> {
+    vec!["executor".to_string()]
+}
+
 fn default_true() -> bool {
     true
 }
 
-/// An extension hosted by a node (e.g. a Flight SQL endpoint).
-///
-/// Service-specific settings (host, port, password, TLS paths, etc.) live
-/// inside the opaque `config` JSON value.  The swarm layer extracts `host`
-/// and `port` from it at runtime for gossip registration; everything else
-/// is passed through to the extension's own start function.
+/// Extension hosted by a node. The opaque `config` JSON carries service-specific
+/// settings; swarm extracts `host`/`port` for gossip, passes the rest through.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionConfig {
     pub name: String,
@@ -58,14 +81,7 @@ pub struct ExtensionConfig {
     pub config: Option<serde_json::Value>,
 }
 
-// ---------------------------------------------------------------------------
-// Parsing helpers
-// ---------------------------------------------------------------------------
-
 impl ClusterConfig {
-    /// Read `SWARM_CONFIG` from the environment, parse it as JSON, and
-    /// validate the result.  Returns `Err` with a descriptive message on
-    /// any failure so the caller can fall back to manual / single-node mode.
     pub fn from_env() -> Result<Self, String> {
         let raw = env::var("SWARM_CONFIG").map_err(|_| {
             "SWARM_CONFIG environment variable is not set".to_string()
@@ -74,7 +90,6 @@ impl ClusterConfig {
         Self::from_json(&raw)
     }
 
-    /// Parse a `ClusterConfig` from a raw JSON string and validate it.
     pub fn from_json(json: &str) -> Result<Self, String> {
         let config: ClusterConfig = serde_json::from_str(json).map_err(|e| {
             let msg = format!("Failed to parse SWARM_CONFIG JSON: {e}");
@@ -86,15 +101,11 @@ impl ClusterConfig {
         Ok(config)
     }
 
-    /// Validate the parsed configuration, returning a descriptive error
-    /// string on the first problem found.
     pub fn validate(&self) -> Result<(), String> {
-        // 1. cluster_id must be non-empty
         if self.cluster_id.trim().is_empty() {
             return Err("cluster_id must be non-empty".to_string());
         }
 
-        // 2 & 3. Validate gossip addresses and check uniqueness
         let mut seen_addrs: HashSet<SocketAddr> = HashSet::new();
 
         for (name, node) in &self.nodes {
@@ -112,8 +123,6 @@ impl ClusterConfig {
                 ));
             }
 
-            // 4. For each extension, if config.host is set then config.port
-            //    must also be set (for network-based services).
             for ext in &node.extensions {
                 if let Some(ref cfg) = ext.config {
                     let has_host = cfg.get("host").and_then(|v| v.as_str()).is_some();
@@ -128,41 +137,55 @@ impl ClusterConfig {
             }
         }
 
+        if self.distributed_engine {
+            let has_scheduler = self.nodes.values().any(|n| n.roles.contains(&"scheduler".to_string()));
+            if !has_scheduler {
+                return Err(
+                    "distributed_engine is enabled but no node has the 'scheduler' role".to_string(),
+                );
+            }
+
+            for (name, node) in &self.nodes {
+                if node.roles.contains(&"executor".to_string()) {
+                    let has_flight = node.extensions.iter().any(|e| e.name == "flight");
+                    if !has_flight {
+                        eprintln!(
+                            "Warning: node '{}' has executor role but no 'flight' extension configured \
+                             (required for distributed query transport)",
+                            name,
+                        );
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }
 
-// ---------------------------------------------------------------------------
-// Node identity helpers
-// ---------------------------------------------------------------------------
-
-/// Read the current node's logical name from the `SWARM_NODE` env var.
 pub fn get_node_name() -> Result<String, String> {
     env::var("SWARM_NODE")
         .map_err(|_| "SWARM_NODE environment variable is not set".to_string())
 }
 
-/// Look up the current node (identified by `SWARM_NODE`) inside the given
-/// cluster configuration.  Returns `Some((&node_name, &NodeConfig))` when
-/// found, or `None` when `SWARM_NODE` is unset or the name does not appear
-/// in the config.
+/// Look up this node (via `SWARM_NODE` env var) in the cluster config.
 pub fn get_this_node_config(config: &ClusterConfig) -> Option<(&str, &NodeConfig)> {
     let name = env::var("SWARM_NODE").ok()?;
-    config
-        .nodes
-        .get_key_value(name.as_str())
-        .map(|(k, v)| (k.as_str(), v))
+    get_node_config_by_name(config, &name)
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+/// Look up a node by name in the cluster config.
+pub fn get_node_config_by_name<'a>(config: &'a ClusterConfig, name: &str) -> Option<(&'a str, &'a NodeConfig)> {
+    config
+        .nodes
+        .get_key_value(name)
+        .map(|(k, v)| (k.as_str(), v))
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Minimal valid two-node config used by several tests.
     fn sample_json() -> &'static str {
         r#"{
             "cluster_id": "test-cluster",
@@ -278,22 +301,66 @@ mod tests {
     }
 
     #[test]
-    fn get_this_node_config_returns_matching_node() {
+    fn get_node_config_by_name_returns_matching_node() {
         let cfg = ClusterConfig::from_json(sample_json()).unwrap();
 
-        env::set_var("SWARM_NODE", "node-b");
-        let (name, node) = get_this_node_config(&cfg).unwrap();
+        let (name, node) = get_node_config_by_name(&cfg, "node-b").unwrap();
         assert_eq!(name, "node-b");
         assert!(!node.data_node);
-        env::remove_var("SWARM_NODE");
     }
 
     #[test]
-    fn get_this_node_config_returns_none_for_unknown() {
+    fn get_node_config_by_name_returns_none_for_unknown() {
         let cfg = ClusterConfig::from_json(sample_json()).unwrap();
 
-        env::set_var("SWARM_NODE", "no-such-node");
-        assert!(get_this_node_config(&cfg).is_none());
-        env::remove_var("SWARM_NODE");
+        assert!(get_node_config_by_name(&cfg, "no-such-node").is_none());
+    }
+
+    #[test]
+    fn distributed_engine_requires_scheduler_role() {
+        let json = r#"{
+            "cluster_id": "c",
+            "distributed_engine": true,
+            "nodes": {
+                "n": {
+                    "gossip_addr": "127.0.0.1:7100",
+                    "roles": ["executor"],
+                    "extensions": [{ "name": "flight", "config": {"host": "0.0.0.0", "port": 8815} }]
+                }
+            }
+        }"#;
+        let err = ClusterConfig::from_json(json).unwrap_err();
+        assert!(err.contains("scheduler"), "error was: {err}");
+    }
+
+    #[test]
+    fn distributed_engine_with_scheduler_role_ok() {
+        let json = r#"{
+            "cluster_id": "c",
+            "distributed_engine": true,
+            "nodes": {
+                "n": {
+                    "gossip_addr": "127.0.0.1:7100",
+                    "roles": ["scheduler"],
+                    "extensions": [{ "name": "flight", "config": {"host": "0.0.0.0", "port": 8815} }]
+                }
+            }
+        }"#;
+        assert!(ClusterConfig::from_json(json).is_ok());
+    }
+
+    #[test]
+    fn distributed_engine_false_no_scheduler_ok() {
+        let json = r#"{
+            "cluster_id": "c",
+            "distributed_engine": false,
+            "nodes": {
+                "n": {
+                    "gossip_addr": "127.0.0.1:7100",
+                    "roles": ["executor"]
+                }
+            }
+        }"#;
+        assert!(ClusterConfig::from_json(json).is_ok());
     }
 }
