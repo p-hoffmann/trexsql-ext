@@ -8,6 +8,6 @@
 	path = ext/llama/llama.cpp
 	url = https://github.com/ggml-org/llama.cpp.git
 [submodule "trex"]
-	path = trex
+	path = ext/runtime
 	url = https://github.com/OHDSI/trex.git
 	branch = develop

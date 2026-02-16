@@ -9,7 +9,7 @@ TPM_EXT=$(REPO_ROOT)/ext/tpm/build/debug/extension/tpm/tpm.trex
 ETL_EXT=$(REPO_ROOT)/ext/etl/build/debug/extension/etl/etl.trex
 MIGRATION_EXT=$(REPO_ROOT)/ext/migration/build/debug/extension/migration/migration.trex
 FHIR_EXT=$(REPO_ROOT)/ext/fhir/target/release/libfhir.so
-TREXAS_EXT=$(REPO_ROOT)/trex/ext/trexas/build/debug/extension/trexas/trexas.trex
+TREXAS_EXT=$(REPO_ROOT)/ext/runtime/ext/trexas/build/debug/extension/trexas/trexas.trex
 PYTHON_BIN?=python3
 VENV=./venv
 
@@ -113,7 +113,7 @@ test-hana: check-hana
 	$(VENV)/bin/pytest -v test_hana_standalone.py
 
 check-trexas:
-	@test -f $(TREXAS_EXT) || (echo "Build trexas first: cd ../trex/ext/trexas && make configure && make debug" && exit 1)
+	@test -f $(TREXAS_EXT) || (echo "Build trexas first: cd ../ext/runtime/ext/trexas && make configure && make debug" && exit 1)
 
 test-trexas: check-trexas
 	$(VENV)/bin/pytest -v test_trexas_standalone.py

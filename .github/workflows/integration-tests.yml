@@ -245,7 +245,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            trex/ext/trexas/target
+            ext/runtime/ext/trexas/target
           key: rust-trexas-${{ runner.os }}-${{ hashFiles('trex/Cargo.lock') }}
           restore-keys: rust-trexas-${{ runner.os }}-
 
@@ -254,12 +254,12 @@ jobs:
 
       - name: Build trexas
         run: make configure && make debug
-        working-directory: trex/ext/trexas
+        working-directory: ext/runtime/ext/trexas
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-trexas
-          path: trex/ext/trexas/build/debug/extension/trexas/trexas.trex
+          path: ext/runtime/ext/trexas/build/debug/extension/trexas/trexas.trex
           retention-days: 1
 
   build-circe:
@@ -565,7 +565,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-trexas
-          path: trex/ext/trexas/build/debug/extension/trexas/
+          path: ext/runtime/ext/trexas/build/debug/extension/trexas/
 
       - name: Setup test environment
         run: make configure
