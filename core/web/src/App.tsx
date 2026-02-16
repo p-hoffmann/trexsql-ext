@@ -26,6 +26,7 @@ import { SsoProviders } from "@/pages/admin/SsoProviders";
 import { Services } from "@/pages/admin/Services";
 import { TrexDB } from "@/pages/admin/TrexDB";
 import { Extensions } from "@/pages/admin/Extensions";
+import { EtlPipelines } from "@/pages/admin/EtlPipelines";
 
 function HomeRedirect() {
   const { data: session, isPending } = useSession();
@@ -64,6 +65,7 @@ export default function App() {
             <Route path="sessions" element={<Sessions />} />
             <Route path="plugins" element={<Plugins />} />
             <Route path="services" element={<Services />} />
+            <Route path="etl" element={<EtlPipelines />} />
             <Route path="trexdb" element={<TrexDB />} />
             <Route path="extensions" element={<Extensions />} />
             <Route path="sso" element={<SsoProviders />} />
