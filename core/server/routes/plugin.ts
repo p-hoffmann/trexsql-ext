@@ -18,7 +18,7 @@ function checkSemver(version: string, sver: string): boolean {
   }
 }
 
-async function scanDiskPlugins(): Promise<
+export async function scanDiskPlugins(): Promise<
   Map<string, { name: string; version: string }>
 > {
   const diskPlugins = new Map<string, { name: string; version: string }>();

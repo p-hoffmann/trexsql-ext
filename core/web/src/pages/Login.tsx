@@ -13,7 +13,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import { ProviderButtons } from "@/components/ProviderButtons";
 
 export function Login() {
@@ -99,14 +98,6 @@ export function Login() {
               {loading ? "Signing in..." : "Sign In"}
             </Button>
           </form>
-
-          <div className="relative my-4 flex items-center">
-            <Separator className="flex-1" />
-            <span className="mx-4 text-xs text-muted-foreground uppercase">
-              or continue with
-            </span>
-            <Separator className="flex-1" />
-          </div>
 
           <ProviderButtons />
         </CardContent>

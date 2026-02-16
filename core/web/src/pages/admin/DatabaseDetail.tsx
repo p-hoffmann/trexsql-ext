@@ -37,7 +37,6 @@ import {
   PlugIcon,
   LoaderIcon,
 } from "lucide-react";
-import { BASE_PATH } from "@/lib/config";
 
 const DATABASE_DETAIL_QUERY = `
   query DatabaseById($id: String!) {
@@ -125,6 +124,15 @@ const DELETE_CREDENTIAL_MUTATION = `
   }
 `;
 
+const TEST_CONNECTION_MUTATION = `
+  mutation TestDbConnection($databaseId: String!) {
+    testDatabaseConnection(databaseId: $databaseId) {
+      success
+      message
+    }
+  }
+`;
+
 interface DatabaseCredential {
   id: string;
   username: string;
@@ -165,6 +173,7 @@ export function DatabaseDetail() {
   const [, deleteDatabase] = useMutation(DELETE_DATABASE_MUTATION);
   const [, saveCredential] = useMutation(SAVE_CREDENTIAL_MUTATION);
   const [, deleteCredential] = useMutation(DELETE_CREDENTIAL_MUTATION);
+  const [, testConnection] = useMutation(TEST_CONNECTION_MUTATION);
 
   const db: DatabaseDetail | null = result.data?.databaseById || null;
 
@@ -331,17 +340,16 @@ export function DatabaseDetail() {
   async function handleTestConnection() {
     setTesting(true);
     try {
-      const res = await fetch(`${BASE_PATH}/api/db/test-connection`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ databaseId: db!.id }),
-      });
-      const data = await res.json();
-      if (data.success) {
+      const res = await testConnection({ databaseId: db!.id });
+      if (res.error) {
+        toast.error(res.error.message);
+        return;
+      }
+      const data = res.data?.testDatabaseConnection;
+      if (data?.success) {
         toast.success(data.message);
       } else {
-        toast.error(data.message);
+        toast.error(data?.message || "Connection failed");
       }
     } catch {
       toast.error("Failed to test connection.");

@@ -20,9 +20,9 @@ path = "src/wasm_lib.rs"
 crate-type = ["staticlib"]
 
 [dependencies]
-duckdb = { git = "https://github.com/p-hoffmann/trexsql-rs", branch = "dev", features = ["vtab-loadable", "vscalar", "vtab-arrow", "appender-arrow"] }
-duckdb-loadable-macros = { git = "https://github.com/p-hoffmann/trexsql-rs", branch = "dev" }
-libduckdb-sys = { git = "https://github.com/p-hoffmann/trexsql-rs", branch = "dev", features = ["loadable-extension"] }
+duckdb = { git = "https://github.com/p-hoffmann/trexsql-rs", tag = "v1.4.4-trex", features = ["vtab-loadable", "vscalar", "vtab-arrow", "appender-arrow"] }
+duckdb-loadable-macros = { git = "https://github.com/p-hoffmann/trexsql-rs", tag = "v1.4.4-trex" }
+libduckdb-sys = { git = "https://github.com/p-hoffmann/trexsql-rs", tag = "v1.4.4-trex", features = ["loadable-extension"] }
 chitchat = "0.10"
 arrow-flight = { version = "57", features = ["flight-sql-experimental"] }
 arrow = { version = "57", features = ["ipc"] }

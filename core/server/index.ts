@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import { grafserv } from "postgraphile/grafserv/express/v4";
 import cors from "cors";
 import { BASE_PATH, FUNCTIONS_BASE_PATH } from "./config.ts";
-import { auth } from "./auth.ts";
+import { auth, initAuthFromDB } from "./auth.ts";
 import { createPostGraphile } from "./postgraphile.ts";
 import { authContext } from "./middleware/auth-context.ts";
 import { Plugins } from "./plugin/plugin.ts";
@@ -31,11 +31,13 @@ app.use(cors({ origin: true, credentials: true }));
 
 // Better Auth handler — construct a web Request from Express req
 // since toNodeHandler has body-parsing issues in the Deno runtime
-app.all(`${BASE_PATH}/api/auth/*`, async (req, res) => {
+app.use(`${BASE_PATH}/api/auth`, async (req, res) => {
+  console.log(`[auth] ${req.method} ${req.originalUrl}`);
   try {
     const host = req.get("host") || "localhost";
     const protocol = req.protocol || "http";
     const url = `${protocol}://${host}${req.originalUrl}`;
+    console.log(`[auth] Constructed URL: ${url}`);
 
     const headers = new Headers();
     for (const [key, val] of Object.entries(req.headers)) {
@@ -58,6 +60,7 @@ app.all(`${BASE_PATH}/api/auth/*`, async (req, res) => {
     });
 
     const webRes = await auth.handler(webReq);
+    console.log(`[auth] Response status: ${webRes.status}`);
 
     res.status(webRes.status);
     webRes.headers.forEach((value, key) => {
@@ -82,75 +85,6 @@ try {
 } catch (err) {
   console.error("Plugin system failed to initialize:", err);
 }
-
-// Test database connection endpoint
-app.post(`${BASE_PATH}/api/db/test-connection`, express.json(), async (req, res) => {
-  const pgSettings = (req as any).pgSettings || {};
-  if (pgSettings["app.user_role"] !== "admin") {
-    res.status(403).json({ success: false, message: "Forbidden" });
-    return;
-  }
-
-  const { databaseId } = req.body;
-  if (!databaseId) {
-    res.status(400).json({ success: false, message: "databaseId is required" });
-    return;
-  }
-
-  const mainPool = new (await import("pg")).default.Pool({
-    connectionString: Deno.env.get("DATABASE_URL"),
-  });
-
-  try {
-    const dbResult = await mainPool.query(
-      `SELECT host, port, "databaseName", dialect FROM trex.database WHERE id = $1`,
-      [databaseId]
-    );
-    if (dbResult.rows.length === 0) {
-      res.status(404).json({ success: false, message: "Database not found" });
-      return;
-    }
-
-    const db = dbResult.rows[0];
-
-    const credResult = await mainPool.query(
-      `SELECT username, password FROM trex.database_credential WHERE "databaseId" = $1 LIMIT 1`,
-      [databaseId]
-    );
-    if (credResult.rows.length === 0) {
-      res.status(400).json({ success: false, message: "No credentials configured" });
-      return;
-    }
-
-    const cred = credResult.rows[0];
-
-    const testPool = new (await import("pg")).default.Pool({
-      host: db.host,
-      port: db.port,
-      database: db.databaseName,
-      user: cred.username,
-      password: cred.password,
-      connectionTimeoutMillis: 5000,
-      max: 1,
-    });
-
-    try {
-      const client = await testPool.connect();
-      await client.query("SELECT 1");
-      client.release();
-      res.json({ success: true, message: "Connection successful" });
-    } catch (connErr: any) {
-      res.json({ success: false, message: connErr.message || "Connection failed" });
-    } finally {
-      await testPool.end();
-    }
-  } catch (err: any) {
-    console.error("Test connection error:", err);
-    res.status(500).json({ success: false, message: "Internal server error" });
-  } finally {
-    await mainPool.end();
-  }
-});
 
 // PostGraphile
 const databaseUrl = Deno.env.get("DATABASE_URL");
@@ -325,6 +259,9 @@ try {
 app.get("/", (_req, res) => {
   res.redirect(`${BASE_PATH}/`);
 });
+
+// Load SSO providers from DB (falls back to env vars if table doesn't exist)
+await initAuthFromDB();
 
 server.listen(8000, () => {
   console.log("server listening on port 8000");

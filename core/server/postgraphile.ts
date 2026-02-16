@@ -3,10 +3,12 @@ import { PostGraphileAmberPreset } from "postgraphile/presets/amber";
 import { makePgService } from "postgraphile/adaptors/pg";
 import { PostGraphileConnectionFilterPreset } from "postgraphile-plugin-connection-filter";
 import { BASE_PATH } from "./config.ts";
+import { pluginOperationsPlugin } from "./graphql/plugin-operations.ts";
 
 export function createPostGraphile(databaseUrl: string, schemas: string[]) {
   return postgraphile({
     extends: [PostGraphileAmberPreset, PostGraphileConnectionFilterPreset],
+    plugins: [pluginOperationsPlugin],
     pgServices: [
       makePgService({
         connectionString: databaseUrl,
@@ -20,7 +22,7 @@ export function createPostGraphile(databaseUrl: string, schemas: string[]) {
     },
     grafast: {
       context(ctx: any) {
-        const req = ctx.req || ctx.request;
+        const req = ctx.expressv4?.req || ctx.req || ctx.request;
         return {
           pgSettings: req?.pgSettings || {},
         };
