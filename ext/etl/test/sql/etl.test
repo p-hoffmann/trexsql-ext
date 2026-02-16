@@ -1,0 +1,29 @@
+# name: test/sql/etl.test
+# description: test etl extension
+# group: [etl]
+
+# Before we load the extension, this will fail
+statement error
+SELECT etl_start('test', 'host=localhost');
+----
+Catalog Error: Scalar Function with name etl_start does not exist!
+
+# Require statement will ensure the extension is loaded from now on
+require etl
+
+# Confirm etl_start exists and validates input
+statement error
+SELECT etl_start('test', 'host=localhost dbname=test user=test');
+----
+connection string must include 'publication=<name>'
+
+# Confirm etl_stop returns error for nonexistent pipeline
+statement error
+SELECT etl_stop('nonexistent');
+----
+Pipeline 'nonexistent' not found
+
+# Confirm etl_status returns empty result set
+query IIIIIIII
+SELECT * FROM etl_status();
+----
