@@ -69,7 +69,7 @@ fn pg_trex_query(
     }
 }
 
-/// Send a query for distributed execution via swarm_query() across the cluster.
+/// Send a query for distributed execution via trex_db_query() across the cluster.
 #[pg_extern]
 fn pg_trex_distributed_query(
     sql: &str,

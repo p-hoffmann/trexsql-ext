@@ -63,7 +63,7 @@ pub fn read_catalog(shmem: &PgTrexShmem) -> Vec<CatalogEntry> {
     }
 }
 
-/// Refresh the distributed catalog from swarm_tables() query results.
+/// Refresh the distributed catalog from trex_db_tables() query results.
 ///
 /// Called by the background worker periodically. Uses seqlock write protocol:
 /// 1. Increment generation to odd (write in progress)
@@ -74,8 +74,8 @@ pub fn refresh_catalog(
     conn: &duckdb::Connection,
 ) -> Result<usize, String> {
     let mut stmt = conn
-        .prepare("SELECT schema_name, table_name, node_name, approx_rows FROM swarm_tables()")
-        .map_err(|e| format!("prepare swarm_tables: {}", e))?;
+        .prepare("SELECT schema_name, table_name, node_name, approx_rows FROM trex_db_tables()")
+        .map_err(|e| format!("prepare trex_db_tables: {}", e))?;
 
     let rows = stmt
         .query_map(duckdb::params![], |row| {
@@ -86,12 +86,12 @@ pub fn refresh_catalog(
                 row.get::<_, u64>(3).unwrap_or(0),
             ))
         })
-        .map_err(|e| format!("query swarm_tables: {}", e))?;
+        .map_err(|e| format!("query trex_db_tables: {}", e))?;
 
     let mut new_entries: Vec<CatalogEntry> = Vec::new();
     for row_result in rows {
         let (schema, table, node, approx) =
-            row_result.map_err(|e| format!("read swarm_tables row: {}", e))?;
+            row_result.map_err(|e| format!("read trex_db_tables row: {}", e))?;
 
         if new_entries.len() >= MAX_CATALOG_ENTRIES {
             pgrx::warning!(
