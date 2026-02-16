@@ -79,6 +79,9 @@ RUN mkdir -p /root/.duckdb/extensions/v${DUCKDB_VERSION}/linux_amd64 && \
 # Override npm extensions with CI-built ones (no-op locally since dir only has .gitkeep)
 COPY extensions/ /usr/lib/trexsql/extensions/
 
+# Create plugins directory for plugin installs
+RUN mkdir -p ./plugins
+
 # Copy core (overridden by volume mount in development)
 COPY core/ ./core/
 

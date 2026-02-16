@@ -22,6 +22,7 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
     typeDefs: gql`
       type PluginInfo {
         name: String!
+        packageName: String
         version: String
         activeVersion: String
         active: Boolean!
@@ -174,6 +175,7 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
         reloadSsoProviders: Boolean!
         startService(extension: String!, config: String!): ServiceActionResult!
         stopService(extension: String!): ServiceActionResult!
+        restartService(extension: String!, config: String!): ServiceActionResult!
         runPluginMigrations(pluginName: String): RunMigrationResult!
         startEtlPipeline(
           name: String!
@@ -236,10 +238,11 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
               const pkgsJson = await pkgsRes.json();
               const packages = pkgsJson.value || pkgsJson;
 
-              const registryMap = new Map<string, { description: string; registryVersion: string }>();
+              const registryMap = new Map<string, { fullName: string; description: string; registryVersion: string }>();
 
               for (const pkg of packages) {
-                const pkgname = pkg.name?.replace(/@[^/]+\//, "") || pkg.name;
+                const fullName = pkg.name || "";
+                const pkgname = fullName.replace(/@[^/]+\//, "") || fullName;
                 let bestVersion = { version: "", packageDescription: "" };
                 if (pkg.versions && Array.isArray(pkg.versions)) {
                   bestVersion = pkg.versions.reduce((m: any, c: any) => {
@@ -247,6 +250,7 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
                   }, bestVersion);
                 }
                 registryMap.set(pkgname, {
+                  fullName,
                   description: bestVersion.packageDescription || pkg.description || "",
                   registryVersion: bestVersion.version || pkg.version || "",
                 });
@@ -255,6 +259,7 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
               for (const plugin of pluginList) {
                 const regInfo = registryMap.get(plugin.name);
                 if (regInfo) {
+                  plugin.packageName = regInfo.fullName;
                   plugin.description = regInfo.description;
                   plugin.registryVersion = regInfo.registryVersion;
                 }
@@ -264,6 +269,7 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
                 if (!seen.has(pkgname) && !activePlugins.has(pkgname)) {
                   pluginList.push({
                     name: pkgname,
+                    packageName: regInfo.fullName,
                     version: null,
                     activeVersion: null,
                     active: false,
@@ -553,7 +559,7 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
 
           try {
             const dir = Deno.env.get("PLUGINS_PATH") || "./plugins";
-            const sql = `SELECT install_results FROM trex_plugin_install_with_deps('${escapeSql(packageSpec)}', '${escapeSql(dir)}')`;
+            const sql = `SELECT install_results FROM trex_plugin_install('${escapeSql(packageSpec)}', '${escapeSql(dir)}')`;
             const conn = new Trex.TrexDB("memory");
             const result = await conn.execute(sql, []);
             const rows = result?.rows || result || [];
@@ -564,7 +570,12 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
                 return r.install_results || r[0];
               }
             });
-            return { success: true, error: null, results: parsed.length === 1 ? parsed[0] : parsed };
+            const installResult = parsed.length === 1 ? parsed[0] : parsed;
+            // Check if tpm returned an error in the result JSON
+            if (installResult?.success === false || installResult?.error) {
+              return { success: false, error: installResult.error || "Install failed", results: installResult };
+            }
+            return { success: true, error: null, results: installResult };
           } catch (err: any) {
             console.error("Plugin install error:", err);
             return { success: false, error: err.message || String(err), results: null };
@@ -617,7 +628,7 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
 
             // Reinstall
             const spec = version ? `${packageName}@${escapeSql(version)}` : packageName;
-            const installSql = `SELECT install_results FROM trex_plugin_install_with_deps('${escapeSql(spec)}', '${escapeSql(dir)}')`;
+            const installSql = `SELECT install_results FROM trex_plugin_install('${escapeSql(spec)}', '${escapeSql(dir)}')`;
             const result = await conn.execute(installSql, []);
             const rows = result?.rows || result || [];
             const parsed = rows.map((r: any) => {
@@ -736,6 +747,27 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
             return { success: true, message, error: null };
           } catch (err: any) {
             console.error("stopService error:", err);
+            return { success: false, message: null, error: err.message || String(err) };
+          }
+        },
+
+        async restartService(_parent: any, args: { extension: string; config: string }, context: any) {
+          assertAdmin(context);
+          const { extension, config } = args;
+          try {
+            const conn = new Trex.TrexDB("memory");
+            // Stop the service first (ignore errors if not running)
+            try {
+              await conn.execute(`SELECT trex_db_stop_service('${escapeSql(extension)}')`, []);
+            } catch {}
+            // Start with provided config
+            const sql = `SELECT trex_db_start_service('${escapeSql(extension)}', '${escapeSql(config)}')`;
+            const result = await conn.execute(sql, []);
+            const rows = result?.rows || result || [];
+            const message = rows[0]?.[0] || rows[0]?.trex_db_start_service || "Service restarted";
+            return { success: true, message, error: null };
+          } catch (err: any) {
+            console.error("restartService error:", err);
             return { success: false, message: null, error: err.message || String(err) };
           }
         },
