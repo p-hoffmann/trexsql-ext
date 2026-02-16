@@ -67,7 +67,7 @@ RUN mkdir -p /usr/lib/trexsql/extensions && \
 ENV DUCKDB_VERSION=1.4.4
 RUN mkdir -p /root/.duckdb/extensions/v${DUCKDB_VERSION}/linux_amd64 && \
     cd /root/.duckdb/extensions/v${DUCKDB_VERSION}/linux_amd64 && \
-    for lib in autocomplete avro aws azure ducklake fts httpfs icu inet json mysql_scanner parquet postgres_scanner spatial sqlite sqlite_scanner ui vss; do \
+    for lib in avro aws delta ducklake fts httpfs icu iceberg inet json mysql_scanner parquet postgres_scanner spatial sqlite sqlite_scanner vss; do \
         curl -sfO http://extensions.duckdb.org/v${DUCKDB_VERSION}/linux_amd64/${lib}.duckdb_extension.gz && \
         gzip -d ${lib}.duckdb_extension.gz; \
     done && \
