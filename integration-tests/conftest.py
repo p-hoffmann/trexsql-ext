@@ -176,8 +176,8 @@ def node_factory():
                      load_atlas=False, load_cql2elm=False, load_ai=False,
                      load_chdb=False, load_hana=False, load_tpm=False,
                      load_etl=False, load_migration=False, load_fhir=False,
-                     load_trexas=False, load_flight=None):
-        # load_flight is accepted but ignored (flight is merged into db)
+                     load_trexas=False, load_flight=None, load_swarm=None):
+        # load_flight and load_swarm are accepted but ignored (both merged into db)
         ext_paths = []
         if load_db:
             ext_paths.append(DB_EXT)

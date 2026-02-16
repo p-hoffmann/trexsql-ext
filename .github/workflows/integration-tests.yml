@@ -554,13 +554,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ext-flight
-          path: flight/build/debug/extension/flight/
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ext-swarm
-          path: swarm/build/debug/extension/swarm/
+          name: ext-db
+          path: ext/db/build/debug/extension/db/
 
       - uses: actions/download-artifact@v4
         with:
