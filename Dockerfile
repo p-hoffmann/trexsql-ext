@@ -63,6 +63,19 @@ RUN mkdir -p /usr/lib/trexsql/extensions && \
     find node_modules/@trex -name "*.trex" -exec cp {} /usr/lib/trexsql/extensions/ \; && \
     find node_modules/@trex -name "*.duckdb_extension" -exec cp {} /usr/lib/trexsql/extensions/ \;
 
+# Download official trexsql extensions for offline use
+ENV DUCKDB_VERSION=1.4.4
+RUN mkdir -p /root/.duckdb/extensions/v${DUCKDB_VERSION}/linux_amd64 && \
+    cd /root/.duckdb/extensions/v${DUCKDB_VERSION}/linux_amd64 && \
+    for lib in autocomplete avro aws azure ducklake fts httpfs icu inet json mysql_scanner parquet postgres_scanner spatial sqlite sqlite_scanner ui vss; do \
+        curl -sfO http://extensions.duckdb.org/v${DUCKDB_VERSION}/linux_amd64/${lib}.duckdb_extension.gz && \
+        gzip -d ${lib}.duckdb_extension.gz; \
+    done && \
+    for lib in bigquery; do \
+        curl -sfO http://community-extensions.duckdb.org/v${DUCKDB_VERSION}/linux_amd64/${lib}.duckdb_extension.gz && \
+        gzip -d ${lib}.duckdb_extension.gz; \
+    done
+
 # Override npm extensions with CI-built ones (no-op locally since dir only has .gitkeep)
 COPY extensions/ /usr/lib/trexsql/extensions/
 
