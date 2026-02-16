@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import { admin, jwt, oidcProvider } from "better-auth/plugins";
 import { Pool } from "pg";
+import { BASE_PATH } from "./config.ts";
 
 const databaseUrl = Deno.env.get("DATABASE_URL");
 if (!databaseUrl) {
@@ -14,9 +15,9 @@ const pool = new Pool({
 
 export const auth = betterAuth({
   database: pool,
-  basePath: "/api/auth",
+  basePath: `${BASE_PATH}/api/auth`,
   secret: Deno.env.get("BETTER_AUTH_SECRET"),
-  baseURL: Deno.env.get("BETTER_AUTH_URL") || "http://localhost:8000",
+  baseURL: Deno.env.get("BETTER_AUTH_URL") || `http://localhost:8000${BASE_PATH}`,
   trustedOrigins: (Deno.env.get("BETTER_AUTH_TRUSTED_ORIGINS") || "http://localhost:5173").split(","),
 
   emailAndPassword: {
@@ -117,8 +118,8 @@ export const auth = betterAuth({
     }),
     jwt(),
     oidcProvider({
-      loginPage: "/login",
-      consentPage: "/consent",
+      loginPage: `${BASE_PATH}/login`,
+      consentPage: `${BASE_PATH}/consent`,
     }),
   ],
 });

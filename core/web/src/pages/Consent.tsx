@@ -12,6 +12,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { authClient } from "@/lib/auth-client";
+import { BASE_PATH } from "@/lib/config";
 import { toast } from "sonner";
 
 const SCOPE_DESCRIPTIONS: Record<string, string> = {
@@ -37,7 +38,7 @@ export function Consent() {
   async function handleAuthorize() {
     setSubmitting(true);
     try {
-      const res = await authClient.api.fetch("/api/auth/oauth2/consent", {
+      const res = await authClient.api.fetch(`${BASE_PATH}/api/auth/oauth2/consent`, {
         method: "POST",
         body: JSON.stringify({
           clientId,

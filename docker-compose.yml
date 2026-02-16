@@ -29,10 +29,13 @@ services:
       - 8001:8001
     volumes:
       - ./core:/usr/src/core
+      - ./functions:/usr/src/functions
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://postgres:mypass@postgres:5432/testdb
       BETTER_AUTH_SECRET: dev-secret-at-least-32-characters-long!!
-      BETTER_AUTH_URL: http://localhost:8001
+      BASE_PATH: /trex
+      BETTER_AUTH_URL: http://localhost:8001/trex
+      STARTUP_SQL: "SELECT trex_start_server('0.0.0.0', 8001, './core/server', '')"

@@ -54,5 +54,8 @@ RUN mkdir -p /usr/lib/trexsql/extensions && \
 # Copy core (overridden by volume mount in development)
 COPY core/ ./core/
 
+# Copy functions (overridden by volume mount in development)
+COPY functions/ ./functions/
+
 EXPOSE 8001
 CMD ["trex"]

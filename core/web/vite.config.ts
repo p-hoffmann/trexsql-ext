@@ -3,7 +3,10 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+const basePath = process.env.VITE_BASE_PATH || "/trex"
+
 export default defineConfig({
+  base: `${basePath}/`,
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
@@ -12,9 +15,9 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": "http://localhost:8000",
-      "/graphql": "http://localhost:8000",
-      "/graphiql": "http://localhost:8000",
+      [`${basePath}/api`]: "http://localhost:8000",
+      [`${basePath}/graphql`]: "http://localhost:8000",
+      [`${basePath}/graphiql`]: "http://localhost:8000",
     },
   },
 })

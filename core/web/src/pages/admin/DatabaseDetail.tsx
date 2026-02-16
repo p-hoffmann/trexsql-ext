@@ -37,6 +37,7 @@ import {
   PlugIcon,
   LoaderIcon,
 } from "lucide-react";
+import { BASE_PATH } from "@/lib/config";
 
 const DATABASE_DETAIL_QUERY = `
   query DatabaseById($id: String!) {
@@ -330,7 +331,7 @@ export function DatabaseDetail() {
   async function handleTestConnection() {
     setTesting(true);
     try {
-      const res = await fetch("/api/db/test-connection", {
+      const res = await fetch(`${BASE_PATH}/api/db/test-connection`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",

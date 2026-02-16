@@ -61,6 +61,18 @@ fn main() {
         return;
     }
 
+    // Execute startup SQL (e.g. trex_start_server) if configured
+    if let Ok(startup_sql) = env::var("STARTUP_SQL") {
+        println!("Executing startup SQL...");
+        match conn.execute(&startup_sql, []) {
+            Ok(_) => println!("Startup SQL executed successfully"),
+            Err(e) => {
+                eprintln!("Startup SQL failed: {e}");
+                process::exit(1);
+            }
+        }
+    }
+
     eprintln!("TrexSQL ready. Waiting for shutdown signal...");
 
     #[cfg(unix)]

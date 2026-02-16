@@ -5,6 +5,7 @@ import express from "express";
 import { createServer } from "node:http";
 import { grafserv } from "postgraphile/grafserv/express/v4";
 import cors from "cors";
+import { BASE_PATH, FUNCTIONS_BASE_PATH } from "./config.ts";
 import { auth } from "./auth.ts";
 import { createPostGraphile } from "./postgraphile.ts";
 import { authContext } from "./middleware/auth-context.ts";
@@ -30,7 +31,7 @@ app.use(cors({ origin: true, credentials: true }));
 
 // Better Auth handler — construct a web Request from Express req
 // since toNodeHandler has body-parsing issues in the Deno runtime
-app.all("/api/auth/*", async (req, res) => {
+app.all(`${BASE_PATH}/api/auth/*`, async (req, res) => {
   try {
     const host = req.get("host") || "localhost";
     const protocol = req.protocol || "http";
@@ -83,7 +84,7 @@ try {
 }
 
 // Test database connection endpoint
-app.post("/api/db/test-connection", express.json(), async (req, res) => {
+app.post(`${BASE_PATH}/api/db/test-connection`, express.json(), async (req, res) => {
   const pgSettings = (req as any).pgSettings || {};
   if (pgSettings["app.user_role"] !== "admin") {
     res.status(403).json({ success: false, message: "Forbidden" });
@@ -159,7 +160,7 @@ if (databaseUrl) {
     const pgl = createPostGraphile(databaseUrl, schemas);
     const serv = pgl.createServ(grafserv);
     await serv.addTo(app, server);
-    console.log("PostGraphile mounted on /graphql and /graphiql");
+    console.log(`PostGraphile mounted on ${BASE_PATH}/graphql and ${BASE_PATH}/graphiql`);
   } catch (err) {
     console.error("PostGraphile failed to initialize:", err);
   }
@@ -168,16 +169,16 @@ if (databaseUrl) {
 }
 
 // Internal endpoints
-app.get("/_internal/health", (_req, res) => {
+app.get(`${BASE_PATH}/_internal/health`, (_req, res) => {
   res.status(STATUS_CODE.OK).json({ message: "ok" });
 });
 
-app.get("/_internal/metric", async (_req, res) => {
+app.get(`${BASE_PATH}/_internal/metric`, async (_req, res) => {
   const metric = await EdgeRuntime.getRuntimeMetrics();
   res.json(metric);
 });
 
-app.put("/_internal/upload", async (req, res) => {
+app.put(`${BASE_PATH}/_internal/upload`, async (req, res) => {
   try {
     let body = "";
     for await (const chunk of req) {
@@ -192,25 +193,8 @@ app.put("/_internal/upload", async (req, res) => {
   }
 });
 
-// Static file serving for production frontend build
-try {
-  const webDistPath = new URL("../web/dist", import.meta.url).pathname;
-  await Deno.stat(webDistPath);
-  const serveStatic = (await import("express")).default.static;
-  app.use(serveStatic(webDistPath));
-  app.get("*", (_req, res, next) => {
-    if (_req.path.startsWith("/api/") || _req.path.startsWith("/graphql") || _req.path.startsWith("/graphiql") || _req.path.startsWith("/_internal")) {
-      return next();
-    }
-    res.sendFile(join(webDistPath, "index.html"));
-  });
-  console.log("Serving static files from core/web/dist/");
-} catch {
-  // web/dist doesn't exist — skip static serving
-}
-
-// Worker routing
-app.use("/:service_name", async (req, res) => {
+// Worker routing (must be before SPA catch-all)
+app.use(`${FUNCTIONS_BASE_PATH}/:service_name`, async (req, res, next) => {
   const serviceName = req.params.service_name;
 
   if (
@@ -219,7 +203,7 @@ app.use("/:service_name", async (req, res) => {
     serviceName === "graphiql" ||
     serviceName === "api"
   ) {
-    return;
+    return next();
   }
 
   let servicePath: string;
@@ -231,7 +215,14 @@ app.use("/:service_name", async (req, res) => {
       return;
     }
   } else {
-    servicePath = `./examples/${serviceName}`;
+    servicePath = `./functions/${serviceName}`;
+  }
+
+  // Check if function directory exists before trying to create a worker
+  try {
+    await Deno.stat(servicePath);
+  } catch {
+    return next();
   }
 
   const createWorker = async () => {
@@ -260,11 +251,33 @@ app.use("/:service_name", async (req, res) => {
     });
   };
 
+  // Build a web-standard Request from the Express req
+  const host = req.get("host") || "localhost";
+  const protocol = req.protocol || "http";
+  const webUrl = `${protocol}://${host}${req.originalUrl}`;
+  const webHeaders = new Headers();
+  for (const [key, val] of Object.entries(req.headers)) {
+    if (val) webHeaders.set(key, Array.isArray(val) ? val.join(", ") : val);
+  }
+  let reqBody: Blob | undefined;
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of req) {
+      chunks.push(typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk);
+    }
+    if (chunks.length > 0) reqBody = new Blob(chunks);
+  }
+  const webReq = new Request(webUrl, {
+    method: req.method,
+    headers: webHeaders,
+    body: reqBody,
+  });
+
   const callWorker = async (): Promise<Response> => {
     try {
       const worker = await createWorker();
       const controller = new AbortController();
-      return await worker.fetch(req, { signal: controller.signal });
+      return await worker.fetch(webReq, { signal: controller.signal });
     } catch (e) {
       if (e instanceof Deno.errors.WorkerAlreadyRetired) {
         return await callWorker();
@@ -289,6 +302,28 @@ app.use("/:service_name", async (req, res) => {
   } catch (err) {
     res.status(STATUS_CODE.InternalServerError).json({ msg: String(err) });
   }
+});
+
+// Static file serving for production frontend build
+try {
+  const webDistPath = join(Deno.cwd(), "core", "web", "dist");
+  await Deno.stat(webDistPath);
+  const serveStatic = (await import("express")).default.static;
+  app.use(BASE_PATH, serveStatic(webDistPath));
+  app.get(`${BASE_PATH}/*`, (_req, res, next) => {
+    if (_req.path.startsWith(`${BASE_PATH}/api/`) || _req.path.startsWith(`${BASE_PATH}/graphql`) || _req.path.startsWith(`${BASE_PATH}/graphiql`) || _req.path.startsWith(`${BASE_PATH}/_internal`)) {
+      return next();
+    }
+    res.sendFile(join(webDistPath, "index.html"));
+  });
+  console.log("Serving static files from core/web/dist/");
+} catch (e) {
+  console.warn("Static file serving disabled:", e);
+}
+
+// Redirect root to BASE_PATH
+app.get("/", (_req, res) => {
+  res.redirect(`${BASE_PATH}/`);
 });
 
 server.listen(8000, () => {

@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { Plugins } from "../plugin/plugin.ts";
 import { getPluginsJson } from "../plugin/ui.ts";
 import { authContext } from "../middleware/auth-context.ts";
+import { PLUGINS_BASE_PATH } from "../config.ts";
 
 function checkSemver(version: string, sver: string): boolean {
   if (!sver || sver === "latest" || sver === "all") return true;
@@ -52,8 +53,7 @@ async function scanDiskPlugins(): Promise<
 }
 
 export function addPluginRoutes(app: Express) {
-  // GET /api/plugins — list plugins
-  app.get("/api/plugins", authContext, async (req: Request, res: Response) => {
+  app.get(`${PLUGINS_BASE_PATH}`, authContext, async (req: Request, res: Response) => {
     const pgSettings = (req as any).pgSettings || {};
     if (pgSettings["app.user_role"] !== "admin") {
       res.status(403).json({ error: "Forbidden" });
@@ -173,8 +173,7 @@ export function addPluginRoutes(app: Express) {
     }
   });
 
-  // GET /api/plugins/ui — return merged UI plugins JSON
-  app.get("/api/plugins/ui", (_req: Request, res: Response) => {
+  app.get(`${PLUGINS_BASE_PATH}/ui`, (_req: Request, res: Response) => {
     res.setHeader("Content-Type", "application/json");
     res.send(getPluginsJson());
   });

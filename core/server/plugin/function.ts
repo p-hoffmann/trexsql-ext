@@ -4,6 +4,7 @@ import type { Express, Request, Response } from "express";
 import { authContext } from "../middleware/auth-context.ts";
 import { pluginAuthz } from "../middleware/plugin-authz.ts";
 import { waitfor } from "./utils.ts";
+import { PLUGINS_BASE_PATH } from "../config.ts";
 
 // Global registries accumulated from plugin configs
 export const ROLE_SCOPES: Record<string, string[]> = {};
@@ -287,7 +288,7 @@ function _addFunction(
     _callWorker(req, path, imports, fncfg, dir, xenv);
 
   // Register Express route with auth middleware
-  app.all(url + "/*", authContext, pluginAuthz, async (req: Request, res: Response) => {
+  app.all(PLUGINS_BASE_PATH + url + "/*", authContext, pluginAuthz, async (req: Request, res: Response) => {
     try {
       // Reconstruct a web Request from Express req
       const host = req.get("host") || "localhost";

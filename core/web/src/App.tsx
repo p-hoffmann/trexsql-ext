@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import { useSession } from "@/lib/auth-client";
 import { GraphQLProvider } from "@/lib/graphql-client";
+import { BASE_PATH } from "@/lib/config";
 import { Layout } from "@/components/Layout";
 import { AdminLayout } from "@/components/AdminLayout";
 import { Login } from "@/pages/Login";
@@ -30,7 +31,7 @@ function HomeRedirect() {
 export default function App() {
   return (
     <GraphQLProvider>
-    <BrowserRouter>
+    <BrowserRouter basename={BASE_PATH}>
       <Routes>
         {/* Public routes */}
         <Route path="/login" element={<Login />} />

@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { PLUGINS_BASE_PATH } from "../config.ts";
 
 // Module-level storage for merged UI plugins JSON
 let pluginsJson: string = "{}";
@@ -12,9 +13,10 @@ export function addPlugin(_app: Express, value: any, dir: string) {
     for (const r of value.routes) {
       const urlPrefix = r.path || r.source;
       const fsPath = `${dir}/${r.dir || r.target}`;
-      console.log(`Registering static route: ${urlPrefix} -> ${fsPath}`);
+      const fullPrefix = `${PLUGINS_BASE_PATH}${urlPrefix}`;
+      console.log(`Registering static route: ${fullPrefix} -> ${fsPath}`);
       // deno-lint-ignore no-explicit-any
-      (Deno as any).core.ops.op_register_static_route(urlPrefix, fsPath);
+      (Deno as any).core.ops.op_register_static_route(fullPrefix, fsPath);
     }
   }
 
