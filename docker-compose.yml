@@ -22,15 +22,12 @@ services:
       retries: 10
 
   trex:
-    build:
-      context: .
-      dockerfile: Dockerfile.core
+    build: .
     ports:
       - 8001:8001
     volumes:
       - ./core:/usr/src/core
       - ./functions:/usr/src/functions
-      - ./ext/migration/build/debug/migration.trex:/usr/lib/trexsql/extensions/migration.trex
     depends_on:
       postgres:
         condition: service_healthy

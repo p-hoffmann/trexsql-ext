@@ -38,21 +38,41 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs && \
 COPY src/ /usr/src/trexsql/src/
 RUN cargo build --release
 
-# Stage 2: Minimal runtime image
-FROM debian:trixie-slim
+# Stage 2: Runtime
+FROM node:20-trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      libssl3 libgomp1 ca-certificates libvulkan1 && \
+      libssl3 libgomp1 ca-certificates libvulkan1 curl && \
     rm -rf /var/lib/apt/lists/*
 
+# Copy trex binary, libtrexsql, libchdb, and libtrexsql_engine
+COPY --from=builder /usr/src/trexsql/target/release/trex /usr/bin/
 COPY --from=builder /opt/trexsql/libtrexsql.so /usr/lib/
 COPY --from=builder /opt/libchdb.so /usr/lib/
-COPY --from=builder /usr/src/trexsql/target/release/trex /usr/bin/
 COPY --from=builder /usr/src/trexsql/target/release/libtrexsql_engine.so /usr/lib/
-
-RUN mkdir -p /usr/lib/trexsql/extensions
-COPY extensions/*.trex /usr/lib/trexsql/extensions/
-
 RUN ldconfig
 
+WORKDIR /usr/src
+
+# Install extensions via npm
+COPY package.json package-lock.json .npmrc deno.json ./
+RUN npm install
+
+# Collect extension files from node_modules into extensions dir
+RUN mkdir -p /usr/lib/trexsql/extensions && \
+    find node_modules/@trex -name "*.trex" -exec cp {} /usr/lib/trexsql/extensions/ \; && \
+    find node_modules/@trex -name "*.duckdb_extension" -exec cp {} /usr/lib/trexsql/extensions/ \;
+
+# Override npm extensions with CI-built ones (no-op locally since dir only has .gitkeep)
+COPY extensions/ /usr/lib/trexsql/extensions/
+
+# Copy core (overridden by volume mount in development)
+COPY core/ ./core/
+
+# Copy functions (overridden by volume mount in development)
+COPY functions/ ./functions/
+
+ENV SCHEMA_DIR=/usr/src/core/schema
+
+EXPOSE 8001
 ENTRYPOINT ["trex"]

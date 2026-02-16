@@ -6,22 +6,8 @@ node_modules/
 **/target/
 **/node_modules/
 
-# Extension source directories (extensions come from CI artifacts, not source)
-ext/bao/
-ext/chdb/
-ext/circe/
-duckdb-executor/
-ext/extension-ci-tools/
-ext/flight/
-ext/hana/
-integration-tests/
-ext/llama/
-ext/pgt/
-ext/pgwire/
-specs/
-ext/swarm/
-ext/tpm/
-trex/
+# Extension source (extensions come from npm packages or CI artifacts)
+ext/
 
 # Misc
 .claude/
@@ -30,5 +16,6 @@ trex/
 *.yml
 *.yaml
 !Dockerfile
-jitpack.yml
 .gitmodules
+integration-tests/
+specs/
