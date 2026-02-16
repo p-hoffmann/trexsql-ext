@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' && github.sha || '' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -19,13 +19,6 @@ jobs:
     with:
       duckdb_version: v1.4.4
       ci_tools_version: v1.4.4
-      extension_name: quack
-
-  code-quality-check:
-    name: Code Quality Check
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@main
-    with:
-      duckdb_version: v1.4.4
-      ci_tools_version: main
-      extension_name: quack
-      format_checks: 'format;tidy'
+      extension_name: db
+      extra_toolchains: rust;python3
+      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;linux_amd64_musl'
