@@ -1,7 +1,6 @@
 import duckdb
 import multiprocessing as mp
 import pytest
-import shutil
 import time
 import os
 
@@ -22,7 +21,7 @@ TPM_EXT_TREX = f"{REPO_ROOT}/ext/tpm/build/debug/extension/tpm/tpm.trex"
 ETL_EXT_TREX = f"{REPO_ROOT}/ext/etl/build/debug/extension/etl/etl.trex"
 MIGRATION_EXT_TREX = f"{REPO_ROOT}/ext/migration/build/debug/extension/migration/migration.trex"
 CQL2ELM_EXT_TREX = f"{REPO_ROOT}/ext/cql2elm/build/release/extension/cql2elm/cql2elm.trex"
-FHIR_EXT_SO = f"{REPO_ROOT}/ext/fhir/target/release/libfhir.so"
+FHIR_EXT_TREX = f"{REPO_ROOT}/ext/fhir/build/debug/extension/fhir/fhir.trex"
 
 # trexsql Python API requires .duckdb_extension suffix for LOAD.
 DB_EXT = f"{REPO_ROOT}/ext/db/build/debug/extension/db/db.duckdb_extension"
@@ -35,7 +34,7 @@ TPM_EXT = f"{REPO_ROOT}/ext/tpm/build/debug/extension/tpm/tpm.duckdb_extension"
 ETL_EXT = f"{REPO_ROOT}/ext/etl/build/debug/extension/etl/etl.duckdb_extension"
 MIGRATION_EXT = f"{REPO_ROOT}/ext/migration/build/debug/extension/migration/migration.duckdb_extension"
 CQL2ELM_EXT = f"{REPO_ROOT}/ext/cql2elm/build/release/extension/cql2elm/cql2elm.duckdb_extension"
-FHIR_EXT = f"{REPO_ROOT}/ext/fhir/target/release/fhir.duckdb_extension"
+FHIR_EXT = f"{REPO_ROOT}/ext/fhir/build/debug/extension/fhir/fhir.duckdb_extension"
 
 for src, dst in [
     (DB_EXT_TREX, DB_EXT),
@@ -48,48 +47,10 @@ for src, dst in [
     (TPM_EXT_TREX, TPM_EXT),
     (ETL_EXT_TREX, ETL_EXT),
     (MIGRATION_EXT_TREX, MIGRATION_EXT),
+    (FHIR_EXT_TREX, FHIR_EXT),
 ]:
     if os.path.exists(src) and not os.path.exists(dst):
         os.symlink(src, dst)
-
-
-def _append_duckdb_metadata(so_path, out_path):
-    """Copy a Rust cdylib and append the DuckDB extension metadata trailer.
-
-    DuckDB expects 416 bytes at the end of every extension:
-      abi_type (32) + ext_version (32) + duckdb_version (32) +
-      platform (32) + magic (32) + signature (256).
-    """
-    conn = duckdb.connect(":memory:")
-    platform = conn.execute("PRAGMA platform").fetchone()[0]
-    version = conn.execute("PRAGMA version").fetchone()[0]
-    conn.close()
-
-    def _field(value, length=32):
-        b = value.encode("ascii")[:length]
-        return b + b"\x00" * (length - len(b))
-
-    trailer = (
-        _field("C_STRUCT_UNSTABLE")   # abi_type
-        + _field("v0.1.0")            # extension_version
-        + _field(version)             # duckdb_version  (e.g. v1.4.0)
-        + _field(platform)            # platform        (e.g. linux_amd64)
-        + _field("4")                 # metadata version — must match DUCKDB_EXTENSION_API_VERSION_UNSTABLE in duckdb source
-        + (b"\x00" * 256)             # signature (unsigned)
-    )
-    shutil.copy2(so_path, out_path)
-    with open(out_path, "ab") as f:
-        f.write(trailer)
-
-
-# Rust extensions (no built-in DuckDB metadata): copy + patch.
-# Rebuild the patched copy when the source .so is newer.
-if os.path.exists(FHIR_EXT_SO):
-    need_patch = not os.path.exists(FHIR_EXT) or (
-        os.path.getmtime(FHIR_EXT_SO) > os.path.getmtime(FHIR_EXT)
-    )
-    if need_patch:
-        _append_duckdb_metadata(FHIR_EXT_SO, FHIR_EXT)
 
 _next_gossip_port = 19000
 _next_flight_port = 19100

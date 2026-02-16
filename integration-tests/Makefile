@@ -8,7 +8,7 @@ HANA_EXT=$(REPO_ROOT)/ext/hana/build/debug/extension/hana_scan/hana_scan.trex
 TPM_EXT=$(REPO_ROOT)/ext/tpm/build/debug/extension/tpm/tpm.trex
 ETL_EXT=$(REPO_ROOT)/ext/etl/build/debug/extension/etl/etl.trex
 MIGRATION_EXT=$(REPO_ROOT)/ext/migration/build/debug/extension/migration/migration.trex
-FHIR_EXT=$(REPO_ROOT)/ext/fhir/target/release/libfhir.so
+FHIR_EXT=$(REPO_ROOT)/ext/fhir/build/debug/extension/fhir/fhir.trex
 PYTHON_BIN?=python3
 VENV=./venv
 
@@ -143,7 +143,7 @@ test-migration: check-migration
 	$(VENV)/bin/pytest -v test_migration_standalone.py
 
 check-fhir:
-	@test -f $(FHIR_EXT) || (echo "Build fhir first: cd ../ext/fhir && cargo build --release" && exit 1)
+	@test -f $(FHIR_EXT) || (echo "Build fhir first: cd ../ext/fhir && make configure && make debug" && exit 1)
 
 test-fhir: check-fhir
 	$(VENV)/bin/pytest -v test_fhir_standalone.py
