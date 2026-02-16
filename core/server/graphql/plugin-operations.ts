@@ -901,7 +901,6 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
             console.error("stopEtlPipeline error:", err);
             return { success: false, message: null, error: err.message || String(err) };
           }
-          }
         },
       },
     },
