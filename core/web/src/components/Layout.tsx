@@ -18,6 +18,10 @@ export function Layout() {
     return <Navigate to="/login" replace />;
   }
 
+  if ((session.user as any).mustChangePassword) {
+    return <Navigate to="/change-password" replace />;
+  }
+
   const initials = session.user?.name
     ?.split(" ")
     .map((n: string) => n[0])

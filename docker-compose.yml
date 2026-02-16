@@ -30,6 +30,7 @@ services:
     volumes:
       - ./core:/usr/src/core
       - ./functions:/usr/src/functions
+      - ./ext/migration/build/debug/migration.trex:/usr/lib/trexsql/extensions/migration.trex
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,5 +40,6 @@ services:
       BASE_PATH: /trex
       BETTER_AUTH_URL: http://localhost:8001/trex
       PLUGINS_INFORMATION_URL: "https://feeds.dev.azure.com/data2evidence/d2e/_apis/packaging/Feeds/d2e/packages?api-version=7.1&includeDescription=true"
+      SCHEMA_DIR: /usr/src/core/schema
       STARTUP_SQL: "SELECT trex_start_server('0.0.0.0', 8001, './core/server', '')"
       SERVICES: '[{"extension":"flight","config":{"host":"0.0.0.0","port":8815}},{"extension":"pgwire","config":{"host":"0.0.0.0","port":5432}}]'

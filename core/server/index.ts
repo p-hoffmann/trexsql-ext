@@ -29,6 +29,27 @@ const server = createServer(app);
 
 app.use(cors({ origin: true, credentials: true }));
 
+// Clear mustChangePassword flag (called after successful password change)
+// Must be registered before the Better Auth catch-all handler
+app.post(`${BASE_PATH}/api/auth/password-changed`, async (req, res) => {
+  try {
+    const session = await auth.api.getSession({ headers: req.headers as any });
+    if (!session?.user) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const { pool } = await import("./auth.ts");
+    await pool.query(
+      'UPDATE trex."user" SET "mustChangePassword" = false, "updatedAt" = NOW() WHERE id = $1',
+      [session.user.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error("password-changed error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Better Auth handler — construct a web Request from Express req
 // since toNodeHandler has body-parsing issues in the Deno runtime
 app.use(`${BASE_PATH}/api/auth`, async (req, res) => {
@@ -84,6 +105,14 @@ try {
   console.log("Plugin system initialized");
 } catch (err) {
   console.error("Plugin system failed to initialize:", err);
+}
+
+// Run plugin migrations after plugin discovery
+try {
+  const { runAllPluginMigrations } = await import("./plugin/migration.ts");
+  await runAllPluginMigrations();
+} catch (err) {
+  console.error("Plugin migration execution failed:", err);
 }
 
 // PostGraphile

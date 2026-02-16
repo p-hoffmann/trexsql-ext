@@ -651,11 +651,493 @@ impl VTab for MigrationStatusVTab {
     }
 }
 
+// ── Schema-Scoped Helpers ────────────────────────────────────────────────────
+
+fn escape_sql_ident(s: &str) -> String {
+    s.replace('"', "\"\"")
+}
+
+fn escape_sql_str(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
+fn is_postgres_database(database: &str) -> Result<bool, Box<dyn Error>> {
+    let rows = query_sql(&format!(
+        "SELECT type FROM duckdb_databases() WHERE database_name = '{}'",
+        escape_sql_str(database)
+    ))?;
+    Ok(rows
+        .first()
+        .map(|r| r.columns[0] == "postgres")
+        .unwrap_or(false))
+}
+
+fn postgres_execute_sql(database: &str, sql: &str) -> Result<(), Box<dyn Error>> {
+    let escaped_sql = escape_sql_str(sql);
+    execute_sql(&format!(
+        "CALL postgres_execute('{}', '{}')",
+        escape_sql_str(database),
+        escaped_sql
+    ))
+}
+
+fn setup_schema_context(
+    schema: &str,
+    database: &str,
+    is_postgres: bool,
+) -> Result<(), Box<dyn Error>> {
+    if is_postgres {
+        postgres_execute_sql(
+            database,
+            &format!("CREATE SCHEMA IF NOT EXISTS \"{}\"", escape_sql_ident(schema)),
+        )?;
+    } else {
+        execute_sql(&format!(
+            "CREATE SCHEMA IF NOT EXISTS \"{}\".\"{}\"",
+            escape_sql_ident(database),
+            escape_sql_ident(schema)
+        ))?;
+        execute_sql(&format!(
+            "USE \"{}\".\"{}\"",
+            escape_sql_ident(database),
+            escape_sql_ident(schema)
+        ))?;
+    }
+    Ok(())
+}
+
+fn teardown_schema_context(is_postgres: bool) -> Result<(), Box<dyn Error>> {
+    if !is_postgres {
+        execute_sql("USE memory.main")?;
+    }
+    Ok(())
+}
+
+fn ensure_history_table_in(
+    schema: &str,
+    database: &str,
+    is_postgres: bool,
+) -> Result<(), Box<dyn Error>> {
+    let ddl = format!(
+        "CREATE TABLE IF NOT EXISTS \"{}\".refinery_schema_history(\
+            version INT4 PRIMARY KEY,\
+            name VARCHAR(255),\
+            applied_on VARCHAR(255),\
+            checksum VARCHAR(255)\
+        );",
+        escape_sql_ident(schema)
+    );
+    if is_postgres {
+        postgres_execute_sql(database, &ddl)
+    } else {
+        // Table resolves via active USE context
+        execute_sql(
+            "CREATE TABLE IF NOT EXISTS refinery_schema_history(\
+                version INT4 PRIMARY KEY,\
+                name VARCHAR(255),\
+                applied_on VARCHAR(255),\
+                checksum VARCHAR(255)\
+            );",
+        )
+    }
+}
+
+fn query_applied_migrations_from(
+    schema: &str,
+    database: &str,
+) -> Result<Vec<AppliedMigration>, Box<dyn Error>> {
+    let fq_table = format!(
+        "\"{}\".\"{}\".refinery_schema_history",
+        escape_sql_ident(database),
+        escape_sql_ident(schema)
+    );
+    let rows = query_sql(&format!(
+        "SELECT version, name, applied_on, checksum FROM {} ORDER BY version",
+        fq_table
+    ))
+    .unwrap_or_default();
+
+    let mut result = Vec::new();
+    for row in rows {
+        if row.columns.len() < 4 {
+            continue;
+        }
+        let version: i32 = row.columns[0]
+            .parse()
+            .map_err(|_| format!("Invalid version in schema history: {}", row.columns[0]))?;
+        let checksum: u64 = row.columns[3]
+            .parse()
+            .map_err(|_| format!("Invalid checksum in schema history: {}", row.columns[3]))?;
+        result.push(AppliedMigration {
+            version,
+            name: row.columns[1].clone(),
+            applied_on: row.columns[2].clone(),
+            checksum,
+        });
+    }
+    Ok(result)
+}
+
+fn insert_migration_record_in(
+    migration: &MigrationFile,
+    schema: &str,
+    database: &str,
+    is_postgres: bool,
+) -> Result<(), Box<dyn Error>> {
+    let applied_on = Utc::now().to_rfc3339();
+    let checksum_str = migration.checksum.to_string();
+
+    if is_postgres {
+        let sql = format!(
+            "INSERT INTO \"{schema}\".refinery_schema_history (version, name, applied_on, checksum) \
+             VALUES ({}, '{}', '{}', '{}')",
+            migration.version,
+            escape_sql_str(&migration.name),
+            escape_sql_str(&applied_on),
+            escape_sql_str(&checksum_str),
+            schema = escape_sql_ident(schema),
+        );
+        postgres_execute_sql(database, &sql)
+    } else {
+        // Uses active USE context
+        insert_migration_record(migration)
+    }
+}
+
+fn execute_migration_sql(
+    sql: &str,
+    database: &str,
+    is_postgres: bool,
+) -> Result<(), Box<dyn Error>> {
+    if is_postgres {
+        postgres_execute_sql(database, sql)
+    } else {
+        execute_sql(sql)
+    }
+}
+
+fn execute_migrations_in_schema(
+    discovered: &[MigrationFile],
+    pending_indices: &[usize],
+    schema: &str,
+    database: &str,
+    is_postgres: bool,
+) -> Result<Vec<MigrationResult>, Box<dyn Error>> {
+    let mut results = Vec::new();
+    let pending_set: std::collections::HashSet<usize> =
+        pending_indices.iter().copied().collect();
+
+    for (idx, migration) in discovered.iter().enumerate() {
+        if !pending_set.contains(&idx) {
+            results.push(MigrationResult {
+                version: migration.version,
+                name: migration.name.clone(),
+                status: "skipped".to_string(),
+            });
+        }
+    }
+
+    for &idx in pending_indices {
+        let migration = &discovered[idx];
+
+        if !is_postgres {
+            execute_sql("BEGIN TRANSACTION;")?;
+        }
+        match execute_migration_sql(&migration.sql, database, is_postgres) {
+            Ok(_) => match insert_migration_record_in(migration, schema, database, is_postgres) {
+                Ok(_) => {
+                    if !is_postgres {
+                        execute_sql("COMMIT;")?;
+                    }
+                    results.push(MigrationResult {
+                        version: migration.version,
+                        name: migration.name.clone(),
+                        status: "applied".to_string(),
+                    });
+                }
+                Err(e) => {
+                    if !is_postgres {
+                        let _ = execute_sql("ROLLBACK;");
+                    }
+                    return Err(format!(
+                        "Migration V{}__{} failed to record: {}",
+                        migration.version, migration.name, e
+                    )
+                    .into());
+                }
+            },
+            Err(e) => {
+                if !is_postgres {
+                    let _ = execute_sql("ROLLBACK;");
+                }
+                return Err(format!(
+                    "Migration V{}__{} failed: {}",
+                    migration.version, migration.name, e
+                )
+                .into());
+            }
+        }
+    }
+
+    results.sort_by_key(|r| r.version);
+    Ok(results)
+}
+
+// ── MigrateSchemaVTab ────────────────────────────────────────────────────────
+
+#[repr(C)]
+struct MigrateSchemaBindData {
+    path: String,
+    schema: String,
+    database: String,
+}
+
+#[repr(C)]
+struct MigrateSchemaInitData {
+    results: Vec<MigrationResult>,
+    index: AtomicUsize,
+}
+
+struct MigrateSchemaVTab;
+
+impl VTab for MigrateSchemaVTab {
+    type InitData = MigrateSchemaInitData;
+    type BindData = MigrateSchemaBindData;
+
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn Error>> {
+        bind.add_result_column("version", LogicalTypeHandle::from(LogicalTypeId::Integer));
+        bind.add_result_column("name", LogicalTypeHandle::from(LogicalTypeId::Varchar));
+        bind.add_result_column("status", LogicalTypeHandle::from(LogicalTypeId::Varchar));
+
+        let path = bind.get_parameter(0).to_string();
+        let schema = bind.get_parameter(1).to_string();
+        let database = bind.get_parameter(2).to_string();
+        Ok(MigrateSchemaBindData {
+            path,
+            schema,
+            database,
+        })
+    }
+
+    fn init(init: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {
+        let bind_data = init.get_bind_data::<Self::BindData>();
+        if bind_data.is_null() {
+            return Err("Bind data is null".into());
+        }
+        let (path, schema, database) = unsafe {
+            (
+                (*bind_data).path.clone(),
+                (*bind_data).schema.clone(),
+                (*bind_data).database.clone(),
+            )
+        };
+
+        let is_pg = is_postgres_database(&database)?;
+        setup_schema_context(&schema, &database, is_pg)?;
+
+        let run = (|| -> Result<Vec<MigrationResult>, Box<dyn Error>> {
+            let discovered = discover_migrations(&path)?;
+            ensure_history_table_in(&schema, &database, is_pg)?;
+            let applied = query_applied_migrations_from(&schema, &database)?;
+            let pending_indices = verify_migrations(&discovered, &applied)?;
+            execute_migrations_in_schema(&discovered, &pending_indices, &schema, &database, is_pg)
+        })();
+
+        teardown_schema_context(is_pg)?;
+
+        let results = run?;
+
+        Ok(MigrateSchemaInitData {
+            results,
+            index: AtomicUsize::new(0),
+        })
+    }
+
+    fn func(
+        func: &TableFunctionInfo<Self>,
+        output: &mut DataChunkHandle,
+    ) -> Result<(), Box<dyn Error>> {
+        let init_data = func.get_init_data();
+        let current_index = init_data.index.fetch_add(1, Ordering::Relaxed);
+
+        if current_index >= init_data.results.len() {
+            output.set_len(0);
+            return Ok(());
+        }
+
+        let result = &init_data.results[current_index];
+
+        let mut version_vector = output.flat_vector(0);
+        version_vector.as_mut_slice::<i32>()[0] = result.version;
+
+        let name_vector = output.flat_vector(1);
+        name_vector.insert(0, result.name.as_str());
+
+        let status_vector = output.flat_vector(2);
+        status_vector.insert(0, result.status.as_str());
+
+        output.set_len(1);
+        Ok(())
+    }
+
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        ])
+    }
+}
+
+// ── MigrationStatusSchemaVTab ────────────────────────────────────────────────
+
+#[repr(C)]
+struct MigrationStatusSchemaBindData {
+    path: String,
+    schema: String,
+    database: String,
+}
+
+#[repr(C)]
+struct MigrationStatusSchemaInitData {
+    results: Vec<MigrationStatusResult>,
+    index: AtomicUsize,
+}
+
+struct MigrationStatusSchemaVTab;
+
+impl VTab for MigrationStatusSchemaVTab {
+    type InitData = MigrationStatusSchemaInitData;
+    type BindData = MigrationStatusSchemaBindData;
+
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn Error>> {
+        bind.add_result_column("version", LogicalTypeHandle::from(LogicalTypeId::Integer));
+        bind.add_result_column("name", LogicalTypeHandle::from(LogicalTypeId::Varchar));
+        bind.add_result_column("status", LogicalTypeHandle::from(LogicalTypeId::Varchar));
+        bind.add_result_column(
+            "applied_on",
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        );
+        bind.add_result_column("checksum", LogicalTypeHandle::from(LogicalTypeId::Varchar));
+
+        let path = bind.get_parameter(0).to_string();
+        let schema = bind.get_parameter(1).to_string();
+        let database = bind.get_parameter(2).to_string();
+        Ok(MigrationStatusSchemaBindData {
+            path,
+            schema,
+            database,
+        })
+    }
+
+    fn init(init: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {
+        let bind_data = init.get_bind_data::<Self::BindData>();
+        if bind_data.is_null() {
+            return Err("Bind data is null".into());
+        }
+        let (path, schema, database) = unsafe {
+            (
+                (*bind_data).path.clone(),
+                (*bind_data).schema.clone(),
+                (*bind_data).database.clone(),
+            )
+        };
+
+        let is_pg = is_postgres_database(&database)?;
+        setup_schema_context(&schema, &database, is_pg)?;
+
+        let run = (|| -> Result<Vec<MigrationStatusResult>, Box<dyn Error>> {
+            let discovered = discover_migrations(&path)?;
+            ensure_history_table_in(&schema, &database, is_pg)?;
+            let applied = query_applied_migrations_from(&schema, &database)?;
+
+            let applied_map: HashMap<i32, &AppliedMigration> =
+                applied.iter().map(|a| (a.version, a)).collect();
+
+            let mut results = Vec::new();
+            for migration in &discovered {
+                let (status, applied_on) = match applied_map.get(&migration.version) {
+                    Some(am) => {
+                        if am.checksum == migration.checksum {
+                            ("applied".to_string(), am.applied_on.clone())
+                        } else {
+                            ("checksum_mismatch".to_string(), am.applied_on.clone())
+                        }
+                    }
+                    None => ("pending".to_string(), String::new()),
+                };
+
+                results.push(MigrationStatusResult {
+                    version: migration.version,
+                    name: migration.name.clone(),
+                    status,
+                    applied_on,
+                    checksum: migration.checksum.to_string(),
+                });
+            }
+            Ok(results)
+        })();
+
+        teardown_schema_context(is_pg)?;
+
+        let results = run?;
+
+        Ok(MigrationStatusSchemaInitData {
+            results,
+            index: AtomicUsize::new(0),
+        })
+    }
+
+    fn func(
+        func: &TableFunctionInfo<Self>,
+        output: &mut DataChunkHandle,
+    ) -> Result<(), Box<dyn Error>> {
+        let init_data = func.get_init_data();
+        let current_index = init_data.index.fetch_add(1, Ordering::Relaxed);
+
+        if current_index >= init_data.results.len() {
+            output.set_len(0);
+            return Ok(());
+        }
+
+        let result = &init_data.results[current_index];
+
+        let mut version_vector = output.flat_vector(0);
+        version_vector.as_mut_slice::<i32>()[0] = result.version;
+
+        let name_vector = output.flat_vector(1);
+        name_vector.insert(0, result.name.as_str());
+
+        let status_vector = output.flat_vector(2);
+        status_vector.insert(0, result.status.as_str());
+
+        let applied_on_vector = output.flat_vector(3);
+        applied_on_vector.insert(0, result.applied_on.as_str());
+
+        let checksum_vector = output.flat_vector(4);
+        checksum_vector.insert(0, result.checksum.as_str());
+
+        output.set_len(1);
+        Ok(())
+    }
+
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        ])
+    }
+}
+
 // ── Extension Entrypoint (manual C API, following hana pattern) ──────────────
 
 unsafe fn extension_entrypoint(connection: Connection) -> Result<(), Box<dyn Error>> {
     connection.register_table_function::<MigrateVTab>("trex_migration_run")?;
     connection.register_table_function::<MigrationStatusVTab>("trex_migration_status")?;
+    connection.register_table_function::<MigrateSchemaVTab>("trex_migration_run_schema")?;
+    connection
+        .register_table_function::<MigrationStatusSchemaVTab>("trex_migration_status_schema")?;
     Ok(())
 }
 

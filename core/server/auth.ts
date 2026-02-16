@@ -62,6 +62,10 @@ function getBaseConfig() {
           type: "string" as const,
           required: false,
         },
+        mustChangePassword: {
+          type: "boolean" as const,
+          defaultValue: false,
+        },
       },
     },
 
