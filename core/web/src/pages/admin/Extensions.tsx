@@ -22,7 +22,8 @@ interface ExtensionRow {
 
 export function Extensions() {
   const [extResult, reexecuteExts] = useQuery({ query: TREX_EXTENSIONS_QUERY });
-  const extensions: ExtensionRow[] = extResult.data?.trexExtensions || [];
+  const allExtensions: ExtensionRow[] = extResult.data?.trexExtensions || [];
+  const extensions = allExtensions.filter((e) => e.installed || e.loaded);
 
   function refetch() {
     reexecuteExts({ requestPolicy: "network-only" });
@@ -55,14 +56,6 @@ export function Extensions() {
       ),
     },
     {
-      header: "Installed",
-      cell: (row) => (
-        <Badge variant={row.installed ? "default" : "secondary"}>
-          {row.installed ? "Yes" : "No"}
-        </Badge>
-      ),
-    },
-    {
       header: "Description",
       cell: (row) => (
         <span className="text-sm text-muted-foreground">{row.description || "-"}</span>
@@ -76,7 +69,7 @@ export function Extensions() {
         <div>
           <h2 className="text-2xl font-bold">Extensions</h2>
           <p className="text-muted-foreground">
-            {loadedCount} extension{loadedCount === 1 ? "" : "s"} loaded, {extensions.length} available
+            {loadedCount} extension{loadedCount === 1 ? "" : "s"} loaded, {extensions.length} installed
           </p>
         </div>
         <Button variant="outline" onClick={refetch}>

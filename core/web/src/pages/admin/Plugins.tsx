@@ -14,12 +14,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { PlusIcon, RefreshCwIcon, DownloadIcon, Trash2Icon, ArrowUpCircleIcon } from "lucide-react";
+import { PlusIcon, RefreshCwIcon, DownloadIcon, Trash2Icon, ArrowUpCircleIcon, LoaderIcon } from "lucide-react";
 
 const AVAILABLE_PLUGINS = `
   query {
     availablePlugins {
       name
+      packageName
       version
       activeVersion
       active
@@ -62,6 +63,7 @@ const UPDATE_PLUGIN = `
 
 interface PluginRow {
   name: string;
+  packageName?: string;
   version: string | null;
   activeVersion: string | null;
   active: boolean;
@@ -95,6 +97,7 @@ export function Plugins() {
   const [installSpec, setInstallSpec] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [needsRestart, setNeedsRestart] = useState(false);
+  const [busyPlugins, setBusyPlugins] = useState<Record<string, string>>({});
 
   const [result, reexecuteQuery] = useQuery({ query: AVAILABLE_PLUGINS });
   const [, installPlugin] = useMutation(INSTALL_PLUGIN);
@@ -108,8 +111,20 @@ export function Plugins() {
     reexecuteQuery({ requestPolicy: "network-only" });
   }
 
+  function setBusy(name: string, action: string) {
+    setBusyPlugins((prev) => ({ ...prev, [name]: action }));
+  }
+
+  function clearBusy(name: string) {
+    setBusyPlugins((prev) => {
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+  }
+
   const filtered = search
-    ? plugins.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()))
+    ? plugins.filter((p) => (p.packageName || p.name).toLowerCase().includes(search.toLowerCase()))
     : plugins;
 
   async function handleInstall(e: FormEvent) {
@@ -140,6 +155,7 @@ export function Plugins() {
   }
 
   async function handleUninstall(name: string) {
+    setBusy(name, "Uninstalling...");
     try {
       const res = await uninstallPlugin({ packageName: name });
       if (res.error) {
@@ -156,12 +172,15 @@ export function Plugins() {
       refetch();
     } catch (err: any) {
       toast.error(err.message || "Uninstall failed");
+    } finally {
+      clearBusy(name);
     }
   }
 
-  async function handleUpdate(name: string) {
+  async function handleUpdate(name: string, packageName?: string) {
+    setBusy(name, "Updating...");
     try {
-      const res = await updatePlugin({ packageName: name });
+      const res = await updatePlugin({ packageName: packageName || name });
       if (res.error) {
         toast.error(res.error.message);
         return;
@@ -176,12 +195,15 @@ export function Plugins() {
       refetch();
     } catch (err: any) {
       toast.error(err.message || "Update failed");
+    } finally {
+      clearBusy(name);
     }
   }
 
-  async function handleInstallFromRegistry(name: string) {
+  async function handleInstallFromRegistry(name: string, packageName?: string) {
+    setBusy(name, "Installing...");
     try {
-      const res = await installPlugin({ packageSpec: name });
+      const res = await installPlugin({ packageSpec: packageName || name });
       if (res.error) {
         toast.error(res.error.message);
         return;
@@ -191,11 +213,13 @@ export function Plugins() {
         toast.error(data?.error || "Install failed");
         return;
       }
-      toast.success(`Installed ${name}`);
+      toast.success(`Installed ${packageName || name}`);
       setNeedsRestart(true);
       refetch();
     } catch (err: any) {
       toast.error(err.message || "Install failed");
+    } finally {
+      clearBusy(name);
     }
   }
 
@@ -204,7 +228,7 @@ export function Plugins() {
       header: "Name",
       cell: (row) => (
         <div>
-          <code className="text-xs font-mono">{row.name}</code>
+          <code className="text-xs font-mono">{row.packageName || row.name}</code>
           {row.description && (
             <p className="text-xs text-muted-foreground mt-0.5 max-w-xs truncate" title={row.description}>{row.description}</p>
           )}
@@ -215,26 +239,18 @@ export function Plugins() {
       header: "Version",
       cell: (row) => {
         if (!row.version) return <span className="text-sm">—</span>;
-        const short = row.version.replace(/^(\d+\.\d+\.\d+).*/, "$1");
-        return <span className="text-sm" title={row.version}>{short}</span>;
-      },
-    },
-    {
-      header: "Active Version",
-      cell: (row) => {
-        if (!row.activeVersion) return <span className="text-sm">—</span>;
-        const short = row.activeVersion.replace(/^(\d+\.\d+\.\d+).*/, "$1");
-        return <span className="text-sm" title={row.activeVersion}>{short}</span>;
+        const display = row.version.length > 16 ? row.version.slice(0, 16) + "..." : row.version;
+        return <span className="text-sm" title={row.version}>{display}</span>;
       },
     },
     {
       header: "Registry Version",
       cell: (row) => {
         if (!row.registryVersion) return <span className="text-sm">—</span>;
-        const short = row.registryVersion.replace(/^(\d+\.\d+\.\d+).*/, "$1");
+        const display = row.registryVersion.length > 16 ? row.registryVersion.slice(0, 16) + "..." : row.registryVersion;
         return (
           <span className="text-sm" title={row.registryVersion}>
-            {short}
+            {display}
             {row.installed && row.version && row.registryVersion !== row.version && (
               <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">new</Badge>
             )}
@@ -245,34 +261,46 @@ export function Plugins() {
     {
       header: "Status",
       cell: (row) => {
+        const busy = busyPlugins[row.name];
+        if (busy) {
+          return (
+            <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <LoaderIcon className="h-3 w-3 animate-spin" />
+              {busy}
+            </span>
+          );
+        }
         const status = getStatus(row);
         return <Badge variant={status.variant}>{status.label}</Badge>;
       },
     },
     {
       header: "Actions",
-      cell: (row) => (
-        <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-          {!row.installed && row.registryVersion && (
-            <Button variant="outline" size="sm" onClick={() => handleInstallFromRegistry(row.name)}>
-              <DownloadIcon className="h-3 w-3 mr-1" />
-              Install
-            </Button>
-          )}
-          {row.installed && row.registryVersion && row.registryVersion > (row.version || "") && (
-            <Button variant="outline" size="sm" onClick={() => handleUpdate(row.name)}>
-              <ArrowUpCircleIcon className="h-3 w-3 mr-1" />
-              Update
-            </Button>
-          )}
-          {row.installed && (
-            <Button variant="outline" size="sm" onClick={() => handleUninstall(row.name)}>
-              <Trash2Icon className="h-3 w-3 mr-1" />
-              Uninstall
-            </Button>
-          )}
-        </div>
-      ),
+      cell: (row) => {
+        const busy = !!busyPlugins[row.name];
+        return (
+          <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+            {!row.installed && row.registryVersion && (
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => handleInstallFromRegistry(row.name, row.packageName)}>
+                <DownloadIcon className="h-3 w-3 mr-1" />
+                Install
+              </Button>
+            )}
+            {row.installed && row.registryVersion && row.registryVersion > (row.version || "") && (
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => handleUpdate(row.name, row.packageName)}>
+                <ArrowUpCircleIcon className="h-3 w-3 mr-1" />
+                Update
+              </Button>
+            )}
+            {row.installed && (
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => handleUninstall(row.name)}>
+                <Trash2Icon className="h-3 w-3 mr-1" />
+                Uninstall
+              </Button>
+            )}
+          </div>
+        );
+      },
     },
   ];
 

@@ -15,7 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Link } from "react-router-dom";
-import { PlayIcon, SquareIcon, RefreshCwIcon } from "lucide-react";
+import { PlayIcon, SquareIcon, RefreshCwIcon, RotateCwIcon } from "lucide-react";
 
 const TREX_NODES_QUERY = `
   query TrexNodes {
@@ -44,6 +44,12 @@ const START_SERVICE_MUTATION = `
 const STOP_SERVICE_MUTATION = `
   mutation StopService($extension: String!) {
     stopService(extension: $extension) { success message error }
+  }
+`;
+
+const RESTART_SERVICE_MUTATION = `
+  mutation RestartService($extension: String!, $config: String!) {
+    restartService(extension: $extension, config: $config) { success message error }
   }
 `;
 
@@ -138,6 +144,7 @@ export function Services() {
 
   const [, startService] = useMutation(START_SERVICE_MUTATION);
   const [, stopService] = useMutation(STOP_SERVICE_MUTATION);
+  const [, restartService] = useMutation(RESTART_SERVICE_MUTATION);
   const [, stopEtlPipeline] = useMutation(STOP_ETL_PIPELINE_MUTATION);
 
   const nodes: NodeRow[] = nodesResult.data?.trexNodes || [];
@@ -203,6 +210,25 @@ export function Services() {
       refetchAll();
     } catch (err: any) {
       toast.error(err.message || "Failed to stop service");
+    }
+  }
+
+  async function handleRestartService(serviceName: string, config: string | null) {
+    try {
+      const res = await restartService({ extension: serviceName, config: config || "{}" });
+      if (res.error) {
+        toast.error(res.error.message);
+        return;
+      }
+      const data = res.data?.restartService;
+      if (!data?.success) {
+        toast.error(data?.error || "Failed to restart service");
+        return;
+      }
+      toast.success(data.message || `Restarted ${serviceName}`);
+      refetchAll();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to restart service");
     }
   }
 
@@ -325,10 +351,16 @@ export function Services() {
       cell: (row) => (
         <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
           {row.status.toLowerCase() === "running" && (
-            <Button variant="outline" size="sm" onClick={() => handleStopService(row.serviceName)}>
-              <SquareIcon className="h-3 w-3 mr-1" />
-              Stop
-            </Button>
+            <>
+              <Button variant="outline" size="sm" onClick={() => handleRestartService(row.serviceName, row.config)}>
+                <RotateCwIcon className="h-3 w-3 mr-1" />
+                Restart
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => handleStopService(row.serviceName)}>
+                <SquareIcon className="h-3 w-3 mr-1" />
+                Stop
+              </Button>
+            </>
           )}
         </div>
       ),

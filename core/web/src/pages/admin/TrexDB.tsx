@@ -18,11 +18,8 @@ const TREX_SCHEMAS_QUERY = `
 `;
 
 const TREX_TABLES_QUERY = `
-  query TrexTables($database: String, $schema: String) {
-    trexTables(database: $database, schema: $schema) {
-      databaseName schemaName tableName tableOid internal
-      hasPrimaryKey estimatedSize columnCount indexCount temporary
-    }
+  query TrexTables {
+    trexTables { databaseName schemaName tableName }
   }
 `;
 
@@ -45,13 +42,6 @@ interface TableRow {
   databaseName: string;
   schemaName: string;
   tableName: string;
-  tableOid: string;
-  internal: boolean;
-  hasPrimaryKey: boolean;
-  estimatedSize: string;
-  columnCount: string;
-  indexCount: string;
-  temporary: boolean;
 }
 
 export function TrexDB() {
@@ -59,17 +49,28 @@ export function TrexDB() {
 
   const [dbResult, reexecuteDbs] = useQuery({ query: TREX_DATABASES_QUERY });
   const [schemaResult, reexecuteSchemas] = useQuery({ query: TREX_SCHEMAS_QUERY });
-  const [tableResult, reexecuteTables] = useQuery({
-    query: TREX_TABLES_QUERY,
-    variables: { database: selectedDatabase },
-  });
+  const [tableResult, reexecuteTables] = useQuery({ query: TREX_TABLES_QUERY });
+
   const databases: DatabaseRow[] = dbResult.data?.trexDatabases || [];
   const allSchemas: SchemaRow[] = schemaResult.data?.trexSchemas || [];
-  const tables: TableRow[] = tableResult.data?.trexTables || [];
+  const allTables: TableRow[] = tableResult.data?.trexTables || [];
 
   const schemas = selectedDatabase
     ? allSchemas.filter((s) => s.databaseName === selectedDatabase)
     : allSchemas;
+
+  // Count schemas per database
+  const schemaCountByDb = new Map<string, number>();
+  for (const s of allSchemas) {
+    schemaCountByDb.set(s.databaseName, (schemaCountByDb.get(s.databaseName) || 0) + 1);
+  }
+
+  // Count tables per database.schema
+  const tableCountBySchema = new Map<string, number>();
+  for (const t of allTables) {
+    const key = `${t.databaseName}.${t.schemaName}`;
+    tableCountBySchema.set(key, (tableCountBySchema.get(key) || 0) + 1);
+  }
 
   function refetchAll() {
     reexecuteDbs({ requestPolicy: "network-only" });
@@ -98,6 +99,12 @@ export function TrexDB() {
       ),
     },
     {
+      header: "Schemas",
+      cell: (row) => (
+        <span className="text-sm">{schemaCountByDb.get(row.databaseName) || 0}</span>
+      ),
+    },
+    {
       header: "Internal",
       cell: (row) => (
         <Badge variant={row.internal ? "secondary" : "default"}>
@@ -117,52 +124,18 @@ export function TrexDB() {
       cell: (row) => <span className="text-sm font-medium">{row.schemaName}</span>,
     },
     {
+      header: "Tables",
+      cell: (row) => (
+        <span className="text-sm">{tableCountBySchema.get(`${row.databaseName}.${row.schemaName}`) || 0}</span>
+      ),
+    },
+    {
       header: "Internal",
       cell: (row) => (
         <Badge variant={row.internal ? "secondary" : "default"}>
           {row.internal ? "Yes" : "No"}
         </Badge>
       ),
-    },
-  ];
-
-  const tableColumns: Column<TableRow>[] = [
-    {
-      header: "Database",
-      cell: (row) => <code className="text-xs font-mono">{row.databaseName}</code>,
-    },
-    {
-      header: "Schema",
-      cell: (row) => <code className="text-xs font-mono">{row.schemaName}</code>,
-    },
-    {
-      header: "Table",
-      cell: (row) => <span className="text-sm font-medium">{row.tableName}</span>,
-    },
-    {
-      header: "Columns",
-      cell: (row) => <span className="text-sm">{row.columnCount}</span>,
-    },
-    {
-      header: "Est. Size",
-      cell: (row) => <span className="text-sm">{row.estimatedSize}</span>,
-    },
-    {
-      header: "PK",
-      cell: (row) => (
-        <Badge variant={row.hasPrimaryKey ? "default" : "secondary"}>
-          {row.hasPrimaryKey ? "Yes" : "No"}
-        </Badge>
-      ),
-    },
-    {
-      header: "Indexes",
-      cell: (row) => <span className="text-sm">{row.indexCount}</span>,
-    },
-    {
-      header: "Temp",
-      cell: (row) =>
-        row.temporary ? <Badge variant="secondary">Yes</Badge> : null,
     },
   ];
 
@@ -211,16 +184,6 @@ export function TrexDB() {
           data={schemas}
           loading={schemaResult.fetching}
           emptyMessage="No schemas found."
-        />
-      </div>
-
-      <div className="space-y-2">
-        <h3 className="text-lg font-semibold">Tables</h3>
-        <DataTable
-          columns={tableColumns}
-          data={tables}
-          loading={tableResult.fetching}
-          emptyMessage="No tables found."
         />
       </div>
     </div>
