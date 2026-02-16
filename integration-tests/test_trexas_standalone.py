@@ -47,7 +47,7 @@ def test_trexas_server_lifecycle(node_factory):
 
     # Stop server
     server_id = servers[0][0]
-    result = node.execute(f"SELECT trex_stop_server({server_id})")
+    result = node.execute(f"SELECT trex_stop_server('{server_id}')")
     assert len(result) == 1
 
     # Verify server is gone
