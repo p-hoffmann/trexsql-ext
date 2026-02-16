@@ -4,6 +4,36 @@ use std::thread::JoinHandle;
 use std::time::SystemTime;
 use tokio::sync::oneshot;
 
+/// Pipeline execution mode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PipelineMode {
+    CopyAndCdc,
+    CdcOnly,
+    CopyOnly,
+}
+
+impl PipelineMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PipelineMode::CopyAndCdc => "copy_and_cdc",
+            PipelineMode::CdcOnly => "cdc_only",
+            PipelineMode::CopyOnly => "copy_only",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Result<Self, String> {
+        match s.to_lowercase().as_str() {
+            "copy_and_cdc" => Ok(PipelineMode::CopyAndCdc),
+            "cdc_only" => Ok(PipelineMode::CdcOnly),
+            "copy_only" => Ok(PipelineMode::CopyOnly),
+            _ => Err(format!(
+                "Invalid mode '{}'. Must be one of: copy_and_cdc, cdc_only, copy_only",
+                s
+            )),
+        }
+    }
+}
+
 /// Pipeline lifecycle state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PipelineState {
@@ -40,6 +70,7 @@ pub struct PipelineHandle {
 pub struct PipelineInfo {
     pub name: String,
     pub state: PipelineState,
+    pub mode: PipelineMode,
     pub connection_string: String,
     pub publication: String,
     pub snapshot_enabled: bool,
@@ -72,9 +103,11 @@ impl PipelineRegistry {
         name: &str,
         connection_string: &str,
         publication: &str,
-        snapshot_enabled: bool,
+        mode: PipelineMode,
         shutdown_tx: oneshot::Sender<()>,
     ) -> Result<(), String> {
+        let snapshot_enabled = matches!(mode, PipelineMode::CopyAndCdc | PipelineMode::CopyOnly);
+
         let _info_snapshot = {
             let mut pipelines = self.pipelines.lock().unwrap();
             if pipelines.contains_key(name) {
@@ -90,6 +123,7 @@ impl PipelineRegistry {
             let info = PipelineInfo {
                 name: name.to_string(),
                 state: PipelineState::Starting,
+                mode,
                 connection_string: connection_string.to_string(),
                 publication: publication.to_string(),
                 snapshot_enabled,
@@ -130,6 +164,31 @@ impl PipelineRegistry {
             if let Some((_, info)) = pipelines.get_mut(name) {
                 info.state = state;
                 Some(info.clone())
+            } else {
+                None
+            }
+        };
+
+        #[cfg(feature = "loadable-extension")]
+        if let Some(snapshot) = _info_snapshot {
+            if let Some(conn) = crate::get_shared_connection() {
+                crate::gossip_bridge::publish_pipeline_state(&conn, &snapshot);
+            }
+        }
+    }
+
+    /// Transition pipeline from Snapshotting to Streaming (once).
+    /// Used by the destination to mark when CDC streaming begins.
+    pub fn transition_to_streaming_once(&self, name: &str) {
+        let _info_snapshot = {
+            let mut pipelines = self.pipelines.lock().unwrap();
+            if let Some((_, info)) = pipelines.get_mut(name) {
+                if info.state == PipelineState::Snapshotting {
+                    info.state = PipelineState::Streaming;
+                    Some(info.clone())
+                } else {
+                    None
+                }
             } else {
                 None
             }

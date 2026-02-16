@@ -27,6 +27,7 @@ export function AdminLayout() {
         { to: "/admin/plugins", label: "Plugins" },
         { to: "/admin/migrations", label: "Migrations" },
         { to: "/admin/services", label: "Services" },
+        { to: "/admin/etl", label: "ETL" },
         { to: "/admin/databases", label: "Federation" },
       ],
     },

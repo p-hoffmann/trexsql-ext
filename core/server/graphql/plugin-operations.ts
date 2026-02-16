@@ -135,6 +135,24 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
         results: [PluginMigration!]
       }
 
+      type EtlPipeline {
+        name: String!
+        state: String!
+        mode: String!
+        connection: String!
+        publication: String!
+        snapshot: String!
+        rowsReplicated: String!
+        lastActivity: String!
+        error: String
+      }
+
+      type EtlActionResult {
+        success: Boolean!
+        message: String
+        error: String
+      }
+
       extend type Query {
         availablePlugins: [PluginInfo!]!
         trexNodes: [TrexNode!]!
@@ -145,6 +163,7 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
         trexTables(database: String, schema: String): [TrexTable!]!
         trexExtensions: [TrexExtension!]!
         trexMigrations: [PluginMigrationSummary!]!
+        etlPipelines: [EtlPipeline!]!
       }
 
       extend type Mutation {
@@ -156,6 +175,18 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
         startService(extension: String!, config: String!): ServiceActionResult!
         stopService(extension: String!): ServiceActionResult!
         runPluginMigrations(pluginName: String): RunMigrationResult!
+        startEtlPipeline(
+          name: String!
+          databaseId: String!
+          mode: String!
+          publication: String
+          schema: String
+          batchSize: Int
+          batchTimeoutMs: Int
+          retryDelayMs: Int
+          retryMaxAttempts: Int
+        ): EtlActionResult!
+        stopEtlPipeline(name: String!): EtlActionResult!
       }
     `,
     resolvers: {
@@ -487,6 +518,29 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
             return [];
           }
         },
+
+        async etlPipelines(_parent: any, _args: any, context: any) {
+          assertAdmin(context);
+          try {
+            const conn = new Trex.TrexDB("memory");
+            const result = await conn.execute("SELECT * FROM trex_etl_status()", []);
+            const rows = result?.rows || result || [];
+            return rows.map((r: any) => ({
+              name: r.name || r[0] || "",
+              state: r.state || r[1] || "",
+              mode: r.mode || r[2] || "",
+              connection: r.connection || r[3] || "",
+              publication: r.publication || r[4] || "",
+              snapshot: r.snapshot || r[5] || "",
+              rowsReplicated: r.rows_replicated || r[6] || "0",
+              lastActivity: r.last_activity || r[7] || "",
+              error: r.error || r[8] || null,
+            }));
+          } catch (err: any) {
+            console.error("etlPipelines error:", err);
+            return [];
+          }
+        },
       },
       Mutation: {
         async installPlugin(_parent: any, args: { packageSpec: string }, context: any) {
@@ -736,6 +790,117 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
           } catch (err: any) {
             console.error("runPluginMigrations error:", err);
             return { success: false, error: err.message || String(err), results: null };
+          }
+        },
+
+        async startEtlPipeline(
+          _parent: any,
+          args: {
+            name: string;
+            databaseId: string;
+            mode: string;
+            publication?: string;
+            schema?: string;
+            batchSize?: number;
+            batchTimeoutMs?: number;
+            retryDelayMs?: number;
+            retryMaxAttempts?: number;
+          },
+          context: any,
+        ) {
+          assertAdmin(context);
+
+          const { name, databaseId, mode } = args;
+          const validModes = ["copy_and_cdc", "cdc_only", "copy_only"];
+          if (!validModes.includes(mode)) {
+            return { success: false, message: null, error: `Invalid mode '${mode}'. Must be one of: ${validModes.join(", ")}` };
+          }
+          if ((mode === "copy_and_cdc" || mode === "cdc_only") && !args.publication) {
+            return { success: false, message: null, error: "Publication name is required for CDC modes" };
+          }
+
+          const pg = (await import("pg")).default;
+          const mainPool = new pg.Pool({
+            connectionString: Deno.env.get("DATABASE_URL"),
+          });
+
+          try {
+            const dbResult = await mainPool.query(
+              `SELECT host, port, "databaseName" FROM trex.database WHERE id = $1`,
+              [databaseId]
+            );
+            if (dbResult.rows.length === 0) {
+              return { success: false, message: null, error: "Database not found" };
+            }
+            const db = dbResult.rows[0];
+
+            const credResult = await mainPool.query(
+              `SELECT username, password FROM trex.database_credential WHERE "databaseId" = $1 LIMIT 1`,
+              [databaseId]
+            );
+            if (credResult.rows.length === 0) {
+              return { success: false, message: null, error: "No credentials configured for this database" };
+            }
+            const cred = credResult.rows[0];
+
+            // Build libpq connection string
+            const parts: string[] = [
+              `host='${escapeSql(db.host)}'`,
+              `port='${escapeSql(String(db.port))}'`,
+              `dbname='${escapeSql(db.databaseName)}'`,
+              `user='${escapeSql(cred.username)}'`,
+              `password='${escapeSql(cred.password)}'`,
+            ];
+
+            if (mode === "copy_and_cdc" || mode === "cdc_only") {
+              parts.push(`publication='${escapeSql(args.publication!)}'`);
+            }
+            if (mode === "copy_only") {
+              const schemaName = args.schema || "public";
+              parts.push(`schema='${escapeSql(schemaName)}'`);
+            }
+
+            const connStr = parts.join(" ");
+
+            // Build SQL call
+            let sql: string;
+            if (args.batchSize != null || args.batchTimeoutMs != null || args.retryDelayMs != null || args.retryMaxAttempts != null) {
+              const batchSize = args.batchSize ?? 1000;
+              const batchTimeout = args.batchTimeoutMs ?? 5000;
+              const retryDelay = args.retryDelayMs ?? 10000;
+              const retryMax = args.retryMaxAttempts ?? 5;
+              sql = `SELECT trex_etl_start('${escapeSql(name)}', '${escapeSql(connStr)}', '${escapeSql(mode)}', ${batchSize}, ${batchTimeout}, ${retryDelay}, ${retryMax})`;
+            } else {
+              sql = `SELECT trex_etl_start('${escapeSql(name)}', '${escapeSql(connStr)}', '${escapeSql(mode)}')`;
+            }
+
+            const conn = new Trex.TrexDB("memory");
+            const result = await conn.execute(sql, []);
+            const rows = result?.rows || result || [];
+            const message = rows[0]?.[0] || rows[0]?.trex_etl_start || "Pipeline started";
+            return { success: true, message, error: null };
+          } catch (err: any) {
+            console.error("startEtlPipeline error:", err);
+            return { success: false, message: null, error: err.message || String(err) };
+          } finally {
+            await mainPool.end();
+          }
+        },
+
+        async stopEtlPipeline(_parent: any, args: { name: string }, context: any) {
+          assertAdmin(context);
+          const { name } = args;
+          try {
+            const sql = `SELECT trex_etl_stop('${escapeSql(name)}')`;
+            const conn = new Trex.TrexDB("memory");
+            const result = await conn.execute(sql, []);
+            const rows = result?.rows || result || [];
+            const message = rows[0]?.[0] || rows[0]?.trex_etl_stop || "Pipeline stopped";
+            return { success: true, message, error: null };
+          } catch (err: any) {
+            console.error("stopEtlPipeline error:", err);
+            return { success: false, message: null, error: err.message || String(err) };
+          }
           }
         },
       },

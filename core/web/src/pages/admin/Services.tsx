@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Link } from "react-router-dom";
 import { PlayIcon, SquareIcon, RefreshCwIcon } from "lucide-react";
 
 const TREX_NODES_QUERY = `
@@ -43,6 +44,18 @@ const START_SERVICE_MUTATION = `
 const STOP_SERVICE_MUTATION = `
   mutation StopService($extension: String!) {
     stopService(extension: $extension) { success message error }
+  }
+`;
+
+const ETL_PIPELINES_QUERY = `
+  query EtlPipelines {
+    etlPipelines { name state mode connection publication snapshot rowsReplicated lastActivity error }
+  }
+`;
+
+const STOP_ETL_PIPELINE_MUTATION = `
+  mutation StopEtlPipeline($name: String!) {
+    stopEtlPipeline(name: $name) { success message error }
   }
 `;
 
@@ -81,6 +94,18 @@ interface ClusterStatus {
   memoryUtilizationPct: string;
 }
 
+interface EtlPipelineRow {
+  name: string;
+  state: string;
+  mode: string;
+  connection: string;
+  publication: string;
+  snapshot: string;
+  rowsReplicated: string;
+  lastActivity: string;
+  error: string | null;
+}
+
 function statusBadgeVariant(status: string): "default" | "secondary" | "destructive" {
   const s = status.toLowerCase();
   if (s === "active" || s === "running") return "default";
@@ -109,17 +134,22 @@ export function Services() {
   const [servicesResult, reexecuteServices] = useQuery({ query: TREX_SERVICES_QUERY });
   const [clusterResult, reexecuteCluster] = useQuery({ query: TREX_CLUSTER_STATUS_QUERY });
 
+  const [etlResult, reexecuteEtl] = useQuery({ query: ETL_PIPELINES_QUERY });
+
   const [, startService] = useMutation(START_SERVICE_MUTATION);
   const [, stopService] = useMutation(STOP_SERVICE_MUTATION);
+  const [, stopEtlPipeline] = useMutation(STOP_ETL_PIPELINE_MUTATION);
 
   const nodes: NodeRow[] = nodesResult.data?.trexNodes || [];
   const services: ServiceRow[] = servicesResult.data?.trexServices || [];
   const clusterStatus: ClusterStatus | null = clusterResult.data?.trexClusterStatus || null;
+  const etlPipelines: EtlPipelineRow[] = etlResult.data?.etlPipelines || [];
 
   function refetchAll() {
     reexecuteNodes({ requestPolicy: "network-only" });
     reexecuteServices({ requestPolicy: "network-only" });
     reexecuteCluster({ requestPolicy: "network-only" });
+    reexecuteEtl({ requestPolicy: "network-only" });
   }
 
   // Auto-poll every 10s
@@ -175,6 +205,72 @@ export function Services() {
       toast.error(err.message || "Failed to stop service");
     }
   }
+
+  async function handleStopEtl(pipelineName: string) {
+    try {
+      const res = await stopEtlPipeline({ name: pipelineName });
+      if (res.error) {
+        toast.error(res.error.message);
+        return;
+      }
+      const data = res.data?.stopEtlPipeline;
+      if (!data?.success) {
+        toast.error(data?.error || "Failed to stop pipeline");
+        return;
+      }
+      toast.success(data.message || `Pipeline '${pipelineName}' stopped`);
+      refetchAll();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to stop pipeline");
+    }
+  }
+
+  const etlColumns: Column<EtlPipelineRow>[] = [
+    {
+      header: "Name",
+      cell: (row) => <code className="text-xs font-mono">{row.name}</code>,
+    },
+    {
+      header: "State",
+      cell: (row) => (
+        <Badge variant={statusBadgeVariant(row.state)}>{row.state}</Badge>
+      ),
+    },
+    {
+      header: "Mode",
+      cell: (row) => <Badge variant="secondary">{row.mode}</Badge>,
+    },
+    {
+      header: "Rows Replicated",
+      cell: (row) => (
+        <span className="text-sm font-mono">{Number(row.rowsReplicated).toLocaleString()}</span>
+      ),
+    },
+    {
+      header: "Error",
+      cell: (row) =>
+        row.error ? (
+          <span className="text-sm text-destructive truncate max-w-[200px] block" title={row.error}>
+            {row.error}
+          </span>
+        ) : (
+          <span className="text-sm text-muted-foreground">-</span>
+        ),
+    },
+    {
+      header: "Actions",
+      cell: (row) => (
+        <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+          {!["stopped", "error"].includes(row.state.toLowerCase()) && (
+            <Button variant="outline" size="sm" onClick={() => handleStopEtl(row.name)}>
+              <SquareIcon className="h-3 w-3 mr-1" />
+              Stop
+            </Button>
+          )}
+        </div>
+      ),
+    },
+  ];
 
   const nodeColumns: Column<NodeRow>[] = [
     {
@@ -278,6 +374,21 @@ export function Services() {
           data={services}
           loading={servicesResult.fetching}
           emptyMessage="No services running."
+        />
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold">ETL Pipelines</h3>
+          <Link to="/admin/etl" className="text-sm text-muted-foreground hover:underline">
+            View all
+          </Link>
+        </div>
+        <DataTable
+          columns={etlColumns}
+          data={etlPipelines}
+          loading={etlResult.fetching}
+          emptyMessage="No ETL pipelines running."
         />
       </div>
 
