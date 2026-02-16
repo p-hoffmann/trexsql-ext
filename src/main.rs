@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 use std::process;
 
-use duckdb::Connection;
+use duckdb::{Config, Connection};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -14,7 +14,11 @@ fn main() {
         .unwrap_or_else(|_| "/usr/lib/trexsql/extensions".to_string());
 
     println!("Opening database: {db_path}");
-    let conn = Connection::open(&db_path).expect("Failed to open database");
+    let config = Config::default()
+        .allow_unsigned_extensions()
+        .expect("Failed to set config");
+    let conn = Connection::open_with_flags(&db_path, config)
+        .expect("Failed to open database");
 
     let mut loaded = 0u32;
     let mut failures = 0u32;
@@ -24,7 +28,8 @@ fn main() {
             Ok(entries) => {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if path.extension().and_then(|e| e.to_str()) == Some("trex") {
+                    let ext = path.extension().and_then(|e| e.to_str());
+                    if ext == Some("trex") || ext == Some("duckdb_extension") {
                         let path_str = path.display().to_string();
                         let safe_path = path_str.replace("'", "''");
                         print!("Loading extension: {path_str} ... ");
@@ -47,6 +52,36 @@ fn main() {
         println!("Warning: extension dir {ext_dir} does not exist");
     }
 
+    // Attach PostgreSQL as _config so extensions can access the configuration database
+    if let Ok(database_url) = env::var("DATABASE_URL") {
+        let safe_url = database_url.replace('\'', "''");
+        print!("Attaching config database ... ");
+        match conn.execute("INSTALL postgres", []) {
+            Ok(_) => {}
+            Err(e) => {
+                println!("FAILED to install postgres scanner: {e}");
+            }
+        }
+        let attach_sql = format!("ATTACH '{safe_url}' AS _config (TYPE postgres)");
+        match conn.execute(&attach_sql, []) {
+            Ok(_) => println!("ok"),
+            Err(e) => println!("FAILED: {e}"),
+        }
+    }
+
+    // Run core schema migrations via the migration extension
+    if let Ok(schema_dir) = env::var("SCHEMA_DIR") {
+        let safe_dir = schema_dir.replace('\'', "''");
+        let migration_sql = format!(
+            "SELECT * FROM trex_migration_run_schema('{safe_dir}', 'trex', '_config')"
+        );
+        print!("Running core schema migrations ... ");
+        match conn.execute(&migration_sql, []) {
+            Ok(_) => println!("ok"),
+            Err(e) => eprintln!("FAILED: {e}"),
+        }
+    }
+
     if check_mode {
         if failures > 0 {
             println!("{failures} extension(s) failed to load");
@@ -58,6 +93,78 @@ fn main() {
         }
         println!("All {loaded} extension(s) loaded successfully");
         return;
+    }
+
+    // Start gossip so trex_db_services()/trex_db_nodes() work.
+    // If TREXSQL_CLUSTER_CONFIG already started gossip during db.trex init, this
+    // returns an error ("Gossip is already running") which we skip gracefully.
+    let gossip_port = env::var("GOSSIP_PORT").unwrap_or_else(|_| "4200".to_string());
+    let gossip_sql = format!(
+        "SELECT trex_db_start('0.0.0.0', {gossip_port}, 'local')"
+    );
+    print!("Starting gossip on port {gossip_port} ... ");
+    match conn.execute(&gossip_sql, []) {
+        Ok(_) => println!("ok"),
+        Err(e) => println!("skipped: {e}"),
+    }
+
+    // Execute startup SQL (e.g. trex_start_server) if configured
+    if let Ok(startup_sql) = env::var("STARTUP_SQL") {
+        println!("Executing startup SQL...");
+        match conn.execute(&startup_sql, []) {
+            Ok(_) => {
+                println!("Startup SQL executed successfully");
+                // Register the runtime in gossip so it appears in trex_db_services().
+                // Parse host/port from the STARTUP_SQL env or use defaults.
+                let rt_host = env::var("RUNTIME_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+                let rt_port = env::var("RUNTIME_PORT").unwrap_or_else(|_| "8001".to_string());
+                let register_sql = format!(
+                    "SELECT trex_db_register_service('runtime', '{rt_host}', {rt_port})"
+                );
+                match conn.execute(&register_sql, []) {
+                    Ok(_) => println!("Registered runtime service in gossip"),
+                    Err(e) => println!("Could not register runtime in gossip: {e}"),
+                }
+            }
+            Err(e) => {
+                eprintln!("Startup SQL failed: {e}");
+                process::exit(1);
+            }
+        }
+    }
+
+    // Start services via trex_db_start_service if SERVICES env var is set.
+    // Format: JSON array of objects with "extension" and "config" fields, e.g.
+    // SERVICES='[{"extension":"flight","config":{"host":"0.0.0.0","port":8815}}]'
+    if let Ok(services_json) = env::var("SERVICES") {
+        match serde_json::from_str::<serde_json::Value>(&services_json) {
+            Ok(serde_json::Value::Array(services)) => {
+                for svc in &services {
+                    let extension = svc["extension"].as_str().unwrap_or("");
+                    if extension.is_empty() {
+                        eprintln!("Skipping service entry with no extension: {svc}");
+                        continue;
+                    }
+                    let config = if svc.get("config").is_some() {
+                        svc["config"].to_string()
+                    } else {
+                        "{}".to_string()
+                    };
+                    let safe_ext = extension.replace('\'', "''");
+                    let safe_cfg = config.replace('\'', "''");
+                    let sql = format!(
+                        "SELECT trex_db_start_service('{safe_ext}', '{safe_cfg}')"
+                    );
+                    print!("Starting service: {extension} ... ");
+                    match conn.execute(&sql, []) {
+                        Ok(_) => println!("ok"),
+                        Err(e) => eprintln!("FAILED: {e}"),
+                    }
+                }
+            }
+            Ok(_) => eprintln!("SERVICES env var must be a JSON array"),
+            Err(e) => eprintln!("Failed to parse SERVICES env var: {e}"),
+        }
     }
 
     eprintln!("TrexSQL ready. Waiting for shutdown signal...");

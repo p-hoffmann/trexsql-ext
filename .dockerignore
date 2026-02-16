@@ -1,0 +1,34 @@
+target/
+.git/
+.github/
+node_modules/
+**/build/
+**/target/
+**/node_modules/
+
+# Extension source directories (extensions come from CI artifacts, not source)
+ext/bao/
+ext/chdb/
+ext/circe/
+duckdb-executor/
+ext/extension-ci-tools/
+ext/flight/
+ext/hana/
+integration-tests/
+ext/llama/
+ext/pgt/
+ext/pgwire/
+specs/
+ext/swarm/
+ext/tpm/
+trex/
+
+# Misc
+.claude/
+.specify/
+*.md
+*.yml
+*.yaml
+!Dockerfile
+jitpack.yml
+.gitmodules

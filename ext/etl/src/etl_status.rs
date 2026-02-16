@@ -23,6 +23,7 @@ impl VTab for EtlStatusTable {
     fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
         bind.add_result_column("name", LogicalTypeHandle::from(LogicalTypeId::Varchar));
         bind.add_result_column("state", LogicalTypeHandle::from(LogicalTypeId::Varchar));
+        bind.add_result_column("mode", LogicalTypeHandle::from(LogicalTypeId::Varchar));
         bind.add_result_column("connection", LogicalTypeHandle::from(LogicalTypeId::Varchar));
         bind.add_result_column("publication", LogicalTypeHandle::from(LogicalTypeId::Varchar));
         bind.add_result_column("snapshot", LogicalTypeHandle::from(LogicalTypeId::Varchar));
@@ -65,12 +66,13 @@ impl VTab for EtlStatusTable {
         let chunk_size = pipelines.len();
         let name_vector = output.flat_vector(0);
         let state_vector = output.flat_vector(1);
-        let connection_vector = output.flat_vector(2);
-        let publication_vector = output.flat_vector(3);
-        let snapshot_vector = output.flat_vector(4);
-        let rows_vector = output.flat_vector(5);
-        let activity_vector = output.flat_vector(6);
-        let error_vector = output.flat_vector(7);
+        let mode_vector = output.flat_vector(2);
+        let connection_vector = output.flat_vector(3);
+        let publication_vector = output.flat_vector(4);
+        let snapshot_vector = output.flat_vector(5);
+        let rows_vector = output.flat_vector(6);
+        let activity_vector = output.flat_vector(7);
+        let error_vector = output.flat_vector(8);
 
         for (i, info) in pipelines.iter().enumerate() {
             let name = CString::new(info.name.clone())?;
@@ -78,6 +80,9 @@ impl VTab for EtlStatusTable {
 
             let state = CString::new(info.state.as_str())?;
             state_vector.insert(i, state);
+
+            let mode = CString::new(info.mode.as_str())?;
+            mode_vector.insert(i, mode);
 
             let conn = CString::new(info.connection_string.clone())?;
             connection_vector.insert(i, conn);

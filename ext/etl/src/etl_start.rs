@@ -10,7 +10,7 @@ use tokio::sync::oneshot;
 
 use crate::credential_mask;
 use crate::destination::DuckDbDestination;
-use crate::pipeline_registry::{self, PipelineState};
+use crate::pipeline_registry::{self, PipelineMode, PipelineState};
 use crate::store::DuckDbStore;
 
 struct PipelineParams {
@@ -60,7 +60,67 @@ impl VScalar for EtlStartScalar {
             .as_str()
             .to_string();
 
-        let params = if input.num_columns() >= 6 {
+        let num_cols = input.num_columns();
+
+        // Determine mode and params based on signature:
+        //   2 cols: (name, conn) -> default mode, default params
+        //   3 cols: (name, conn, mode) -> parse mode, default params
+        //   6 cols: (name, conn, batch_size, batch_timeout, retry_delay, retry_max) -> default mode, parse params from col 2-5
+        //   7 cols: (name, conn, mode, batch_size, batch_timeout, retry_delay, retry_max) -> parse mode, parse params from col 3-6
+        let has_mode_col = num_cols == 3 || num_cols == 7;
+
+        let mode_str = if has_mode_col {
+            let mode_vector = input.flat_vector(2);
+            let mode_slice =
+                mode_vector.as_slice_with_len::<libduckdb_sys::duckdb_string_t>(input.len());
+            duckdb::types::DuckString::new(&mut { mode_slice[0] })
+                .as_str()
+                .to_string()
+        } else {
+            "copy_and_cdc".to_string()
+        };
+
+        let mode = PipelineMode::from_str(&mode_str)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
+        let params = if num_cols == 7 {
+            // 7-param: mode at col 2, batch params at cols 3-6
+            let batch_size_vector = input.flat_vector(3);
+            let batch_timeout_vector = input.flat_vector(4);
+            let retry_delay_vector = input.flat_vector(5);
+            let retry_max_vector = input.flat_vector(6);
+
+            let batch_size_slice = batch_size_vector.as_slice_with_len::<i32>(input.len());
+            let batch_timeout_slice = batch_timeout_vector.as_slice_with_len::<i32>(input.len());
+            let retry_delay_slice = retry_delay_vector.as_slice_with_len::<i32>(input.len());
+            let retry_max_slice = retry_max_vector.as_slice_with_len::<i32>(input.len());
+
+            let batch_size = batch_size_slice[0];
+            let batch_timeout_ms = batch_timeout_slice[0];
+            let retry_delay_ms = retry_delay_slice[0];
+            let retry_max_attempts = retry_max_slice[0];
+
+            if batch_size <= 0 {
+                return Err("batch_size must be greater than 0".into());
+            }
+            if batch_timeout_ms <= 0 {
+                return Err("batch_timeout_ms must be greater than 0".into());
+            }
+            if retry_delay_ms < 0 {
+                return Err("retry_delay_ms must be >= 0".into());
+            }
+            if retry_max_attempts < 0 {
+                return Err("retry_max_attempts must be >= 0".into());
+            }
+
+            PipelineParams {
+                batch_size: batch_size as usize,
+                batch_timeout_ms: batch_timeout_ms as u64,
+                retry_delay_ms: retry_delay_ms as u64,
+                retry_max_attempts: retry_max_attempts as u32,
+            }
+        } else if num_cols == 6 {
+            // 6-param legacy: batch params at cols 2-5 (no mode column)
             let batch_size_vector = input.flat_vector(2);
             let batch_timeout_vector = input.flat_vector(3);
             let retry_delay_vector = input.flat_vector(4);
@@ -99,7 +159,7 @@ impl VScalar for EtlStartScalar {
             PipelineParams::default()
         };
 
-        let response = start_pipeline(&pipeline_name, &connection_string, params)?;
+        let response = start_pipeline(&pipeline_name, &connection_string, mode, params)?;
 
         let flat_vector = output.flat_vector();
         flat_vector.insert(0, &response);
@@ -108,6 +168,7 @@ impl VScalar for EtlStartScalar {
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
         vec![
+            // 2-param: (name, connection_string)
             ScalarFunctionSignature::exact(
                 vec![
                     LogicalTypeId::Varchar.into(),
@@ -115,8 +176,31 @@ impl VScalar for EtlStartScalar {
                 ],
                 LogicalTypeId::Varchar.into(),
             ),
+            // 3-param: (name, connection_string, mode)
             ScalarFunctionSignature::exact(
                 vec![
+                    LogicalTypeId::Varchar.into(),
+                    LogicalTypeId::Varchar.into(),
+                    LogicalTypeId::Varchar.into(),
+                ],
+                LogicalTypeId::Varchar.into(),
+            ),
+            // 6-param legacy: (name, connection_string, batch_size, batch_timeout, retry_delay, retry_max)
+            ScalarFunctionSignature::exact(
+                vec![
+                    LogicalTypeId::Varchar.into(),
+                    LogicalTypeId::Varchar.into(),
+                    LogicalTypeId::Integer.into(),
+                    LogicalTypeId::Integer.into(),
+                    LogicalTypeId::Integer.into(),
+                    LogicalTypeId::Integer.into(),
+                ],
+                LogicalTypeId::Varchar.into(),
+            ),
+            // 7-param: (name, connection_string, mode, batch_size, batch_timeout, retry_delay, retry_max)
+            ScalarFunctionSignature::exact(
+                vec![
+                    LogicalTypeId::Varchar.into(),
                     LogicalTypeId::Varchar.into(),
                     LogicalTypeId::Varchar.into(),
                     LogicalTypeId::Integer.into(),
@@ -133,6 +217,7 @@ impl VScalar for EtlStartScalar {
 fn start_pipeline(
     pipeline_name: &str,
     connection_string: &str,
+    mode: PipelineMode,
     params: PipelineParams,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let host = credential_mask::extract_param(connection_string, "host")
@@ -149,8 +234,23 @@ fn start_pipeline(
         .to_string();
     let password = credential_mask::extract_param(connection_string, "password")
         .map(|p| SecretString::from(p.to_string()));
-    let publication = credential_mask::extract_param(connection_string, "publication")
-        .ok_or("connection string must include 'publication=<name>'")?
+
+    // Publication is required for CDC modes, not for copy_only
+    let publication = match mode {
+        PipelineMode::CopyOnly => {
+            credential_mask::extract_param(connection_string, "publication")
+                .unwrap_or("")
+                .to_string()
+        }
+        _ => {
+            credential_mask::extract_param(connection_string, "publication")
+                .ok_or("connection string must include 'publication=<name>'")?
+                .to_string()
+        }
+    };
+
+    let schema_name = credential_mask::extract_param(connection_string, "schema")
+        .unwrap_or("public")
         .to_string();
 
     let masked_conn = credential_mask::mask_password(connection_string);
@@ -162,7 +262,7 @@ fn start_pipeline(
             pipeline_name,
             &masked_conn,
             &publication,
-            true,
+            mode.clone(),
             shutdown_tx,
         )
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
@@ -172,6 +272,22 @@ fn start_pipeline(
 
     let name = pipeline_name.to_string();
     let name_for_thread = pipeline_name.to_string();
+
+    if mode == PipelineMode::CopyOnly {
+        return start_copy_only_pipeline(
+            &name,
+            &name_for_thread,
+            connection_string,
+            &schema_name,
+            shared_conn,
+            shutdown_rx,
+        );
+    }
+
+    let table_sync_copy = match mode {
+        PipelineMode::CdcOnly => etl_lib::config::TableSyncCopyConfig::SkipAllTables,
+        _ => etl_lib::config::TableSyncCopyConfig::IncludeAllTables,
+    };
 
     let thread_result = thread::Builder::new()
         .name(format!("etl-pipeline-{}", pipeline_name))
@@ -212,7 +328,7 @@ fn start_pipeline(
                     table_error_retry_delay_ms: params.retry_delay_ms,
                     table_error_retry_max_attempts: params.retry_max_attempts,
                     max_table_sync_workers: 4,
-                    table_sync_copy: etl_lib::config::TableSyncCopyConfig::IncludeAllTables,
+                    table_sync_copy,
                     invalidated_slot_behavior: etl_lib::config::InvalidatedSlotBehavior::Error,
                 };
 
@@ -260,4 +376,164 @@ fn start_pipeline(
     }
 
     Ok(format!("Pipeline '{}' started", pipeline_name))
+}
+
+fn start_copy_only_pipeline(
+    name: &str,
+    name_for_thread: &str,
+    connection_string: &str,
+    schema_name: &str,
+    shared_conn: Arc<Mutex<duckdb::Connection>>,
+    shutdown_rx: oneshot::Receiver<()>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let pipeline_name = name.to_string();
+    let name_for_thread = name_for_thread.to_string();
+    let conn_str = connection_string.to_string();
+    let schema = schema_name.to_string();
+    let attach_name = format!("__etl_{}", pipeline_name.replace('-', "_"));
+
+    let thread_result = thread::Builder::new()
+        .name(format!("etl-copy-{}", pipeline_name))
+        .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            let mut shutdown = shutdown_rx;
+
+            pipeline_registry::registry()
+                .update_state(&pipeline_name, PipelineState::Starting);
+
+            // Load postgres scanner and attach source
+            {
+                let conn = shared_conn
+                    .lock()
+                    .map_err(|e| format!("connection lock: {}", e))?;
+                conn.execute_batch("LOAD postgres")
+                    .map_err(|e| format!("Failed to load postgres scanner: {}", e))?;
+
+                let escaped_conn = conn_str.replace('\'', "''");
+                let attach_sql = format!(
+                    "ATTACH IF NOT EXISTS '{}' AS \"{}\" (TYPE postgres, READ_ONLY)",
+                    escaped_conn, attach_name
+                );
+                conn.execute_batch(&attach_sql)
+                    .map_err(|e| format!("Failed to attach source: {}", e))?;
+            }
+
+            pipeline_registry::registry()
+                .update_state(&pipeline_name, PipelineState::Snapshotting);
+
+            // Discover tables from information_schema
+            let tables: Vec<String> = {
+                let conn = shared_conn
+                    .lock()
+                    .map_err(|e| format!("connection lock: {}", e))?;
+                let escaped_schema = schema.replace('\'', "''");
+                let sql = format!(
+                    "SELECT table_name FROM \"{}\".information_schema.tables WHERE table_schema = '{}'",
+                    attach_name, escaped_schema
+                );
+                let mut stmt = conn.prepare(&sql)
+                    .map_err(|e| format!("Failed to query tables: {}", e))?;
+                let rows = stmt
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .map_err(|e| format!("Failed to query tables: {}", e))?;
+                rows.filter_map(|r| r.ok()).collect()
+            };
+
+            let mut had_error = false;
+            for table in &tables {
+                // Check for shutdown between tables
+                match shutdown.try_recv() {
+                    Ok(_) | Err(oneshot::error::TryRecvError::Closed) => {
+                        pipeline_registry::registry()
+                            .update_state(&pipeline_name, PipelineState::Stopping);
+                        // Detach source
+                        if let Ok(conn) = shared_conn.lock() {
+                            let _ = conn.execute_batch(&format!("DETACH \"{}\"", attach_name));
+                        }
+                        return Ok(());
+                    }
+                    Err(oneshot::error::TryRecvError::Empty) => {}
+                }
+
+                let escaped_table = table.replace('"', "\"\"");
+                let escaped_schema = schema.replace('"', "\"\"");
+
+                let copy_sql = format!(
+                    "CREATE TABLE IF NOT EXISTS \"{}\".\"{}\" AS SELECT * FROM \"{}\".\"{}\".\"{}\";",
+                    escaped_schema,
+                    escaped_table,
+                    attach_name,
+                    escaped_schema,
+                    escaped_table
+                );
+
+                // Ensure target schema exists
+                let ensure_schema_sql = format!(
+                    "CREATE SCHEMA IF NOT EXISTS \"{}\"",
+                    escaped_schema
+                );
+
+                match shared_conn.lock() {
+                    Ok(conn) => {
+                        if let Err(e) = conn.execute_batch(&ensure_schema_sql) {
+                            eprintln!("etl: create schema error for '{}': {}", schema, e);
+                        }
+                        match conn.execute_batch(&copy_sql) {
+                            Ok(_) => {
+                                // Get row count for stats
+                                let count_sql = format!(
+                                    "SELECT COUNT(*) FROM \"{}\".\"{}\"",
+                                    escaped_schema, escaped_table
+                                );
+                                let row_count = conn
+                                    .prepare(&count_sql)
+                                    .and_then(|mut stmt| {
+                                        stmt.query_row([], |row| row.get::<_, i64>(0))
+                                    })
+                                    .unwrap_or(0) as u64;
+                                pipeline_registry::registry()
+                                    .update_stats(&pipeline_name, row_count);
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "etl: copy error for table '{}.{}': {}",
+                                    schema, table, e
+                                );
+                                had_error = true;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("etl: connection lock error: {}", e);
+                        had_error = true;
+                    }
+                }
+            }
+
+            // Detach source
+            if let Ok(conn) = shared_conn.lock() {
+                let _ = conn.execute_batch(&format!("DETACH \"{}\"", attach_name));
+            }
+
+            if had_error {
+                pipeline_registry::registry()
+                    .set_error(&pipeline_name, "Some tables failed to copy");
+            } else {
+                pipeline_registry::registry()
+                    .update_state(&pipeline_name, PipelineState::Stopped);
+            }
+
+            Ok(())
+        });
+
+    match thread_result {
+        Ok(handle) => {
+            pipeline_registry::registry().set_thread_handle(&name_for_thread, handle);
+        }
+        Err(e) => {
+            pipeline_registry::registry().deregister(&name_for_thread);
+            return Err(format!("Failed to spawn pipeline thread: {}", e).into());
+        }
+    }
+
+    Ok(format!("Pipeline '{}' started (copy_only)", name))
 }
