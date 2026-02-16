@@ -206,7 +206,7 @@ export function Databases() {
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-2xl font-bold">Databases</h2>
+        <h2 className="text-2xl font-bold">Federation</h2>
         <p className="text-muted-foreground">
           External database connections ({totalCount} total)
         </p>

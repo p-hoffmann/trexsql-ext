@@ -22,11 +22,11 @@ export function AdminLayout() {
     {
       label: "Runtime",
       items: [
-        { to: "/admin/databases", label: "Databases" },
+        { to: "/admin/trexdb", label: "Databases" },
+        { to: "/admin/extensions", label: "Extensions" },
         { to: "/admin/plugins", label: "Plugins" },
         { to: "/admin/services", label: "Services" },
-        { to: "/admin/trexdb", label: "TrexDB" },
-        { to: "/admin/extensions", label: "Extensions" },
+        { to: "/admin/databases", label: "Federation" },
       ],
     },
     {

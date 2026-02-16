@@ -170,7 +170,7 @@ export function TrexDB() {
     <div className="space-y-6">
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-2xl font-bold">TrexDB</h2>
+          <h2 className="text-2xl font-bold">Databases</h2>
           <p className="text-muted-foreground">
             {selectedDatabase
               ? `Browsing database: ${selectedDatabase}`
