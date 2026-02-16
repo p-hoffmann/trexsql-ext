@@ -29,6 +29,10 @@ import { Extensions } from "@/pages/admin/Extensions";
 import { Migrations } from "@/pages/admin/Migrations";
 import { ChangePassword } from "@/pages/ChangePassword";
 import { EtlPipelines } from "@/pages/admin/EtlPipelines";
+import { Functions } from "@/pages/admin/Functions";
+import { Flows } from "@/pages/admin/Flows";
+import { UiPlugins } from "@/pages/admin/UiPlugins";
+import { Logs } from "@/pages/admin/Logs";
 
 function HomeRedirect() {
   const { data: session, isPending } = useSession();
@@ -73,6 +77,10 @@ export default function App() {
             <Route path="extensions" element={<Extensions />} />
             <Route path="migrations" element={<Migrations />} />
             <Route path="sso" element={<SsoProviders />} />
+            <Route path="functions" element={<Functions />} />
+            <Route path="flows" element={<Flows />} />
+            <Route path="ui" element={<UiPlugins />} />
+            <Route path="logs" element={<Logs />} />
           </Route>
         </Route>
 

@@ -1,5 +1,13 @@
 import { waitfor } from "./utils.ts";
 
+// Tracked registered flows metadata
+export const REGISTERED_FLOWS: Array<{
+  name: string;
+  entrypoint: string;
+  image: string;
+  tags: string[];
+}> = [];
+
 async function fetchWithRetry(
   url: string,
   options: RequestInit,
@@ -240,6 +248,12 @@ export async function addPlugin(value: any) {
         }
       } else {
         console.log(`>FLOW< Successfully deployed ${f.name}`);
+        REGISTERED_FLOWS.push({
+          name: f.name,
+          entrypoint: f.entrypoint || "",
+          image: body.job_variables?.image || "",
+          tags: f.tags || [],
+        });
       }
     }
   } catch (e) {

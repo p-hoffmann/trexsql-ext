@@ -4,19 +4,31 @@ import { PLUGINS_BASE_PATH } from "../config.ts";
 // Module-level storage for merged UI plugins JSON
 let pluginsJson: string = "{}";
 
+// Tracked registered UI static routes
+export const REGISTERED_UI_ROUTES: Array<{
+  pluginName: string;
+  urlPrefix: string;
+  fsPath: string;
+}> = [];
+
 export function getPluginsJson(): string {
   return pluginsJson;
 }
 
-export function addPlugin(_app: Express, value: any, dir: string) {
+export function addPlugin(_app: Express, value: any, dir: string, name: string) {
   if (value.routes) {
     for (const r of value.routes) {
       const urlPrefix = r.path || r.source;
       const fsPath = `${dir}/${r.dir || r.target}`;
       const fullPrefix = `${PLUGINS_BASE_PATH}${urlPrefix}`;
       console.log(`Registering static route: ${fullPrefix} -> ${fsPath}`);
-      // deno-lint-ignore no-explicit-any
-      (Deno as any).core.ops.op_register_static_route(fullPrefix, fsPath);
+      REGISTERED_UI_ROUTES.push({ pluginName: name, urlPrefix: fullPrefix, fsPath });
+      try {
+        // deno-lint-ignore no-explicit-any
+        (Deno as any).core.ops.op_register_static_route(fullPrefix, fsPath);
+      } catch (e) {
+        console.error(`Failed to register static route ${fullPrefix}: ${e}`);
+      }
     }
   }
 

@@ -32,7 +32,7 @@ export class Plugins {
             addFunctionPlugin(app, value, dir, shortName);
             break;
           case "ui":
-            addUIPlugin(app, value, dir);
+            addUIPlugin(app, value, dir, shortName);
             break;
           case "flow":
             addFlowPlugin(value);

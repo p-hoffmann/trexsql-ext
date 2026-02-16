@@ -25,6 +25,10 @@ export function AdminLayout() {
         { to: "/admin/extensions", label: "Extensions" },
         { to: "/admin/plugins", label: "Plugins" },
         { to: "/admin/services", label: "Services" },
+        { to: "/admin/functions", label: "Functions" },
+        { to: "/admin/flows", label: "Flows" },
+        { to: "/admin/ui", label: "UI" },
+        { to: "/admin/logs", label: "Logs" },
       ],
     },
     {
