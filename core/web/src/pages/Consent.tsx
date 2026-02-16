@@ -11,7 +11,6 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { authClient } from "@/lib/auth-client";
 import { BASE_PATH } from "@/lib/config";
 import { toast } from "sonner";
 
@@ -38,8 +37,10 @@ export function Consent() {
   async function handleAuthorize() {
     setSubmitting(true);
     try {
-      const res = await authClient.api.fetch(`${BASE_PATH}/api/auth/oauth2/consent`, {
+      const res = await fetch(`${BASE_PATH}/api/auth/oauth2/consent`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           clientId,
           scopes,
@@ -50,10 +51,11 @@ export function Consent() {
         }),
       });
 
-      if (res.data?.redirectTo) {
-        window.location.href = res.data.redirectTo;
-      } else if (res.error) {
-        toast.error(res.error.message || "Authorization failed");
+      const data = await res.json();
+      if (data?.redirectTo) {
+        window.location.href = data.redirectTo;
+      } else if (!res.ok) {
+        toast.error(data?.message || "Authorization failed");
       }
     } catch {
       toast.error("An error occurred during authorization");

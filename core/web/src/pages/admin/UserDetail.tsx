@@ -261,7 +261,7 @@ export function UserDetail() {
 
   async function handleRoleChange(newRole: string) {
     try {
-      const res = await authClient.admin.setRole({ userId: user!.rowId, role: newRole });
+      const res = await authClient.admin.setRole({ userId: user!.rowId, role: newRole as "user" | "admin" });
       if (res.error) {
         toast.error(res.error.message || "Failed to change role");
         return;

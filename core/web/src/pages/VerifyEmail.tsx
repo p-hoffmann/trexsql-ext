@@ -28,7 +28,7 @@ export function VerifyEmail() {
 
     async function verify() {
       try {
-        const result = await authClient.verifyEmail({ token: token! });
+        const result = await authClient.verifyEmail({ query: { token: token! } });
 
         if (cancelled) return;
 
