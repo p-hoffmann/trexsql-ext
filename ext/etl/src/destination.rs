@@ -325,6 +325,8 @@ impl Destination for DuckDbDestination {
     }
 
     async fn write_events(&self, events: Vec<Event>) -> EtlResult<()> {
+        pipeline_registry::registry().transition_to_streaming_once(&self.pipeline_name);
+
         let mut sql_batch = Vec::new();
         let mut rows_written: u64 = 0;
         let mut current_schemas: std::collections::HashMap<TableId, TableSchema> =

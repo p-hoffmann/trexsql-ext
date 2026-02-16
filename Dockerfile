@@ -38,21 +38,57 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs && \
 COPY src/ /usr/src/trexsql/src/
 RUN cargo build --release
 
-# Stage 2: Minimal runtime image
-FROM debian:trixie-slim
+# Stage 2: Runtime
+FROM node:20-trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      libssl3 libgomp1 ca-certificates libvulkan1 && \
+      libssl3 libgomp1 ca-certificates libvulkan1 curl && \
     rm -rf /var/lib/apt/lists/*
 
+# Copy trex binary, libtrexsql, libchdb, and libtrexsql_engine
+COPY --from=builder /usr/src/trexsql/target/release/trex /usr/bin/
 COPY --from=builder /opt/trexsql/libtrexsql.so /usr/lib/
 COPY --from=builder /opt/libchdb.so /usr/lib/
-COPY --from=builder /usr/src/trexsql/target/release/trex /usr/bin/
 COPY --from=builder /usr/src/trexsql/target/release/libtrexsql_engine.so /usr/lib/
-
-RUN mkdir -p /usr/lib/trexsql/extensions
-COPY extensions/*.trex /usr/lib/trexsql/extensions/
-
 RUN ldconfig
 
+WORKDIR /usr/src
+
+# Install extensions via npm
+COPY package.json package-lock.json .npmrc deno.json ./
+RUN npm install
+
+# Collect extension files from node_modules into extensions dir
+RUN mkdir -p /usr/lib/trexsql/extensions && \
+    find node_modules/@trex -name "*.trex" -exec cp {} /usr/lib/trexsql/extensions/ \; && \
+    find node_modules/@trex -name "*.duckdb_extension" -exec cp {} /usr/lib/trexsql/extensions/ \;
+
+# Download official trexsql extensions for offline use
+ENV DUCKDB_VERSION=1.4.4
+RUN mkdir -p /root/.duckdb/extensions/v${DUCKDB_VERSION}/linux_amd64 && \
+    cd /root/.duckdb/extensions/v${DUCKDB_VERSION}/linux_amd64 && \
+    for lib in avro aws delta ducklake fts httpfs icu iceberg inet json mysql_scanner parquet postgres_scanner spatial sqlite sqlite_scanner vss; do \
+        curl -sfO http://extensions.duckdb.org/v${DUCKDB_VERSION}/linux_amd64/${lib}.duckdb_extension.gz && \
+        gzip -d ${lib}.duckdb_extension.gz; \
+    done && \
+    for lib in bigquery; do \
+        curl -sfO http://community-extensions.duckdb.org/v${DUCKDB_VERSION}/linux_amd64/${lib}.duckdb_extension.gz && \
+        gzip -d ${lib}.duckdb_extension.gz; \
+    done
+
+# Override npm extensions with CI-built ones (no-op locally since dir only has .gitkeep)
+COPY extensions/ /usr/lib/trexsql/extensions/
+
+# Create plugins directory for plugin installs
+RUN mkdir -p ./plugins
+
+# Copy core (overridden by volume mount in development)
+COPY core/ ./core/
+
+# Copy functions (overridden by volume mount in development)
+COPY functions/ ./functions/
+
+ENV SCHEMA_DIR=/usr/src/core/schema
+
+EXPOSE 8001
 ENTRYPOINT ["trex"]

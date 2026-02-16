@@ -1,0 +1,2 @@
+extensions/*.trex
+extensions/*.duckdb_extension

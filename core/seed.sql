@@ -1,0 +1,2 @@
+-- Schema migrations are now managed by the trexsql migration extension.
+-- See ext/migration/ and the SCHEMA_DIR environment variable.

@@ -11,6 +11,7 @@ pub fn publish_pipeline_state(conn: &Arc<Mutex<Connection>>, info: &PipelineInfo
 
     let config = serde_json::json!({
         "pipeline_name": info.name,
+        "mode": info.mode.as_str(),
         "publication": info.publication,
         "rows_replicated": info.rows_replicated,
         "error": info.error_message.as_deref().unwrap_or(""),
