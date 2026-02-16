@@ -48,6 +48,23 @@ fn main() {
         println!("Warning: extension dir {ext_dir} does not exist");
     }
 
+    // Attach PostgreSQL as _config so extensions can access the configuration database
+    if let Ok(database_url) = env::var("DATABASE_URL") {
+        let safe_url = database_url.replace('\'', "''");
+        print!("Attaching config database ... ");
+        match conn.execute("INSTALL postgres", []) {
+            Ok(_) => {}
+            Err(e) => {
+                println!("FAILED to install postgres scanner: {e}");
+            }
+        }
+        let attach_sql = format!("ATTACH '{safe_url}' AS _config (TYPE postgres)");
+        match conn.execute(&attach_sql, []) {
+            Ok(_) => println!("ok"),
+            Err(e) => println!("FAILED: {e}"),
+        }
+    }
+
     if check_mode {
         if failures > 0 {
             println!("{failures} extension(s) failed to load");
