@@ -18,12 +18,14 @@ pub use hana_attach::{HanaAttachVTab, HanaDetachScalar, HanaTablesVTab};
 pub use hdbconnect::Connection as HanaConnection;
 
 unsafe fn extension_entrypoint(connection: Connection) -> Result<(), Box<dyn Error>> {
+    connection.register_table_function::<HanaScanVTab>("trex_hana_scan")?;
+    // Deprecated alias for external consumers
     connection.register_table_function::<HanaScanVTab>("hana_scan")?;
-    connection.register_table_function::<HanaScanVTab>("hana_query")?;
-    connection.register_scalar_function::<HanaExecuteScalar>("hana_execute")?;
-    connection.register_table_function::<HanaAttachVTab>("hana_attach")?;
-    connection.register_scalar_function::<HanaDetachScalar>("hana_detach")?;
-    connection.register_table_function::<HanaTablesVTab>("hana_tables")?;
+    connection.register_table_function::<HanaScanVTab>("trex_hana_query")?;
+    connection.register_scalar_function::<HanaExecuteScalar>("trex_hana_execute")?;
+    connection.register_table_function::<HanaAttachVTab>("trex_hana_attach")?;
+    connection.register_scalar_function::<HanaDetachScalar>("trex_hana_detach")?;
+    connection.register_table_function::<HanaTablesVTab>("trex_hana_tables")?;
     Ok(())
 }
 

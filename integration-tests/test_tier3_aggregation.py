@@ -24,12 +24,12 @@ def _setup_two_nodes(node_factory):
         "SELECT i as id, 'US' as region, CAST(i AS DOUBLE) as price "
         "FROM range(1000) t(i)"
     )
-    node_a.execute(f"SELECT start_flight_server('0.0.0.0', {node_a.flight_port})")
+    node_a.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node_a.flight_port})")
     node_a.execute(
-        f"SELECT swarm_start('0.0.0.0', {node_a.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {node_a.gossip_port}, 'test-cluster')"
     )
     node_a.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_a.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_a.flight_port})"
     )
 
     # Node B: deterministic prices 1000..1999
@@ -38,19 +38,19 @@ def _setup_two_nodes(node_factory):
         "SELECT i as id, 'EU' as region, CAST(i + 1000 AS DOUBLE) as price "
         "FROM range(1000) t(i)"
     )
-    node_b.execute(f"SELECT start_flight_server('0.0.0.0', {node_b.flight_port})")
+    node_b.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node_b.flight_port})")
     node_b.execute(
-        f"SELECT swarm_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
+        f"SELECT trex_db_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
         f"'127.0.0.1:{node_a.gossip_port}')"
     )
     node_b.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_b.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_b.flight_port})"
     )
 
     # Wait for gossip convergence (both nodes see each other)
     wait_for(
         node_a,
-        "SELECT * FROM swarm_nodes()",
+        "SELECT * FROM trex_db_nodes()",
         lambda rows: len(rows) >= 2,
         timeout=15,
     )
@@ -58,7 +58,7 @@ def _setup_two_nodes(node_factory):
     # Wait for catalog convergence (both nodes' tables visible)
     wait_for(
         node_a,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: len(rows) >= 2,
         timeout=15,
     )
@@ -72,7 +72,7 @@ def test_distributed_count(node_factory):
 
     result = wait_for(
         node_a,
-        "SELECT * FROM swarm_query('SELECT COUNT(*) as cnt FROM orders')",
+        "SELECT * FROM trex_db_query('SELECT COUNT(*) as cnt FROM orders')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
         timeout=10,
     )
@@ -91,7 +91,7 @@ def test_distributed_sum(node_factory):
     expected_sum = sum(range(2000))  # 0+1+...+1999 = 1999000
     result = wait_for(
         node_a,
-        "SELECT * FROM swarm_query('SELECT SUM(price) as total FROM orders')",
+        "SELECT * FROM trex_db_query('SELECT SUM(price) as total FROM orders')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
         timeout=10,
     )
@@ -106,7 +106,7 @@ def test_distributed_min_max(node_factory):
 
     result = wait_for(
         node_a,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT MIN(price) as min_p, MAX(price) as max_p FROM orders')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
         timeout=10,
@@ -125,7 +125,7 @@ def test_distributed_avg(node_factory):
     expected_avg = sum(range(2000)) / 2000  # 999.5
     result = wait_for(
         node_a,
-        "SELECT * FROM swarm_query('SELECT AVG(price) as avg_p FROM orders')",
+        "SELECT * FROM trex_db_query('SELECT AVG(price) as avg_p FROM orders')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
         timeout=10,
     )

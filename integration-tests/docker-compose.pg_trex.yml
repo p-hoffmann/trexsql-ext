@@ -11,7 +11,7 @@ services:
     command: >
       postgres
       -c shared_preload_libraries=pg_trex
-      -c pg_trex.swarm_extension_path=/usr/lib/trexsql/extensions/swarm.trex
+      -c pg_trex.swarm_extension_path=/usr/lib/trexsql/extensions/db.trex
       -c pg_trex.gossip_addr=0.0.0.0:7946
       -c pg_trex.flight_addr=0.0.0.0:50051
       -c log_min_messages=log

@@ -227,11 +227,11 @@ fn start_swarm(conn: &Connection) -> Result<(), String> {
     );
 
     let mut stmt = conn
-        .prepare("SELECT swarm_start(gossip_addr := $1, flight_addr := $2, seeds := $3, cluster_id := $4, node_name := $5, data_node := $6)")
-        .map_err(|e| format!("swarm_start prepare: {e}"))?;
+        .prepare("SELECT trex_db_start(gossip_addr := $1, flight_addr := $2, seeds := $3, cluster_id := $4, node_name := $5, data_node := $6)")
+        .map_err(|e| format!("trex_db_start prepare: {e}"))?;
 
     stmt.execute(params![&gossip_addr, &flight_addr, &seeds, &cluster_id, &node_name, data_node])
-        .map_err(|e| format!("swarm_start: {e}"))?;
+        .map_err(|e| format!("trex_db_start: {e}"))?;
 
     pgrx::log!("pg_trex: swarm started successfully");
     Ok(())
@@ -245,8 +245,8 @@ fn stop_swarm(conn: &Connection) {
     }
 
     pgrx::log!("pg_trex: stopping swarm for reconfiguration");
-    if let Err(e) = conn.execute_batch("SELECT swarm_stop()") {
-        pgrx::warning!("pg_trex: swarm_stop failed: {}", e);
+    if let Err(e) = conn.execute_batch("SELECT trex_db_stop()") {
+        pgrx::warning!("pg_trex: trex_db_stop failed: {}", e);
     }
 }
 
@@ -386,10 +386,10 @@ fn execute_and_serialize(conn: &Connection, sql: &str, flags: u32) -> Result<Vec
     }
 }
 
-/// Wrap SQL in a swarm_query() call for distributed execution via the swarm extension.
+/// Wrap SQL in a trex_db_query() call for distributed execution via the db extension.
 fn execute_distributed_to_ipc(conn: &Connection, sql: &str) -> Result<Vec<u8>, String> {
     let escaped = sql.replace('\'', "''");
-    let wrapped = format!("SELECT * FROM swarm_query('{}')", escaped);
+    let wrapped = format!("SELECT * FROM trex_db_query('{}')", escaped);
     execute_select_to_ipc(conn, &wrapped)
 }
 
@@ -701,7 +701,7 @@ pub fn worker_main(shmem: &pgrx::PgLwLock<PgTrexShmem>) {
     // Start the swarm gossip cluster
     if let Err(e) = start_swarm(&conn) {
         // Swarm failure is not fatal -- the engine can still serve local queries
-        pgrx::warning!("pg_trex: swarm_start failed (non-fatal): {}", e);
+        pgrx::warning!("pg_trex: trex_db_start failed (non-fatal): {}", e);
     }
 
     // Create the query thread pool (size from GUC, default 4)
@@ -744,7 +744,7 @@ pub fn worker_main(shmem: &pgrx::PgLwLock<PgTrexShmem>) {
 
     // Initialize to epoch so the first main-loop iteration triggers a catalog
     // refresh.  We deliberately do NOT block here before entering the main loop:
-    // swarm_tables() can take an unbounded amount of time if the gossip / flight
+    // trex_db_tables() can take an unbounded amount of time if the gossip / flight
     // services are still initializing, and blocking here would prevent the worker
     // from processing any queries (the worker state is already RUNNING so
     // backends will start submitting requests).
@@ -871,7 +871,7 @@ mod tests {
 
     #[test]
     fn test_validate_extension_path() {
-        assert!(validate_extension_path("/usr/lib/swarm.trex").is_ok());
+        assert!(validate_extension_path("/usr/lib/db.trex").is_ok());
         assert!(validate_extension_path("./build/debug/ext.trex").is_ok());
         assert!(validate_extension_path("path with spaces/ext.trex").is_ok());
         assert!(validate_extension_path("'; DROP TABLE x; --").is_err());
