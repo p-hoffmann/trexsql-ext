@@ -270,14 +270,14 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install llama build dependencies
+      - name: Install ai build dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake libssl-dev libvulkan1 libvulkan-dev vulkan-tools glslc libshaderc1 spirv-tools vulkan-validationlayers mesa-vulkan-drivers
 
       - uses: actions/cache@v4
         with:
           path: ext/ai/build
-          key: llama-cmake-${{ runner.os }}-${{ hashFiles('ext/ai/CMakeLists.txt', 'ext/ai/llama.cpp/CMakeLists.txt') }}
-          restore-keys: llama-cmake-${{ runner.os }}-
+          key: ai-cmake-${{ runner.os }}-${{ hashFiles('ext/ai/CMakeLists.txt', 'ext/ai/llama.cpp/CMakeLists.txt') }}
+          restore-keys: ai-cmake-${{ runner.os }}-
 
       - name: Build ai
         run: make configure && make debug
@@ -286,7 +286,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ext-ai
-          path: ext/ai/build/debug/extension/llama/ai.trex
+          path: ext/ai/build/debug/extension/ai/ai.trex
           retention-days: 1
 
   build-etl:
@@ -455,7 +455,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-ai
-          path: ext/ai/build/debug/extension/llama/
+          path: ext/ai/build/debug/extension/ai/
 
       - name: Setup test environment
         run: make configure
