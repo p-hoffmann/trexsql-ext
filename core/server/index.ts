@@ -157,6 +157,96 @@ app.put(`${BASE_PATH}/_internal/upload`, async (req, res) => {
 });
 
 // Worker routing (must be before SPA catch-all)
+// Scoped function route: /fn/:scope/:service_name -> ./functions/@:scope/:service_name
+app.use(`${FUNCTIONS_BASE_PATH}/:scope/:service_name`, async (req, res, next) => {
+  const { scope, service_name: serviceName } = req.params;
+  const scopeDir = `@${scope}`;
+  const servicePath = `./functions/${scopeDir}/${serviceName}`;
+
+  try {
+    await Deno.stat(servicePath);
+  } catch {
+    return next();
+  }
+
+  const createWorker = async () => {
+    const memoryLimitMb = 150;
+    const workerTimeoutMs = 5 * 60 * 1000;
+    const noModuleCache = false;
+    const envVarsObj = Deno.env.toObject();
+    const envVars = Object.keys(envVarsObj).map((k) => [k, envVarsObj[k]]);
+    const forceCreate = false;
+    const cpuTimeSoftLimitMs = 10000;
+    const cpuTimeHardLimitMs = 20000;
+
+    return await EdgeRuntime.userWorkers.create({
+      servicePath,
+      memoryLimitMb,
+      workerTimeoutMs,
+      noModuleCache,
+      envVars,
+      forceCreate,
+      cpuTimeSoftLimitMs,
+      cpuTimeHardLimitMs,
+      context: {
+        useReadSyncFileAPI: true,
+        unstableSloppyImports: true,
+      },
+    });
+  };
+
+  const host = req.get("host") || "localhost";
+  const protocol = req.protocol || "http";
+  const webUrl = `${protocol}://${host}${req.originalUrl}`;
+  const webHeaders = new Headers();
+  for (const [key, val] of Object.entries(req.headers)) {
+    if (val) webHeaders.set(key, Array.isArray(val) ? val.join(", ") : val);
+  }
+  let reqBody: Blob | undefined;
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of req) {
+      chunks.push(typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk);
+    }
+    if (chunks.length > 0) reqBody = new Blob(chunks);
+  }
+  const webReq = new Request(webUrl, {
+    method: req.method,
+    headers: webHeaders,
+    body: reqBody,
+  });
+
+  const callWorker = async (): Promise<Response> => {
+    try {
+      const worker = await createWorker();
+      const controller = new AbortController();
+      return await worker.fetch(webReq, { signal: controller.signal });
+    } catch (e) {
+      if (e instanceof Deno.errors.WorkerAlreadyRetired) {
+        return await callWorker();
+      }
+      const error = { msg: e.toString() };
+      return new Response(JSON.stringify(error), {
+        status: STATUS_CODE.InternalServerError,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  };
+
+  try {
+    const workerResponse = await callWorker();
+    res.status(workerResponse.status);
+    workerResponse.headers.forEach((value, key) => {
+      res.setHeader(key, value);
+    });
+    const body = await workerResponse.text();
+    res.send(body);
+  } catch (err) {
+    res.status(STATUS_CODE.InternalServerError).json({ msg: String(err) });
+  }
+});
+
+// Unscoped function route: /fn/:service_name -> ./functions/:service_name
 app.use(`${FUNCTIONS_BASE_PATH}/:service_name`, async (req, res, next) => {
   const serviceName = req.params.service_name;
 
