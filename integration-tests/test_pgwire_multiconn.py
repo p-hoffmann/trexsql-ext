@@ -24,19 +24,19 @@ def _connect(port, password="test"):
 
 def _start_pgwire(node):
     node.execute(
-        f"SELECT start_pgwire_server('127.0.0.1', {node.pgwire_port}, 'test', '')"
+        f"SELECT trex_pgwire_start('127.0.0.1', {node.pgwire_port}, 'test', '')"
     )
 
 
 def _stop_pgwire(node):
     node.execute(
-        f"SELECT stop_pgwire_server('127.0.0.1', {node.pgwire_port})"
+        f"SELECT trex_pgwire_stop('127.0.0.1', {node.pgwire_port})"
     )
 
 
 def test_parallel_queries_on_thread_pool(node_factory):
     """Queries from multiple clients are dispatched across executor worker threads."""
-    node = node_factory(load_pgwire=True, load_flight=False, load_swarm=False)
+    node = node_factory(load_pgwire=True, load_db=False)
     _start_pgwire(node)
 
     num_clients = 8
@@ -72,7 +72,7 @@ def test_parallel_queries_on_thread_pool(node_factory):
 
 def test_cloned_connections_share_data(node_factory):
     """All executor worker threads (cloned connections) see the same tables."""
-    node = node_factory(load_pgwire=True, load_flight=False, load_swarm=False)
+    node = node_factory(load_pgwire=True, load_db=False)
     node.execute(
         "CREATE TABLE shared AS SELECT i AS id FROM range(500) t(i)"
     )
@@ -103,7 +103,7 @@ def test_cloned_connections_share_data(node_factory):
 
 def test_more_clients_than_workers(node_factory):
     """More concurrent clients than pool workers — queries queue and all complete."""
-    node = node_factory(load_pgwire=True, load_flight=False, load_swarm=False)
+    node = node_factory(load_pgwire=True, load_db=False)
     _start_pgwire(node)
 
     # the executor pool is small (typically 4 workers),
@@ -137,7 +137,7 @@ def test_more_clients_than_workers(node_factory):
 
 def test_concurrent_writes_visible_across_workers(node_factory):
     """A write on one worker thread is visible to reads on other workers."""
-    node = node_factory(load_pgwire=True, load_flight=False, load_swarm=False)
+    node = node_factory(load_pgwire=True, load_db=False)
     node.execute("CREATE TABLE counter (val INTEGER)")
     _start_pgwire(node)
 
@@ -190,7 +190,7 @@ def test_concurrent_writes_visible_across_workers(node_factory):
 
 def test_concurrent_mixed_query_types(node_factory):
     """Different query types (aggregation, filter, scan) run in parallel."""
-    node = node_factory(load_pgwire=True, load_flight=False, load_swarm=False)
+    node = node_factory(load_pgwire=True, load_db=False)
     node.execute(
         "CREATE TABLE products AS "
         "SELECT i AS id, (i * 9.99)::DOUBLE AS price FROM range(100) t(i)"
@@ -231,7 +231,7 @@ def test_concurrent_mixed_query_types(node_factory):
 
 def test_rapid_connect_disconnect(node_factory):
     """Rapid open-query-close cycles don't leak or crash the executor."""
-    node = node_factory(load_pgwire=True, load_flight=False, load_swarm=False)
+    node = node_factory(load_pgwire=True, load_db=False)
     _start_pgwire(node)
 
     for i in range(20):

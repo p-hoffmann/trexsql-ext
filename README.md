@@ -17,14 +17,17 @@ Pass `--check` to verify extensions load and exit.
 
 | Extension | Language | Description |
 |-----------|----------|-------------|
+| `ext/db` | Rust | Distributed cluster coordination + Arrow Flight SQL |
+| `ext/atlas` | C/C++ | OHDSI Atlas Cohort definition to SQL translation |
+| `ext/ai` | C/C++ | LLM inference via llama.cpp (CUDA/Vulkan/Metal) |
 | `ext/tpm` | Rust | Package manager functions (resolve, install, tree) |
-| `ext/circe` | C/C++ | OHDSI Atlas Cohort defintion to SQL translation |
-| `ext/llama` | C/C++ | LLM inference via llama.cpp (CUDA/Vulkan/Metal) |
 | `ext/hana` | Rust | SAP HANA database scanner |
 | `ext/pgwire` | Rust | PostgreSQL wire protocol |
 | `ext/chdb` | Rust | ClickHouse integration |
-| `ext/flight` | Rust | Arrow Flight SQL |
-| `ext/swarm` | Rust | Distributed cluster coordination |
+| `ext/etl` | Rust | Supabase ETL (PostgreSQL CDC replication) |
+| `ext/fhir` | Rust | FHIR server |
+| `ext/cql2elm` | C | CQL to ELM translation (GraalVM native) |
+| `ext/migration` | Rust | Database schema migration |
 | `ext/pgt` | Rust | PostgreSQL to SQL transformer (library) |
 
 ## Build

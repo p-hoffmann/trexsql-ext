@@ -740,40 +740,44 @@ pub unsafe fn extension_entrypoint(
   con: Connection,
 ) -> Result<(), Box<dyn Error>> {
   con
-    .register_table_function::<HelloVTab>(EXTENSION_NAME)
-    .expect("Failed to register hello table function");
+    .register_table_function::<HelloVTab>("trex_plugin")
+    .expect("Failed to register trex_plugin table function");
 
   con
-    .register_table_function::<TpmInfoVTab>("tpm_info")
-    .expect("Failed to register tpm_info table function");
+    .register_table_function::<TpmInfoVTab>("trex_plugin_info")
+    .expect("Failed to register trex_plugin_info table function");
 
   con
-    .register_table_function::<TpmResolveVTab>("tpm_resolve")
-    .expect("Failed to register tpm_resolve table function");
+    .register_table_function::<TpmResolveVTab>("trex_plugin_resolve")
+    .expect("Failed to register trex_plugin_resolve table function");
 
+  con
+    .register_table_function::<TpmInstallVTab>("trex_plugin_install")
+    .expect("Failed to register trex_plugin_install table function");
+  // Deprecated alias for external consumers
   con
     .register_table_function::<TpmInstallVTab>("tpm_install")
-    .expect("Failed to register tpm_install table function");
+    .expect("Failed to register tpm_install alias");
 
   con
-    .register_table_function::<TpmInstallDepsVTab>("tpm_install_with_deps")
-    .expect("Failed to register tpm_install_with_deps table function");
+    .register_table_function::<TpmInstallDepsVTab>("trex_plugin_install_with_deps")
+    .expect("Failed to register trex_plugin_install_with_deps table function");
 
   con
-    .register_table_function::<TpmTreeVTab>("tpm_tree")
-    .expect("Failed to register tpm_tree table function");
+    .register_table_function::<TpmTreeVTab>("trex_plugin_tree")
+    .expect("Failed to register trex_plugin_tree table function");
 
   con
-    .register_table_function::<TpmListVTab>("tpm_list")
-    .expect("Failed to register tpm_list table function");
+    .register_table_function::<TpmListVTab>("trex_plugin_list")
+    .expect("Failed to register trex_plugin_list table function");
 
   con
-    .register_table_function::<TpmSeedVTab>("tpm_seed")
-    .expect("Failed to register tpm_seed table function");
+    .register_table_function::<TpmSeedVTab>("trex_plugin_seed")
+    .expect("Failed to register trex_plugin_seed table function");
 
   con
-    .register_table_function::<TpmDeleteVTab>("tpm_delete")
-    .expect("Failed to register tpm_delete table function");
+    .register_table_function::<TpmDeleteVTab>("trex_plugin_delete")
+    .expect("Failed to register trex_plugin_delete table function");
 
   Ok(())
 }

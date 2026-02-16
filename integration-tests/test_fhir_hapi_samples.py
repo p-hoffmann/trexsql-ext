@@ -137,8 +137,8 @@ def fhir():
     node = Node([FHIR_EXT], gp, fp, pp)
 
     fhir_port = _free_port()
-    result = node.execute(f"SELECT fhir_start('127.0.0.1', {fhir_port})")
-    assert len(result) == 1 and "Started" in result[0][0], f"fhir_start: {result}"
+    result = node.execute(f"SELECT trex_fhir_start('127.0.0.1', {fhir_port})")
+    assert len(result) == 1 and "Started" in result[0][0], f"trex_fhir_start: {result}"
 
     client = FhirClient(f"http://127.0.0.1:{fhir_port}")
 
@@ -158,7 +158,7 @@ def fhir():
     yield client
 
     try:
-        node.execute(f"SELECT fhir_stop('127.0.0.1', {fhir_port})")
+        node.execute(f"SELECT trex_fhir_stop('127.0.0.1', {fhir_port})")
     except Exception:
         pass
     node.close()

@@ -22,12 +22,12 @@ static EXTENSION_VERSION: &str = "0.1.0";
 
 #[duckdb_entrypoint_c_api(ext_name = "chdb", min_duckdb_version = "v1.3.2")]
 pub unsafe fn extension_entrypoint(connection: Connection) -> Result<(), Box<dyn Error>> {
-    connection.register_table_function::<vtab::ChdbScanVTab>("chdb_scan")?;
-    connection.register_table_function::<vtab::ChdbScanVTab>("chdb_query")?;
-    
-    connection.register_scalar_function::<scalar::StartChdbDatabaseScalar>("chdb_start_database")?;
-    connection.register_scalar_function::<scalar::StopChdbDatabaseScalar>("chdb_stop_database")?;
-    connection.register_scalar_function::<scalar::ExecuteDmlScalar>("chdb_execute_dml")?;
+    connection.register_table_function::<vtab::ChdbScanVTab>("trex_chdb_scan")?;
+    connection.register_table_function::<vtab::ChdbScanVTab>("trex_chdb_query")?;
+
+    connection.register_scalar_function::<scalar::StartChdbDatabaseScalar>("trex_chdb_start")?;
+    connection.register_scalar_function::<scalar::StopChdbDatabaseScalar>("trex_chdb_stop")?;
+    connection.register_scalar_function::<scalar::ExecuteDmlScalar>("trex_chdb_execute")?;
     
     Ok(())
 }

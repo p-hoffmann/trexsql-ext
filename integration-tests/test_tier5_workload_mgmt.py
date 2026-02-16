@@ -4,14 +4,14 @@ Phase 6 (US4): Tests T045-T048 verify query admission control with priority
 queuing, per-user concurrency limits, and memory estimation.
 
 Phase 7 (US5): Tests T054-T056 verify cluster monitoring and observability,
-including the swarm_metrics() table function, query timeout configuration,
-and manual query cancellation via swarm_cancel_query().
+including the trex_db_metrics() table function, query timeout configuration,
+and manual query cancellation via trex_db_cancel_query().
 
 These tests exercise the admission controller's behaviour in isolation.
 The distributed engine is enabled to activate admission control, but since
 Distributed submit_query is stubbed, the admission check is the focus.
 
-NOTE: swarm_query will fail after admission because the distributed scheduler is not fully
+NOTE: trex_db_query will fail after admission because the distributed scheduler is not fully
 wired up, but the admission responses (queued, rejected) happen BEFORE the
 distributed scheduler call and can be verified.
 """
@@ -32,27 +32,27 @@ def test_concurrency_limit(node_factory):
 
     # Start gossip (required for distributed mode).
     node.execute(
-        f"SELECT swarm_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
 
     # Start flight server.
-    node.execute(f"SELECT start_flight_server('0.0.0.0', {node.flight_port})")
+    node.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node.flight_port})")
 
     # Enable distributed engine so admission control is active.
-    node.execute("SELECT swarm_set_distributed(true)")
+    node.execute("SELECT trex_db_set_distributed(true)")
 
     # Set user quota to 2.
-    result = node.execute("SELECT swarm_set_user_quota('default', 2)")
+    result = node.execute("SELECT trex_db_set_user_quota('default', 2)")
     assert len(result) > 0
     assert "quota set to 2" in result[0][0].lower()
 
     # Verify cluster status shows 0 active queries initially.
-    status = node.execute("SELECT * FROM swarm_cluster_status()")
+    status = node.execute("SELECT * FROM trex_db_cluster_status()")
     assert len(status) == 1
     assert status[0][1] == "0"  # active_queries
 
     # Query status should be empty initially.
-    query_status = node.execute("SELECT * FROM swarm_query_status()")
+    query_status = node.execute("SELECT * FROM trex_db_query_status()")
     # May be empty or contain results from the admission calls themselves.
 
 
@@ -66,17 +66,17 @@ def test_memory_rejection(node_factory):
 
     # Start gossip.
     node.execute(
-        f"SELECT swarm_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
 
     # Start flight server.
-    node.execute(f"SELECT start_flight_server('0.0.0.0', {node.flight_port})")
+    node.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node.flight_port})")
 
     # Enable distributed engine.
-    node.execute("SELECT swarm_set_distributed(true)")
+    node.execute("SELECT trex_db_set_distributed(true)")
 
     # Verify cluster status function works.
-    status = node.execute("SELECT * FROM swarm_cluster_status()")
+    status = node.execute("SELECT * FROM trex_db_cluster_status()")
     assert len(status) == 1
     # total_nodes, active_queries, queued_queries, memory_utilization_pct
     total_nodes = status[0][0]
@@ -95,24 +95,24 @@ def test_priority_scheduling(node_factory):
 
     # Start gossip.
     node.execute(
-        f"SELECT swarm_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
 
     # Start flight server.
-    node.execute(f"SELECT start_flight_server('0.0.0.0', {node.flight_port})")
+    node.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node.flight_port})")
 
     # Test setting different priorities.
-    result = node.execute("SELECT swarm_set_priority('batch')")
+    result = node.execute("SELECT trex_db_set_priority('batch')")
     assert "batch" in result[0][0].lower()
 
-    result = node.execute("SELECT swarm_set_priority('system')")
+    result = node.execute("SELECT trex_db_set_priority('system')")
     assert "system" in result[0][0].lower()
 
-    result = node.execute("SELECT swarm_set_priority('interactive')")
+    result = node.execute("SELECT trex_db_set_priority('interactive')")
     assert "interactive" in result[0][0].lower()
 
     # Invalid priority should report an error message (not crash).
-    result = node.execute("SELECT swarm_set_priority('invalid')")
+    result = node.execute("SELECT trex_db_set_priority('invalid')")
     assert "invalid" in result[0][0].lower()
 
 
@@ -126,28 +126,28 @@ def test_fair_scheduling(node_factory):
 
     # Start gossip.
     node.execute(
-        f"SELECT swarm_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
 
     # Start flight server.
-    node.execute(f"SELECT start_flight_server('0.0.0.0', {node.flight_port})")
+    node.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node.flight_port})")
 
     # Enable distributed engine.
-    node.execute("SELECT swarm_set_distributed(true)")
+    node.execute("SELECT trex_db_set_distributed(true)")
 
     # Set different quotas for two users.
-    result_a = node.execute("SELECT swarm_set_user_quota('user_a', 3)")
+    result_a = node.execute("SELECT trex_db_set_user_quota('user_a', 3)")
     assert "quota set to 3" in result_a[0][0].lower()
 
-    result_b = node.execute("SELECT swarm_set_user_quota('user_b', 5)")
+    result_b = node.execute("SELECT trex_db_set_user_quota('user_b', 5)")
     assert "quota set to 5" in result_b[0][0].lower()
 
     # Verify cluster status is accessible.
-    status = node.execute("SELECT * FROM swarm_cluster_status()")
+    status = node.execute("SELECT * FROM trex_db_cluster_status()")
     assert len(status) == 1
 
     # Verify query status table is accessible.
-    query_status = node.execute("SELECT * FROM swarm_query_status()")
+    query_status = node.execute("SELECT * FROM trex_db_query_status()")
     # Result depends on current admission state; just verify no crash.
     assert query_status is not None
 
@@ -157,21 +157,21 @@ def test_fair_scheduling(node_factory):
 # ---------------------------------------------------------------------------
 
 def test_metrics_endpoint(node_factory):
-    """Verify swarm_metrics() returns expected metric rows."""
+    """Verify trex_db_metrics() returns expected metric rows."""
     node = node_factory()
 
     # Start gossip + flight for a realistic setup.
     node.execute(
-        f"SELECT swarm_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
-    node.execute(f"SELECT start_flight_server('0.0.0.0', {node.flight_port})")
+    node.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node.flight_port})")
 
     # Enable distributed engine to exercise admission metrics.
-    node.execute("SELECT swarm_set_distributed(true)")
+    node.execute("SELECT trex_db_set_distributed(true)")
 
     # Query the metrics table function.
-    metrics = node.execute("SELECT * FROM swarm_metrics()")
-    assert len(metrics) > 0, "swarm_metrics() returned no rows"
+    metrics = node.execute("SELECT * FROM trex_db_metrics()")
+    assert len(metrics) > 0, "trex_db_metrics() returned no rows"
 
     # Build lookup of metric rows: {name: (type, value, labels)}.
     metric_map = {}
@@ -229,14 +229,14 @@ def test_query_timeout_config(node_factory):
 
     # Start gossip.
     node.execute(
-        f"SELECT swarm_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
 
     # Start flight server.
-    node.execute(f"SELECT start_flight_server('0.0.0.0', {node.flight_port})")
+    node.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node.flight_port})")
 
     # Verify the cluster_status function reports correctly.
-    status = node.execute("SELECT * FROM swarm_cluster_status()")
+    status = node.execute("SELECT * FROM trex_db_cluster_status()")
     assert len(status) == 1
 
     # Columns: total_nodes, active_queries, queued_queries, memory_utilization_pct
@@ -260,19 +260,19 @@ def test_query_timeout_config(node_factory):
 # ---------------------------------------------------------------------------
 
 def test_cancel_query(node_factory):
-    """Verify swarm_cancel_query returns 'not found' for nonexistent query."""
+    """Verify trex_db_cancel_query returns 'not found' for nonexistent query."""
     node = node_factory()
 
     # Start gossip.
     node.execute(
-        f"SELECT swarm_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
 
     # Start flight server.
-    node.execute(f"SELECT start_flight_server('0.0.0.0', {node.flight_port})")
+    node.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node.flight_port})")
 
     # Cancel a nonexistent query.
-    result = node.execute("SELECT swarm_cancel_query('nonexistent-id')")
+    result = node.execute("SELECT trex_db_cancel_query('nonexistent-id')")
     assert len(result) > 0
     response = result[0][0].lower()
     assert "not found" in response, (

@@ -20,7 +20,7 @@ COPY target/debug/libpg_trex.so /usr/lib/postgresql/17/lib/pg_trex.so
 COPY pg_trex.control /usr/share/postgresql/17/extension/
 COPY sql/pg_trex--0.1.0.sql /usr/share/postgresql/17/extension/
 
-# Copy trexsql extensions (swarm, flight) for distributed query support
+# Copy trexsql extensions (db) for distributed query support
 COPY extensions/ /usr/lib/trexsql/extensions/
 
 # Pre-initialize the database to avoid init-then-restart cycle.
@@ -30,7 +30,7 @@ ENV POSTGRES_HOST_AUTH_METHOD=trust
 RUN mkdir -p /var/lib/postgresql/data \
     && chown postgres:postgres /var/lib/postgresql/data \
     && su postgres -c "initdb -D /var/lib/postgresql/data --auth=trust --no-sync" \
-    && su postgres -c "pg_ctl -D /var/lib/postgresql/data -o '-c shared_preload_libraries=pg_trex -c pg_trex.swarm_extension_path=/usr/lib/trexsql/extensions/swarm.trex' -w start" \
+    && su postgres -c "pg_ctl -D /var/lib/postgresql/data -o '-c shared_preload_libraries=pg_trex -c pg_trex.swarm_extension_path=/usr/lib/trexsql/extensions/db.trex' -w start" \
     && su postgres -c "psql -c \"CREATE EXTENSION pg_trex;\"" \
     && echo "host all all 0.0.0.0/0 trust" >> /var/lib/postgresql/data/pg_hba.conf \
     && su postgres -c "pg_ctl -D /var/lib/postgresql/data -m immediate stop"

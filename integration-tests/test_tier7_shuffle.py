@@ -11,8 +11,8 @@ Critical ordering:
   1. Create tables on separate nodes (exclusive placement)
   2. Start flight + gossip + register flight service
   3. Wait for gossip + catalog convergence
-  4. swarm_set_distributed(true) on the scheduler node
-  5. swarm_query(sql) routes through DataFusion with shuffle
+  4. trex_db_set_distributed(true) on the scheduler node
+  5. trex_db_query(sql) routes through DataFusion with shuffle
 """
 
 from conftest import wait_for
@@ -45,13 +45,13 @@ def _setup_exclusive_tables_two_nodes(node_factory):
         "FROM range(500) t(i)"
     )
     scheduler.execute(
-        f"SELECT start_flight_server('0.0.0.0', {scheduler.flight_port})"
+        f"SELECT trex_db_flight_start('0.0.0.0', {scheduler.flight_port})"
     )
     scheduler.execute(
-        f"SELECT swarm_start('0.0.0.0', {scheduler.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {scheduler.gossip_port}, 'test-cluster')"
     )
     scheduler.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {scheduler.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {scheduler.flight_port})"
     )
 
     # Node B: customers only
@@ -61,33 +61,33 @@ def _setup_exclusive_tables_two_nodes(node_factory):
         "FROM range(50) t(i)"
     )
     node_b.execute(
-        f"SELECT start_flight_server('0.0.0.0', {node_b.flight_port})"
+        f"SELECT trex_db_flight_start('0.0.0.0', {node_b.flight_port})"
     )
     node_b.execute(
-        f"SELECT swarm_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
+        f"SELECT trex_db_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
         f"'127.0.0.1:{scheduler.gossip_port}')"
     )
     node_b.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_b.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_b.flight_port})"
     )
 
     # Wait for gossip convergence
     wait_for(
         scheduler,
-        "SELECT * FROM swarm_nodes()",
+        "SELECT * FROM trex_db_nodes()",
         lambda rows: len(rows) >= 2,
         timeout=15,
     )
     # Wait for catalog convergence (orders on A, customers on B = 2 entries)
     wait_for(
         scheduler,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: len(rows) >= 2,
         timeout=10,
     )
 
     # Enable distributed engine on scheduler
-    scheduler.execute("SELECT swarm_set_distributed(true)")
+    scheduler.execute("SELECT trex_db_set_distributed(true)")
 
     return scheduler, node_b
 
@@ -114,13 +114,13 @@ def _setup_exclusive_tables_three_nodes(node_factory):
         "FROM range(500) t(i)"
     )
     scheduler.execute(
-        f"SELECT start_flight_server('0.0.0.0', {scheduler.flight_port})"
+        f"SELECT trex_db_flight_start('0.0.0.0', {scheduler.flight_port})"
     )
     scheduler.execute(
-        f"SELECT swarm_start('0.0.0.0', {scheduler.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {scheduler.gossip_port}, 'test-cluster')"
     )
     scheduler.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {scheduler.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {scheduler.flight_port})"
     )
 
     seed = f"127.0.0.1:{scheduler.gossip_port}"
@@ -132,14 +132,14 @@ def _setup_exclusive_tables_three_nodes(node_factory):
         "FROM range(50) t(i)"
     )
     node_b.execute(
-        f"SELECT start_flight_server('0.0.0.0', {node_b.flight_port})"
+        f"SELECT trex_db_flight_start('0.0.0.0', {node_b.flight_port})"
     )
     node_b.execute(
-        f"SELECT swarm_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
+        f"SELECT trex_db_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
         f"'{seed}')"
     )
     node_b.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_b.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_b.flight_port})"
     )
 
     # Node C: products only
@@ -150,33 +150,33 @@ def _setup_exclusive_tables_three_nodes(node_factory):
         "FROM range(20) t(i)"
     )
     node_c.execute(
-        f"SELECT start_flight_server('0.0.0.0', {node_c.flight_port})"
+        f"SELECT trex_db_flight_start('0.0.0.0', {node_c.flight_port})"
     )
     node_c.execute(
-        f"SELECT swarm_start_seeds('0.0.0.0', {node_c.gossip_port}, 'test-cluster', "
+        f"SELECT trex_db_start_seeds('0.0.0.0', {node_c.gossip_port}, 'test-cluster', "
         f"'{seed}')"
     )
     node_c.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_c.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_c.flight_port})"
     )
 
     # Wait for gossip convergence (3 nodes)
     wait_for(
         scheduler,
-        "SELECT * FROM swarm_nodes()",
+        "SELECT * FROM trex_db_nodes()",
         lambda rows: len(rows) >= 3,
         timeout=20,
     )
     # Wait for catalog convergence (3 tables on 3 nodes)
     wait_for(
         scheduler,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: len(rows) >= 3,
         timeout=15,
     )
 
     # Enable distributed engine on scheduler
-    scheduler.execute("SELECT swarm_set_distributed(true)")
+    scheduler.execute("SELECT trex_db_set_distributed(true)")
 
     return scheduler, node_b, node_c
 
@@ -191,7 +191,7 @@ def test_shuffle_cross_node_join(node_factory):
 
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT COUNT(*) AS cnt "
         "FROM orders o JOIN customers c ON o.customer_id = c.id')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
@@ -208,7 +208,7 @@ def test_shuffle_join_with_aggregation(node_factory):
 
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT c.name, COUNT(*) AS cnt, SUM(o.amount) AS total "
         "FROM orders o JOIN customers c ON o.customer_id = c.id "
         "GROUP BY c.name ORDER BY c.name')",
@@ -237,7 +237,7 @@ def test_shuffle_join_with_filter(node_factory):
     # amount = i * 10.0, so amount > 2500 means i > 250 => 249 rows (251..499)
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT COUNT(*) AS cnt "
         "FROM orders o JOIN customers c ON o.customer_id = c.id "
         "WHERE o.amount > 2500')",
@@ -256,7 +256,7 @@ def test_shuffle_join_order_by_limit(node_factory):
 
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT c.name, o.amount "
         "FROM orders o JOIN customers c ON o.customer_id = c.id "
         "ORDER BY o.amount DESC LIMIT 10')",
@@ -279,7 +279,7 @@ def test_shuffle_empty_join_result(node_factory):
 
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT o.id, c.name "
         "FROM orders o JOIN customers c ON o.customer_id = c.id "
         "WHERE c.id > 9999')",
@@ -298,7 +298,7 @@ def test_shuffle_join_count_star(node_factory):
     # Each customer has exactly 10 orders, so HAVING COUNT(*) > 5 keeps all 50
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT c.name, COUNT(*) AS cnt "
         "FROM orders o JOIN customers c ON o.customer_id = c.id "
         "GROUP BY c.name HAVING COUNT(*) > 5 "
@@ -331,7 +331,7 @@ def test_shuffle_three_node_join(node_factory):
     # 500 orders, each has a valid customer_id (0..49) and product_id (0..19)
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT COUNT(*) AS cnt "
         "FROM orders o "
         "JOIN customers c ON o.customer_id = c.id "

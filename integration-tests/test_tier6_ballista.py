@@ -5,15 +5,15 @@ sharded table scans, aggregations, cross-node joins, and complex queries.
 
 Unlike tiers 2-4 (which use the legacy coordinator path with
 distributed_engine=False), these tests enable the DataFusion distributed
-engine via swarm_set_distributed(true).  This routes queries through
+engine via trex_db_set_distributed(true).  This routes queries through
 DataFusion planning and execution with DistributedExec for sharded tables
 and Flight-based fan-out across nodes.
 
 Critical ordering:
   1. Create tables + start flight + start gossip + register flight service
   2. Wait for gossip + catalog convergence (all nodes see all tables)
-  3. swarm_set_distributed(true) on the scheduler node
-  4. swarm_query(sql) routes through DataFusion
+  3. trex_db_set_distributed(true) on the scheduler node
+  4. trex_db_query(sql) routes through DataFusion
 """
 
 from conftest import wait_for
@@ -43,13 +43,13 @@ def _setup_two_nodes_sharded(node_factory):
         "FROM range(1000) t(i)"
     )
     scheduler.execute(
-        f"SELECT start_flight_server('0.0.0.0', {scheduler.flight_port})"
+        f"SELECT trex_db_flight_start('0.0.0.0', {scheduler.flight_port})"
     )
     scheduler.execute(
-        f"SELECT swarm_start('0.0.0.0', {scheduler.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {scheduler.gossip_port}, 'test-cluster')"
     )
     scheduler.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {scheduler.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {scheduler.flight_port})"
     )
 
     # Node B: orders 1000..1999
@@ -59,33 +59,33 @@ def _setup_two_nodes_sharded(node_factory):
         "FROM range(1000) t(i)"
     )
     node_b.execute(
-        f"SELECT start_flight_server('0.0.0.0', {node_b.flight_port})"
+        f"SELECT trex_db_flight_start('0.0.0.0', {node_b.flight_port})"
     )
     node_b.execute(
-        f"SELECT swarm_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
+        f"SELECT trex_db_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
         f"'127.0.0.1:{scheduler.gossip_port}')"
     )
     node_b.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_b.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_b.flight_port})"
     )
 
     # Wait for gossip convergence
     wait_for(
         scheduler,
-        "SELECT * FROM swarm_nodes()",
+        "SELECT * FROM trex_db_nodes()",
         lambda rows: len(rows) >= 2,
         timeout=15,
     )
     # Wait for catalog convergence (orders on 2 nodes)
     wait_for(
         scheduler,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: len(rows) >= 2,
         timeout=10,
     )
 
     # Enable distributed engine on scheduler
-    scheduler.execute("SELECT swarm_set_distributed(true)")
+    scheduler.execute("SELECT trex_db_set_distributed(true)")
 
     return scheduler, node_b
 
@@ -113,13 +113,13 @@ def _setup_two_nodes_both_tables(node_factory):
         "FROM range(15) t(i)"
     )
     scheduler.execute(
-        f"SELECT start_flight_server('0.0.0.0', {scheduler.flight_port})"
+        f"SELECT trex_db_flight_start('0.0.0.0', {scheduler.flight_port})"
     )
     scheduler.execute(
-        f"SELECT swarm_start('0.0.0.0', {scheduler.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {scheduler.gossip_port}, 'test-cluster')"
     )
     scheduler.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {scheduler.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {scheduler.flight_port})"
     )
 
     # Node B
@@ -135,33 +135,33 @@ def _setup_two_nodes_both_tables(node_factory):
         "FROM range(15) t(i)"
     )
     node_b.execute(
-        f"SELECT start_flight_server('0.0.0.0', {node_b.flight_port})"
+        f"SELECT trex_db_flight_start('0.0.0.0', {node_b.flight_port})"
     )
     node_b.execute(
-        f"SELECT swarm_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
+        f"SELECT trex_db_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
         f"'127.0.0.1:{scheduler.gossip_port}')"
     )
     node_b.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_b.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_b.flight_port})"
     )
 
     # Wait for gossip convergence
     wait_for(
         scheduler,
-        "SELECT * FROM swarm_nodes()",
+        "SELECT * FROM trex_db_nodes()",
         lambda rows: len(rows) >= 2,
         timeout=15,
     )
     # Wait for catalog convergence (2 tables x 2 nodes = 4 entries)
     wait_for(
         scheduler,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: len(rows) >= 4,
         timeout=10,
     )
 
     # Enable distributed engine on scheduler
-    scheduler.execute("SELECT swarm_set_distributed(true)")
+    scheduler.execute("SELECT trex_db_set_distributed(true)")
 
     return scheduler, node_b
 
@@ -186,13 +186,13 @@ def _setup_three_nodes_sharded(node_factory):
         "FROM range(1000) t(i)"
     )
     scheduler.execute(
-        f"SELECT start_flight_server('0.0.0.0', {scheduler.flight_port})"
+        f"SELECT trex_db_flight_start('0.0.0.0', {scheduler.flight_port})"
     )
     scheduler.execute(
-        f"SELECT swarm_start('0.0.0.0', {scheduler.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {scheduler.gossip_port}, 'test-cluster')"
     )
     scheduler.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {scheduler.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {scheduler.flight_port})"
     )
 
     seed = f"127.0.0.1:{scheduler.gossip_port}"
@@ -204,14 +204,14 @@ def _setup_three_nodes_sharded(node_factory):
         "FROM range(1000) t(i)"
     )
     node_b.execute(
-        f"SELECT start_flight_server('0.0.0.0', {node_b.flight_port})"
+        f"SELECT trex_db_flight_start('0.0.0.0', {node_b.flight_port})"
     )
     node_b.execute(
-        f"SELECT swarm_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
+        f"SELECT trex_db_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
         f"'{seed}')"
     )
     node_b.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_b.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_b.flight_port})"
     )
 
     # Node C
@@ -221,33 +221,33 @@ def _setup_three_nodes_sharded(node_factory):
         "FROM range(1000) t(i)"
     )
     node_c.execute(
-        f"SELECT start_flight_server('0.0.0.0', {node_c.flight_port})"
+        f"SELECT trex_db_flight_start('0.0.0.0', {node_c.flight_port})"
     )
     node_c.execute(
-        f"SELECT swarm_start_seeds('0.0.0.0', {node_c.gossip_port}, 'test-cluster', "
+        f"SELECT trex_db_start_seeds('0.0.0.0', {node_c.gossip_port}, 'test-cluster', "
         f"'{seed}')"
     )
     node_c.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_c.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_c.flight_port})"
     )
 
     # Wait for gossip convergence (3 nodes)
     wait_for(
         scheduler,
-        "SELECT * FROM swarm_nodes()",
+        "SELECT * FROM trex_db_nodes()",
         lambda rows: len(rows) >= 3,
         timeout=20,
     )
     # Wait for catalog convergence (orders on 3 nodes)
     wait_for(
         scheduler,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: len(rows) >= 3,
         timeout=15,
     )
 
     # Enable distributed engine on scheduler
-    scheduler.execute("SELECT swarm_set_distributed(true)")
+    scheduler.execute("SELECT trex_db_set_distributed(true)")
 
     return scheduler, node_b, node_c
 
@@ -272,30 +272,30 @@ def _setup_single_node_distributed(node_factory):
         "SELECT i AS id, i % 10 AS customer_id, CAST(i * 10 AS DOUBLE) AS amount "
         "FROM range(30) t(i)"
     )
-    node.execute(f"SELECT start_flight_server('0.0.0.0', {node.flight_port})")
+    node.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node.flight_port})")
     node.execute(
-        f"SELECT swarm_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
     node.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node.flight_port})"
     )
 
     # Wait for self-discovery
     wait_for(
         node,
-        "SELECT * FROM swarm_nodes()",
+        "SELECT * FROM trex_db_nodes()",
         lambda rows: len(rows) >= 1,
         timeout=10,
     )
     wait_for(
         node,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: len(rows) >= 2,  # customers + orders
         timeout=10,
     )
 
     # Enable distributed engine
-    node.execute("SELECT swarm_set_distributed(true)")
+    node.execute("SELECT trex_db_set_distributed(true)")
 
     return node
 
@@ -310,7 +310,7 @@ def test_distributed_sharded_count(node_factory):
 
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query('SELECT COUNT(*) AS cnt FROM orders')",
+        "SELECT * FROM trex_db_query('SELECT COUNT(*) AS cnt FROM orders')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
         timeout=15,
     )
@@ -323,7 +323,7 @@ def test_distributed_sharded_aggregation(node_factory):
 
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT SUM(amount) AS s, MIN(amount) AS mn, "
         "MAX(amount) AS mx, AVG(amount) AS av FROM orders')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
@@ -347,7 +347,7 @@ def test_distributed_sharded_group_by(node_factory):
 
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT region, COUNT(*) AS cnt, SUM(amount) AS s "
         "FROM orders GROUP BY region ORDER BY region')",
         lambda rows: len(rows) >= 2,
@@ -370,7 +370,7 @@ def test_distributed_filter_pushdown(node_factory):
 
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT COUNT(*) AS cnt FROM orders WHERE amount > 1500')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
         timeout=15,
@@ -384,7 +384,7 @@ def test_distributed_filter_region(node_factory):
 
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT COUNT(*) AS cnt FROM orders WHERE region = ''US''')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
         timeout=15,
@@ -398,7 +398,7 @@ def test_distributed_order_by_limit(node_factory):
 
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT id, amount FROM orders ORDER BY amount DESC LIMIT 5')",
         lambda rows: len(rows) == 5,
         timeout=15,
@@ -419,7 +419,7 @@ def test_distributed_distinct(node_factory):
 
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT DISTINCT region FROM orders ORDER BY region')",
         lambda rows: len(rows) == 2,
         timeout=15,
@@ -435,7 +435,7 @@ def test_distributed_empty_result(node_factory):
 
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT * FROM orders WHERE amount > 99999')",
         lambda rows: isinstance(rows, list),
         timeout=15,
@@ -453,7 +453,7 @@ def test_distributed_cross_shard_join(node_factory):
 
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT c.name, o.amount "
         "FROM customers c JOIN orders o ON c.id = o.customer_id "
         "ORDER BY c.id, o.id')",
@@ -483,7 +483,7 @@ def test_distributed_join_with_aggregation(node_factory):
 
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT c.name, COUNT(o.id) AS cnt, SUM(o.amount) AS total "
         "FROM customers c JOIN orders o ON c.id = o.customer_id "
         "GROUP BY c.name ORDER BY c.name')",
@@ -509,7 +509,7 @@ def test_distributed_complex_query(node_factory):
 
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT c.name, COUNT(o.id) AS cnt, SUM(o.amount) AS total "
         "FROM customers c "
         "JOIN orders o ON c.id = o.customer_id "
@@ -553,7 +553,7 @@ def test_distributed_three_node_scan(node_factory):
 
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT region, COUNT(*) AS cnt "
         "FROM orders GROUP BY region ORDER BY region')",
         lambda rows: len(rows) == 3,
@@ -576,7 +576,7 @@ def test_distributed_three_node_aggregation(node_factory):
 
     result = wait_for(
         scheduler,
-        "SELECT * FROM swarm_query('SELECT SUM(amount) AS s FROM orders')",
+        "SELECT * FROM trex_db_query('SELECT SUM(amount) AS s FROM orders')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
         timeout=20,
     )
@@ -596,7 +596,7 @@ def test_distributed_feature_flag_toggle(node_factory):
     # Query should succeed via DataFusion path.
     result = wait_for(
         node,
-        "SELECT * FROM swarm_query('SELECT COUNT(*) AS cnt FROM customers')",
+        "SELECT * FROM trex_db_query('SELECT COUNT(*) AS cnt FROM customers')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
         timeout=15,
     )
@@ -605,11 +605,11 @@ def test_distributed_feature_flag_toggle(node_factory):
     )
 
     # Disable distributed -> switch to legacy coordinator.
-    node.execute("SELECT swarm_set_distributed(false)")
+    node.execute("SELECT trex_db_set_distributed(false)")
 
     legacy_result = wait_for(
         node,
-        "SELECT * FROM swarm_query('SELECT COUNT(*) AS cnt FROM customers')",
+        "SELECT * FROM trex_db_query('SELECT COUNT(*) AS cnt FROM customers')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
         timeout=10,
     )
@@ -618,11 +618,11 @@ def test_distributed_feature_flag_toggle(node_factory):
     )
 
     # Re-enable distributed -> query should succeed again.
-    node.execute("SELECT swarm_set_distributed(true)")
+    node.execute("SELECT trex_db_set_distributed(true)")
 
     result2 = wait_for(
         node,
-        "SELECT * FROM swarm_query('SELECT COUNT(*) AS cnt FROM customers')",
+        "SELECT * FROM trex_db_query('SELECT COUNT(*) AS cnt FROM customers')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
         timeout=15,
     )

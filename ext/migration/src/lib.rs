@@ -654,8 +654,8 @@ impl VTab for MigrationStatusVTab {
 // ── Extension Entrypoint (manual C API, following hana pattern) ──────────────
 
 unsafe fn extension_entrypoint(connection: Connection) -> Result<(), Box<dyn Error>> {
-    connection.register_table_function::<MigrateVTab>("migrate")?;
-    connection.register_table_function::<MigrationStatusVTab>("migration_status")?;
+    connection.register_table_function::<MigrateVTab>("trex_migration_run")?;
+    connection.register_table_function::<MigrationStatusVTab>("trex_migration_status")?;
     Ok(())
 }
 

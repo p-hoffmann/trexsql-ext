@@ -1,4 +1,9 @@
 /target
-build/
-.idea/
+/lib
+build
+configure
+.idea
 .DS_Store
+duckdb_unittest_tempdir
+/test/bin
+venv
