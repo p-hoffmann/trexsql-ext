@@ -300,17 +300,17 @@ impl VScalar for FhirVersionScalar {
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
     store_shared_connection(&con)?;
 
-    con.register_scalar_function::<FhirStartScalar>("fhir_start")
-        .expect("Failed to register fhir_start function");
+    con.register_scalar_function::<FhirStartScalar>("trex_fhir_start")
+        .expect("Failed to register trex_fhir_start function");
 
-    con.register_scalar_function::<FhirStopScalar>("fhir_stop")
-        .expect("Failed to register fhir_stop function");
+    con.register_scalar_function::<FhirStopScalar>("trex_fhir_stop")
+        .expect("Failed to register trex_fhir_stop function");
 
-    con.register_scalar_function::<FhirVersionScalar>("fhir_version")
-        .expect("Failed to register fhir_version function");
+    con.register_scalar_function::<FhirVersionScalar>("trex_fhir_version")
+        .expect("Failed to register trex_fhir_version function");
 
-    con.register_table_function::<FhirStatusTable>("fhir_status")
-        .expect("Failed to register fhir_status function");
+    con.register_table_function::<FhirStatusTable>("trex_fhir_status")
+        .expect("Failed to register trex_fhir_status function");
 
     Ok(())
 }

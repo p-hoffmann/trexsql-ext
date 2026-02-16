@@ -1,7 +1,7 @@
 """Tier 8: Table partitioning integration tests.
 
-Verifies swarm_partition_table, swarm_create_table, swarm_repartition_table,
-and swarm_partitions across multi-node clusters.
+Verifies trex_db_partition_table, trex_db_create_table, trex_db_repartition_table,
+and trex_db_partitions across multi-node clusters.
 """
 
 import json
@@ -27,36 +27,36 @@ def _setup_two_node_cluster(node_factory, tables_a=None, tables_b=None):
             node_b.execute(sql)
 
     # Start flight servers
-    node_a.execute(f"SELECT start_flight_server('0.0.0.0', {node_a.flight_port})")
-    node_b.execute(f"SELECT start_flight_server('0.0.0.0', {node_b.flight_port})")
+    node_a.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node_a.flight_port})")
+    node_b.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node_b.flight_port})")
 
     # Start gossip
     node_a.execute(
-        f"SELECT swarm_start('0.0.0.0', {node_a.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {node_a.gossip_port}, 'test-cluster')"
     )
     node_b.execute(
-        f"SELECT swarm_start_seeds('0.0.0.0', {node_b.gossip_port}, "
+        f"SELECT trex_db_start_seeds('0.0.0.0', {node_b.gossip_port}, "
         f"'test-cluster', '127.0.0.1:{node_a.gossip_port}')"
     )
 
     # Register flight services
     node_a.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_a.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_a.flight_port})"
     )
     node_b.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_b.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_b.flight_port})"
     )
 
     # Mark both as data nodes
-    node_a.execute("SELECT swarm_set('data_node', 'true')")
-    node_b.execute("SELECT swarm_set('data_node', 'true')")
+    node_a.execute("SELECT trex_db_set('data_node', 'true')")
+    node_b.execute("SELECT trex_db_set('data_node', 'true')")
 
     # Wait for both nodes to see each other AND full gossip key-value propagation.
     # discover_target_nodes() requires both data_node=true AND service:flight
     # to be visible, so we must wait for flight services to propagate.
     wait_for(
         node_a,
-        "SELECT * FROM swarm_services()",
+        "SELECT * FROM trex_db_services()",
         lambda rows: sum(1 for r in rows if r[1] == 'flight' and r[4] == 'running') >= 2,
         timeout=15,
     )
@@ -71,44 +71,44 @@ def _setup_three_node_cluster(node_factory):
     node_c = node_factory()
 
     # Start flight servers
-    node_a.execute(f"SELECT start_flight_server('0.0.0.0', {node_a.flight_port})")
-    node_b.execute(f"SELECT start_flight_server('0.0.0.0', {node_b.flight_port})")
-    node_c.execute(f"SELECT start_flight_server('0.0.0.0', {node_c.flight_port})")
+    node_a.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node_a.flight_port})")
+    node_b.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node_b.flight_port})")
+    node_c.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node_c.flight_port})")
 
     # Start gossip
     node_a.execute(
-        f"SELECT swarm_start('0.0.0.0', {node_a.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {node_a.gossip_port}, 'test-cluster')"
     )
     seed = f"127.0.0.1:{node_a.gossip_port}"
     node_b.execute(
-        f"SELECT swarm_start_seeds('0.0.0.0', {node_b.gossip_port}, "
+        f"SELECT trex_db_start_seeds('0.0.0.0', {node_b.gossip_port}, "
         f"'test-cluster', '{seed}')"
     )
     node_c.execute(
-        f"SELECT swarm_start_seeds('0.0.0.0', {node_c.gossip_port}, "
+        f"SELECT trex_db_start_seeds('0.0.0.0', {node_c.gossip_port}, "
         f"'test-cluster', '{seed}')"
     )
 
     # Register flight services
     node_a.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_a.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_a.flight_port})"
     )
     node_b.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_b.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_b.flight_port})"
     )
     node_c.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_c.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_c.flight_port})"
     )
 
     # Mark all as data nodes
-    node_a.execute("SELECT swarm_set('data_node', 'true')")
-    node_b.execute("SELECT swarm_set('data_node', 'true')")
-    node_c.execute("SELECT swarm_set('data_node', 'true')")
+    node_a.execute("SELECT trex_db_set('data_node', 'true')")
+    node_b.execute("SELECT trex_db_set('data_node', 'true')")
+    node_c.execute("SELECT trex_db_set('data_node', 'true')")
 
     # Wait for all three nodes to converge AND full gossip key-value propagation.
     wait_for(
         node_a,
-        "SELECT * FROM swarm_services()",
+        "SELECT * FROM trex_db_services()",
         lambda rows: sum(1 for r in rows if r[1] == 'flight' and r[4] == 'running') >= 3,
         timeout=15,
     )
@@ -138,7 +138,7 @@ def test_hash_partition_across_two_nodes(node_factory):
         "partitions": 2,
     })
     result = node_a.execute(
-        f"SELECT swarm_partition_table('orders', '{config}')"
+        f"SELECT trex_db_partition_table('orders', '{config}')"
     )
     assert result is not None
     result_str = result[0][0]
@@ -147,7 +147,7 @@ def test_hash_partition_across_two_nodes(node_factory):
 
     tables = wait_for(
         node_a,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: any(r[1] == "orders" for r in rows),
         timeout=10,
     )
@@ -190,14 +190,14 @@ def test_range_partition_across_two_nodes(node_factory):
         ],
     })
     result = node_a.execute(
-        f"SELECT swarm_partition_table('events', '{config}')"
+        f"SELECT trex_db_partition_table('events', '{config}')"
     )
     result_str = result[0][0]
     assert "Error" not in result_str, f"Partition failed: {result_str}"
 
     wait_for(
         node_a,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: any(r[1] == "events" for r in rows),
         timeout=10,
     )
@@ -208,8 +208,8 @@ def test_range_partition_across_two_nodes(node_factory):
     assert total == 20, f"Expected 20 total rows, got {total}"
 
 
-def test_swarm_partitions_shows_metadata(node_factory):
-    """swarm_partitions() returns partition metadata after partitioning."""
+def test_trex_db_partitions_shows_metadata(node_factory):
+    """trex_db_partitions() returns partition metadata after partitioning."""
     node_a, node_b = _setup_two_node_cluster(
         node_factory,
         tables_a=[
@@ -224,12 +224,12 @@ def test_swarm_partitions_shows_metadata(node_factory):
         "column": "customer_id",
         "partitions": 2,
     })
-    node_a.execute(f"SELECT swarm_partition_table('orders', '{config}')")
+    node_a.execute(f"SELECT trex_db_partition_table('orders', '{config}')")
 
-    # Check swarm_partitions() on the node that performed the partition
+    # Check trex_db_partitions() on the node that performed the partition
     partitions = wait_for(
         node_a,
-        "SELECT * FROM swarm_partitions()",
+        "SELECT * FROM trex_db_partitions()",
         lambda rows: len(rows) >= 2,
         timeout=10,
     )
@@ -241,8 +241,8 @@ def test_swarm_partitions_shows_metadata(node_factory):
     assert "orders" in table_names
 
 
-def test_swarm_create_table(node_factory):
-    """swarm_create_table creates and distributes in one step."""
+def test_trex_db_create_table(node_factory):
+    """trex_db_create_table creates and distributes in one step."""
     node_a, node_b = _setup_two_node_cluster(node_factory)
 
     config = json.dumps({
@@ -256,14 +256,14 @@ def test_swarm_create_table(node_factory):
         "FROM range(40) t(i)"
     )
     result = node_a.execute(
-        f"SELECT swarm_create_table('{create_sql}', '{config}')"
+        f"SELECT trex_db_create_table('{create_sql}', '{config}')"
     )
     result_str = result[0][0]
     assert "Error" not in result_str, f"Create+partition failed: {result_str}"
 
     wait_for(
         node_a,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: any(r[1] == "items" for r in rows),
         timeout=10,
     )
@@ -274,8 +274,8 @@ def test_swarm_create_table(node_factory):
     assert total == 40, f"Expected 40 total rows, got {total}"
 
 
-def test_query_partitioned_table_via_swarm_query(node_factory):
-    """Partitioned table can be queried via swarm_query for correct results."""
+def test_query_partitioned_table_via_trex_db_query(node_factory):
+    """Partitioned table can be queried via trex_db_query for correct results."""
     node_a, node_b = _setup_two_node_cluster(
         node_factory,
         tables_a=[
@@ -290,29 +290,29 @@ def test_query_partitioned_table_via_swarm_query(node_factory):
         "column": "customer_id",
         "partitions": 2,
     })
-    node_a.execute(f"SELECT swarm_partition_table('orders', '{config}')")
+    node_a.execute(f"SELECT trex_db_partition_table('orders', '{config}')")
 
     # Wait for catalog to propagate and show orders on both nodes.
     # After partitioning, each node needs to advertise its new table via gossip.
     # The catalog refresh runs every 30s, so we allow enough time for propagation.
     wait_for(
         node_a,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: sum(1 for r in rows if r[1] == "orders") >= 2,
         timeout=40,
     )
 
-    # Query via swarm_query to get aggregated results
+    # Query via trex_db_query to get aggregated results
     result = wait_for(
         node_a,
-        "SELECT * FROM swarm_query('SELECT COUNT(*) as cnt FROM orders')",
+        "SELECT * FROM trex_db_query('SELECT COUNT(*) as cnt FROM orders')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
         timeout=10,
     )
 
     # Each node reports its own count; the total across partitions should be 100
     total = sum(int(r[0]) for r in result)
-    assert total == 100, f"Expected 100 total rows via swarm_query, got {total}"
+    assert total == 100, f"Expected 100 total rows via trex_db_query, got {total}"
 
 
 def test_repartition_from_two_to_three_nodes(node_factory):
@@ -332,7 +332,7 @@ def test_repartition_from_two_to_three_nodes(node_factory):
         "partitions": 2,
     })
     result = node_a.execute(
-        f"SELECT swarm_partition_table('orders', '{config_2}')"
+        f"SELECT trex_db_partition_table('orders', '{config_2}')"
     )
     result_str = result[0][0]
     assert "Error" not in result_str, f"Initial partition failed: {result_str}"
@@ -340,7 +340,7 @@ def test_repartition_from_two_to_three_nodes(node_factory):
     # Wait for both shards to be visible before repartitioning
     wait_for(
         node_a,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: sum(1 for r in rows if r[1] == "orders") >= 2,
         timeout=10,
     )
@@ -352,14 +352,14 @@ def test_repartition_from_two_to_three_nodes(node_factory):
         "partitions": 3,
     })
     result = node_a.execute(
-        f"SELECT swarm_repartition_table('orders', '{config_3}')"
+        f"SELECT trex_db_repartition_table('orders', '{config_3}')"
     )
     result_str = result[0][0]
     assert "Error" not in result_str, f"Repartition failed: {result_str}"
 
     wait_for(
         node_a,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: sum(1 for r in rows if r[1] == "orders") >= 3,
         timeout=10,
     )
@@ -374,10 +374,10 @@ def test_repartition_from_two_to_three_nodes(node_factory):
         f"(a={count_a}, b={count_b}, c={count_c})"
     )
 
-    # Verify swarm_partitions shows 3 partitions now
+    # Verify trex_db_partitions shows 3 partitions now
     partitions = wait_for(
         node_a,
-        "SELECT * FROM swarm_partitions()",
+        "SELECT * FROM trex_db_partitions()",
         lambda rows: sum(1 for r in rows if r[0] == "orders") >= 3,
         timeout=10,
     )

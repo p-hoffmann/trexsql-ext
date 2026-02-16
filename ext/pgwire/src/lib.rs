@@ -289,20 +289,26 @@ impl VTab for PgWireServerStatusTable {
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
     store_shared_connection(&con)?;
     
-    con.register_scalar_function::<PgwireVersionScalar>("pgwire_version")
-        .expect("Failed to register pgwire_version scalar function");
+    con.register_scalar_function::<PgwireVersionScalar>("trex_pgwire_version")
+        .expect("Failed to register trex_pgwire_version scalar function");
 
+    con.register_scalar_function::<StartPgWireServerScalar>("trex_pgwire_start")
+        .expect("Failed to register trex_pgwire_start function");
+    // Deprecated alias for external consumers
     con.register_scalar_function::<StartPgWireServerScalar>("start_pgwire_server")
-        .expect("Failed to register start_pgwire_server function");
-    
-    con.register_scalar_function::<StopPgWireServerScalar>("stop_pgwire_server")
-        .expect("Failed to register stop_pgwire_server function");
+        .expect("Failed to register start_pgwire_server alias");
 
+    con.register_scalar_function::<StopPgWireServerScalar>("trex_pgwire_stop")
+        .expect("Failed to register trex_pgwire_stop function");
+
+    con.register_scalar_function::<UpdateDbCredentialsScalar>("trex_pgwire_set_credentials")
+        .expect("Failed to register trex_pgwire_set_credentials function");
+    // Deprecated alias for external consumers
     con.register_scalar_function::<UpdateDbCredentialsScalar>("update_db_credentials")
-        .expect("Failed to register update_db_credentials function");
-        
-    con.register_table_function::<PgWireServerStatusTable>("pgwire_server_status")
-        .expect("Failed to register pgwire_server_status function");
+        .expect("Failed to register update_db_credentials alias");
+
+    con.register_table_function::<PgWireServerStatusTable>("trex_pgwire_status")
+        .expect("Failed to register trex_pgwire_status function");
     
     Ok(())
 }

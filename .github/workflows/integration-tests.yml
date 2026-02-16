@@ -22,7 +22,7 @@ jobs:
   # ===========================================================================
 
   build-rust-core:
-    name: "Build swarm"
+    name: "Build db"
     runs-on: ubuntu-24.04
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     steps:
@@ -37,18 +37,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ext/swarm/target
-          key: rust-core-${{ runner.os }}-${{ hashFiles('ext/swarm/Cargo.lock') }}
+            ext/db/target
+          key: rust-core-${{ runner.os }}-${{ hashFiles('ext/db/Cargo.lock') }}
           restore-keys: rust-core-${{ runner.os }}-
 
-      - name: Build swarm
+      - name: Build db
         run: make configure && make debug
-        working-directory: ext/swarm
+        working-directory: ext/db
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ext-swarm
-          path: ext/swarm/build/debug/extension/swarm/swarm.trex
+          name: ext-db
+          path: ext/db/build/debug/extension/db/db.trex
           retention-days: 1
 
   build-pg-trex:
@@ -246,7 +246,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ext/runtime/ext/trexas/target
-          key: rust-trexas-${{ runner.os }}-${{ hashFiles('trex/Cargo.lock') }}
+          key: rust-trexas-${{ runner.os }}-${{ hashFiles('ext/runtime/Cargo.lock') }}
           restore-keys: rust-trexas-${{ runner.os }}-
 
       - name: Install trexas build dependencies
@@ -262,8 +262,8 @@ jobs:
           path: ext/runtime/ext/trexas/build/debug/extension/trexas/trexas.trex
           retention-days: 1
 
-  build-circe:
-    name: "Build circe"
+  build-atlas:
+    name: "Build atlas"
     runs-on: ubuntu-24.04
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     steps:
@@ -283,23 +283,23 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: |
-            ext/circe/build
-            ext/circe/circe-be/target
-          key: circe-${{ runner.os }}-${{ hashFiles('ext/circe/CMakeLists.txt', 'ext/circe/extension_config.cmake', 'ext/circe/circe-be/pom.xml', 'ext/circe/graalvm-config/**') }}
+            ext/atlas/build
+            ext/atlas/circe-be/target
+          key: circe-${{ runner.os }}-${{ hashFiles('ext/atlas/CMakeLists.txt', 'ext/atlas/extension_config.cmake', 'ext/atlas/circe-be/pom.xml', 'ext/atlas/graalvm-config/**') }}
           restore-keys: circe-${{ runner.os }}-
 
-      - name: Build circe
+      - name: Build atlas
         run: make configure && make release
-        working-directory: ext/circe
+        working-directory: ext/atlas
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ext-circe
-          path: ext/circe/build/release/extension/circe/circe.trex
+          name: ext-atlas
+          path: ext/atlas/build/release/extension/circe/circe.trex
           retention-days: 1
 
-  build-llama:
-    name: "Build llama"
+  build-ai:
+    name: "Build ai"
     runs-on: ubuntu-24.04
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     steps:
@@ -307,23 +307,23 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install llama build dependencies
+      - name: Install ai build dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake libssl-dev libvulkan1 libvulkan-dev vulkan-tools glslc libshaderc1 spirv-tools vulkan-validationlayers mesa-vulkan-drivers
 
       - uses: actions/cache@v4
         with:
-          path: ext/llama/build
-          key: llama-cmake-${{ runner.os }}-${{ hashFiles('ext/llama/CMakeLists.txt', 'ext/llama/llama.cpp/CMakeLists.txt') }}
-          restore-keys: llama-cmake-${{ runner.os }}-
+          path: ext/ai/build
+          key: ai-cmake-${{ runner.os }}-${{ hashFiles('ext/ai/CMakeLists.txt', 'ext/ai/llama.cpp/CMakeLists.txt') }}
+          restore-keys: ai-cmake-${{ runner.os }}-
 
-      - name: Build llama
+      - name: Build ai
         run: make configure && make debug
-        working-directory: ext/llama
+        working-directory: ext/ai
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ext-llama
-          path: ext/llama/build/debug/extension/llama/llama.trex
+          name: ext-ai
+          path: ext/ai/build/debug/extension/ai/ai.trex
           retention-days: 1
 
   build-etl:
@@ -402,8 +402,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ext-swarm
-          path: ext/swarm/build/debug/extension/swarm/
+          name: ext-db
+          path: ext/db/build/debug/extension/db/
 
       - name: Setup test environment
         run: make configure
@@ -434,8 +434,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ext-swarm
-          path: ext/swarm/build/debug/extension/swarm/
+          name: ext-db
+          path: ext/db/build/debug/extension/db/
 
       - uses: actions/download-artifact@v4
         with:
@@ -450,14 +450,14 @@ jobs:
         run: venv/bin/pytest -v test_pgwire_standalone.py
         working-directory: integration-tests
 
-      - name: Run pgwire swarm tests
-        run: venv/bin/pytest -v test_pgwire_swarm.py
+      - name: Run pgwire db tests
+        run: venv/bin/pytest -v test_pgwire_db.py
         working-directory: integration-tests
 
-  test-circe:
-    name: "Test circe"
+  test-atlas:
+    name: "Test atlas"
     runs-on: ubuntu-24.04
-    needs: [build-circe]
+    needs: [build-atlas]
     steps:
       - uses: actions/checkout@v4
 
@@ -467,21 +467,21 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ext-circe
-          path: ext/circe/build/release/extension/circe/
+          name: ext-atlas
+          path: ext/atlas/build/release/extension/circe/
 
       - name: Setup test environment
         run: make configure
         working-directory: integration-tests
 
-      - name: Run circe standalone tests
-        run: venv/bin/pytest -v test_circe_standalone.py
+      - name: Run atlas standalone tests
+        run: venv/bin/pytest -v test_atlas_standalone.py
         working-directory: integration-tests
 
-  test-llama:
-    name: "Test llama"
+  test-ai:
+    name: "Test ai"
     runs-on: ubuntu-24.04
-    needs: [build-llama]
+    needs: [build-ai]
     steps:
       - uses: actions/checkout@v4
 
@@ -491,15 +491,15 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ext-llama
-          path: ext/llama/build/debug/extension/llama/
+          name: ext-ai
+          path: ext/ai/build/debug/extension/ai/
 
       - name: Setup test environment
         run: make configure
         working-directory: integration-tests
 
-      - name: Run llama standalone tests
-        run: venv/bin/pytest -v test_llama_standalone.py
+      - name: Run ai standalone tests
+        run: venv/bin/pytest -v test_ai_standalone.py
         working-directory: integration-tests
 
   test-chdb:
@@ -519,8 +519,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ext-swarm
-          path: ext/swarm/build/debug/extension/swarm/
+          name: ext-db
+          path: ext/db/build/debug/extension/db/
 
       - uses: actions/download-artifact@v4
         with:
@@ -535,8 +535,8 @@ jobs:
         run: venv/bin/pytest -v test_chdb_standalone.py
         working-directory: integration-tests
 
-      - name: Run chdb swarm tests
-        run: venv/bin/pytest -v test_chdb_swarm.py
+      - name: Run chdb db tests
+        run: venv/bin/pytest -v test_chdb_db.py
         working-directory: integration-tests
 
   test-trexas:
@@ -621,8 +621,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ext-swarm
-          path: ext/swarm/build/debug/extension/swarm/
+          name: ext-db
+          path: ext/db/build/debug/extension/db/
 
       - name: Setup test environment
         run: make configure
@@ -632,8 +632,8 @@ jobs:
         run: venv/bin/pytest -v test_etl_standalone.py
         working-directory: integration-tests
 
-      - name: Run etl swarm tests
-        run: venv/bin/pytest -v test_etl_swarm.py
+      - name: Run etl db tests
+        run: venv/bin/pytest -v test_etl_db.py
         working-directory: integration-tests
 
   test-migration:
@@ -728,7 +728,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ext-swarm
+          name: ext-db
           path: ext/pg_trex/extensions/
 
       - name: List pg_trex build context
@@ -780,8 +780,8 @@ jobs:
     needs:
       - test-distributed
       - test-pgwire
-      - test-circe
-      - test-llama
+      - test-atlas
+      - test-ai
       - test-chdb
       - test-trexas
       - test-tpm
@@ -794,8 +794,8 @@ jobs:
         run: |
           echo "test-distributed: ${{ needs.test-distributed.result }}"
           echo "test-pgwire:      ${{ needs.test-pgwire.result }}"
-          echo "test-circe:       ${{ needs.test-circe.result }}"
-          echo "test-llama:       ${{ needs.test-llama.result }}"
+          echo "test-atlas:       ${{ needs.test-atlas.result }}"
+          echo "test-ai:          ${{ needs.test-ai.result }}"
           echo "test-chdb:        ${{ needs.test-chdb.result }}"
           echo "test-trexas:      ${{ needs.test-trexas.result }}"
           echo "test-tpm:         ${{ needs.test-tpm.result }}"
@@ -806,8 +806,8 @@ jobs:
 
           if [[ "${{ needs.test-distributed.result }}" == "failure" ||
                 "${{ needs.test-pgwire.result }}" == "failure" ||
-                "${{ needs.test-circe.result }}" == "failure" ||
-                "${{ needs.test-llama.result }}" == "failure" ||
+                "${{ needs.test-atlas.result }}" == "failure" ||
+                "${{ needs.test-ai.result }}" == "failure" ||
                 "${{ needs.test-chdb.result }}" == "failure" ||
                 "${{ needs.test-trexas.result }}" == "failure" ||
                 "${{ needs.test-tpm.result }}" == "failure" ||

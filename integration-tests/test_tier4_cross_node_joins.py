@@ -55,12 +55,12 @@ def _setup_two_nodes_different_tables(node_factory):
         "SELECT i AS id, i % 10 AS customer_id, CAST(i * 10 AS DOUBLE) AS amount "
         "FROM range(15) t(i)"
     )
-    node_a.execute(f"SELECT start_flight_server('0.0.0.0', {node_a.flight_port})")
+    node_a.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node_a.flight_port})")
     node_a.execute(
-        f"SELECT swarm_start('0.0.0.0', {node_a.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {node_a.gossip_port}, 'test-cluster')"
     )
     node_a.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_a.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_a.flight_port})"
     )
 
     # Node B: customers 10-19, orders 15-29
@@ -75,26 +75,26 @@ def _setup_two_nodes_different_tables(node_factory):
         "CAST((i + 15) * 10 AS DOUBLE) AS amount "
         "FROM range(15) t(i)"
     )
-    node_b.execute(f"SELECT start_flight_server('0.0.0.0', {node_b.flight_port})")
+    node_b.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node_b.flight_port})")
     node_b.execute(
-        f"SELECT swarm_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
+        f"SELECT trex_db_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
         f"'127.0.0.1:{node_a.gossip_port}')"
     )
     node_b.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_b.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_b.flight_port})"
     )
 
     # Wait for gossip convergence
     wait_for(
         node_a,
-        "SELECT * FROM swarm_nodes()",
+        "SELECT * FROM trex_db_nodes()",
         lambda rows: len(rows) >= 2,
         timeout=15,
     )
     # Wait for catalog to see customers table from both nodes
     wait_for(
         node_a,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: len(rows) >= 4,  # 2 tables x 2 nodes
         timeout=10,
     )
@@ -125,12 +125,12 @@ def _setup_two_nodes_large(node_factory, rows_per_node=1000):
         f"SELECT i AS id, i % {n} AS customer_id, CAST(i * 10 AS DOUBLE) AS amount "
         f"FROM range({n * 3}) t(i)"
     )
-    node_a.execute(f"SELECT start_flight_server('0.0.0.0', {node_a.flight_port})")
+    node_a.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node_a.flight_port})")
     node_a.execute(
-        f"SELECT swarm_start('0.0.0.0', {node_a.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {node_a.gossip_port}, 'test-cluster')"
     )
     node_a.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_a.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_a.flight_port})"
     )
 
     # Node B
@@ -145,25 +145,25 @@ def _setup_two_nodes_large(node_factory, rows_per_node=1000):
         f"CAST((i + {n * 3}) * 10 AS DOUBLE) AS amount "
         f"FROM range({n * 3}) t(i)"
     )
-    node_b.execute(f"SELECT start_flight_server('0.0.0.0', {node_b.flight_port})")
+    node_b.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node_b.flight_port})")
     node_b.execute(
-        f"SELECT swarm_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
+        f"SELECT trex_db_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
         f"'127.0.0.1:{node_a.gossip_port}')"
     )
     node_b.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_b.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_b.flight_port})"
     )
 
     # Wait for convergence
     wait_for(
         node_a,
-        "SELECT * FROM swarm_nodes()",
+        "SELECT * FROM trex_db_nodes()",
         lambda rows: len(rows) >= 2,
         timeout=15,
     )
     wait_for(
         node_a,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: len(rows) >= 4,
         timeout=10,
     )
@@ -188,24 +188,24 @@ def _setup_single_node_with_both_tables(node_factory):
         "SELECT i AS id, i % 10 AS customer_id, CAST(i * 10 AS DOUBLE) AS amount "
         "FROM range(30) t(i)"
     )
-    node.execute(f"SELECT start_flight_server('0.0.0.0', {node.flight_port})")
+    node.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node.flight_port})")
     node.execute(
-        f"SELECT swarm_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
     node.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node.flight_port})"
     )
 
     # Wait for self-discovery
     wait_for(
         node,
-        "SELECT * FROM swarm_nodes()",
+        "SELECT * FROM trex_db_nodes()",
         lambda rows: len(rows) >= 1,
         timeout=10,
     )
     wait_for(
         node,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: len(rows) >= 2,  # customers + orders
         timeout=10,
     )
@@ -236,7 +236,7 @@ def test_cross_node_join_basic(node_factory):
     # The coordinator sends the query to both nodes since both have customers.
     result = wait_for(
         node_a,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT c.id AS cid, c.name, o.id AS oid, o.amount "
         "FROM customers c JOIN orders o ON c.id = o.customer_id "
         "ORDER BY c.id, o.id')",
@@ -275,7 +275,7 @@ def test_cross_node_join_large_tables(node_factory):
     # Count total joined rows across both nodes.
     result = wait_for(
         node_a,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT COUNT(*) AS cnt "
         "FROM customers c JOIN orders o ON c.id = o.customer_id')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
@@ -312,7 +312,7 @@ def test_colocation_single_node(node_factory):
     # Use unqualified column names to avoid table-alias issues in merge SQL.
     result = wait_for(
         node,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT name, SUM(amount) AS total "
         "FROM customers JOIN orders ON customers.id = orders.customer_id "
         "GROUP BY name ORDER BY total DESC')",
@@ -354,7 +354,7 @@ def test_cross_node_join_with_aggregation(node_factory):
     # merge SQL which rewrites FROM to _merged (table aliases don't exist).
     result = wait_for(
         node_a,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT name, COUNT(customer_id) AS order_count, SUM(amount) AS total_amount "
         "FROM customers JOIN orders ON customers.id = orders.customer_id "
         "GROUP BY name "
@@ -388,18 +388,18 @@ def test_query_nonexistent_table(node_factory):
     """Query referencing non-existent table returns clear error."""
     node = node_factory()
 
-    node.execute(f"SELECT start_flight_server('0.0.0.0', {node.flight_port})")
+    node.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node.flight_port})")
     node.execute(
-        f"SELECT swarm_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
     node.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node.flight_port})"
     )
 
     # Wait for self-discovery
     wait_for(
         node,
-        "SELECT * FROM swarm_nodes()",
+        "SELECT * FROM trex_db_nodes()",
         lambda rows: len(rows) >= 1,
         timeout=10,
     )
@@ -407,7 +407,7 @@ def test_query_nonexistent_table(node_factory):
     # Query a table that does not exist anywhere in the cluster.
     try:
         node.execute(
-            "SELECT * FROM swarm_query('SELECT * FROM nonexistent_table')"
+            "SELECT * FROM trex_db_query('SELECT * FROM nonexistent_table')"
         )
         # If we get here without error, the query returned empty results -- also acceptable.
     except RuntimeError as e:
@@ -424,7 +424,7 @@ def test_query_nonexistent_table(node_factory):
 
 
 def test_feature_flag_routing(node_factory):
-    """swarm_set_distributed(true) then query; swarm_set_distributed(false) routes to legacy.
+    """trex_db_set_distributed(true) then query; trex_db_set_distributed(false) routes to legacy.
 
     Verifies the feature flag toggles between DataFusion and legacy coordinator
     paths.  Both paths should produce correct results.
@@ -432,7 +432,7 @@ def test_feature_flag_routing(node_factory):
     node = _setup_single_node_with_both_tables(node_factory)
 
     # Verify legacy path works (distributed_engine=False is default).
-    result = node.execute("SELECT swarm_set_distributed(false)")
+    result = node.execute("SELECT trex_db_set_distributed(false)")
     assert "legacy" in result[0][0].lower() or "disabled" in result[0][0].lower(), (
         f"Expected legacy/disabled message, got: {result[0][0]}"
     )
@@ -440,7 +440,7 @@ def test_feature_flag_routing(node_factory):
     # Legacy query should succeed.
     legacy_result = wait_for(
         node,
-        "SELECT * FROM swarm_query('SELECT COUNT(*) AS cnt FROM customers')",
+        "SELECT * FROM trex_db_query('SELECT COUNT(*) AS cnt FROM customers')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
         timeout=10,
     )
@@ -449,7 +449,7 @@ def test_feature_flag_routing(node_factory):
     )
 
     # Enable distributed path.
-    result = node.execute("SELECT swarm_set_distributed(true)")
+    result = node.execute("SELECT trex_db_set_distributed(true)")
     assert "datafusion" in result[0][0].lower() or "enabled" in result[0][0].lower(), (
         f"Expected DataFusion/enabled message, got: {result[0][0]}"
     )
@@ -457,7 +457,7 @@ def test_feature_flag_routing(node_factory):
     # Distributed query should succeed and return correct result.
     distributed_result = wait_for(
         node,
-        "SELECT * FROM swarm_query('SELECT COUNT(*) AS cnt FROM customers')",
+        "SELECT * FROM trex_db_query('SELECT COUNT(*) AS cnt FROM customers')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
         timeout=15,
     )
@@ -466,10 +466,10 @@ def test_feature_flag_routing(node_factory):
     )
 
     # Switch back to legacy and verify it still works.
-    node.execute("SELECT swarm_set_distributed(false)")
+    node.execute("SELECT trex_db_set_distributed(false)")
     legacy_result2 = wait_for(
         node,
-        "SELECT * FROM swarm_query('SELECT COUNT(*) AS cnt FROM customers')",
+        "SELECT * FROM trex_db_query('SELECT COUNT(*) AS cnt FROM customers')",
         lambda rows: len(rows) >= 1 and rows[0][0] is not None,
         timeout=10,
     )
@@ -498,7 +498,7 @@ def test_cross_node_join_performance(node_factory):
     # Warm up: run one query to ensure gossip is fully converged.
     wait_for(
         node_a,
-        "SELECT * FROM swarm_query('SELECT COUNT(*) AS cnt FROM customers')",
+        "SELECT * FROM trex_db_query('SELECT COUNT(*) AS cnt FROM customers')",
         lambda rows: len(rows) >= 1 and int(rows[0][0]) >= 500,
         timeout=15,
     )
@@ -506,7 +506,7 @@ def test_cross_node_join_performance(node_factory):
     # Benchmark distributed join.
     t_start = time.time()
     dist_result = node_a.execute(
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT COUNT(*) AS cnt FROM customers c "
         "JOIN orders o ON c.id = o.customer_id')"
     )
@@ -566,7 +566,7 @@ def test_duckdb_function_in_scan(node_factory):
     # Use DuckDB's length() function in WHERE clause.
     result = wait_for(
         node_a,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT id, name FROM customers WHERE length(name) > 10')",
         lambda rows: len(rows) >= 1,
         timeout=15,
@@ -597,7 +597,7 @@ def test_duckdb_function_post_join(node_factory):
     # Use upper() and round() on join results.
     result = wait_for(
         node_a,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT upper(c.name) AS uname, round(o.amount, 0) AS rounded_amt "
         "FROM customers c JOIN orders o ON c.id = o.customer_id "
         "ORDER BY c.id LIMIT 5')",
@@ -633,7 +633,7 @@ def test_standard_aggregations_on_join(node_factory):
     # Run aggregations on the join result.
     result = wait_for(
         node_a,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT COUNT(*) AS cnt, SUM(o.amount) AS total, "
         "AVG(o.amount) AS avg_amt, MIN(o.amount) AS min_amt, "
         "MAX(o.amount) AS max_amt "
@@ -682,7 +682,7 @@ def test_complex_query_all_clauses(node_factory):
     # Use unqualified column names to work with the legacy coordinator.
     result = wait_for(
         node_a,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT name, COUNT(customer_id) AS order_count, SUM(amount) AS total "
         "FROM customers "
         "JOIN orders ON customers.id = orders.customer_id "
@@ -759,12 +759,12 @@ def _setup_three_nodes_different_tables(node_factory):
         "SELECT i AS id, i % 15 AS order_id, 'Warehouse_A' AS origin "
         "FROM range(20) t(i)"
     )
-    node_a.execute(f"SELECT start_flight_server('0.0.0.0', {node_a.flight_port})")
+    node_a.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node_a.flight_port})")
     node_a.execute(
-        f"SELECT swarm_start('0.0.0.0', {node_a.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {node_a.gossip_port}, 'test-cluster')"
     )
     node_a.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_a.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_a.flight_port})"
     )
 
     # -- Node B: customers 10-19, orders 15-29, shipments 20-39 --
@@ -784,13 +784,13 @@ def _setup_three_nodes_different_tables(node_factory):
         "SELECT i + 20 AS id, (i % 15) + 15 AS order_id, 'Warehouse_B' AS origin "
         "FROM range(20) t(i)"
     )
-    node_b.execute(f"SELECT start_flight_server('0.0.0.0', {node_b.flight_port})")
+    node_b.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node_b.flight_port})")
     node_b.execute(
-        f"SELECT swarm_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
+        f"SELECT trex_db_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
         f"'127.0.0.1:{node_a.gossip_port}')"
     )
     node_b.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_b.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_b.flight_port})"
     )
 
     # -- Node C: customers 20-29, orders 30-44, shipments 40-59 --
@@ -810,26 +810,26 @@ def _setup_three_nodes_different_tables(node_factory):
         "SELECT i + 40 AS id, (i % 15) + 30 AS order_id, 'Warehouse_C' AS origin "
         "FROM range(20) t(i)"
     )
-    node_c.execute(f"SELECT start_flight_server('0.0.0.0', {node_c.flight_port})")
+    node_c.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node_c.flight_port})")
     node_c.execute(
-        f"SELECT swarm_start_seeds('0.0.0.0', {node_c.gossip_port}, 'test-cluster', "
+        f"SELECT trex_db_start_seeds('0.0.0.0', {node_c.gossip_port}, 'test-cluster', "
         f"'127.0.0.1:{node_a.gossip_port}')"
     )
     node_c.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_c.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_c.flight_port})"
     )
 
     # Wait for gossip convergence -- all 3 nodes visible
     wait_for(
         node_a,
-        "SELECT * FROM swarm_nodes()",
+        "SELECT * FROM trex_db_nodes()",
         lambda rows: len(rows) >= 3,
         timeout=20,
     )
     # Wait for catalog: 3 tables x 3 nodes = 9 entries
     wait_for(
         node_a,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: len(rows) >= 9,
         timeout=15,
     )
@@ -858,7 +858,7 @@ def test_multi_way_join_three_tables(node_factory):
     # Run a distributed 3-way JOIN query via swarm_query on node A.
     result = wait_for(
         node_a,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT c.name, o.id AS oid, s.id AS sid "
         "FROM customers c "
         "JOIN orders o ON c.id = o.customer_id "
@@ -923,7 +923,7 @@ def test_cte_with_distributed_query(node_factory):
     # so table aliases like hv.total don't resolve).
     result = wait_for(
         node_a,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT customers.name AS cname, hv.total AS total_amt "
         "FROM customers "
         "JOIN (SELECT customer_id, SUM(amount) AS total "
@@ -983,7 +983,7 @@ def test_window_function_distributed(node_factory):
     # Run a window function query via swarm_query.
     result = wait_for(
         node_a,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT c.name, o.amount, "
         "ROW_NUMBER() OVER (PARTITION BY c.id ORDER BY o.amount DESC) AS rn "
         "FROM customers c "

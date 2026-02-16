@@ -1,6 +1,6 @@
 """Standalone tests for the cql2elm DuckDB extension.
 
-Tests the cql_to_elm() scalar function directly via SQL.
+Tests the trex_fhir_cql_translate() scalar function directly via SQL.
 Requires the cql2elm extension to be built first.
 """
 
@@ -33,7 +33,7 @@ def test_simple_translation(cql2elm_node):
         "define AllPatients: [Patient]"
     )
     escaped = _sql_escape(cql)
-    result = cql2elm_node.execute(f"SELECT cql_to_elm('{escaped}')")
+    result = cql2elm_node.execute(f"SELECT trex_fhir_cql_translate('{escaped}')")
     assert len(result) == 1
     elm_json = result[0][0]
     elm = json.loads(elm_json)
@@ -53,7 +53,7 @@ def test_cql_with_filter(cql2elm_node):
         "define MalePatients: [Patient] P where P.gender = 'male'"
     )
     escaped = _sql_escape(cql)
-    result = cql2elm_node.execute(f"SELECT cql_to_elm('{escaped}')")
+    result = cql2elm_node.execute(f"SELECT trex_fhir_cql_translate('{escaped}')")
     assert len(result) == 1
     elm = json.loads(result[0][0])
     lib = elm.get("library", elm)
@@ -64,7 +64,7 @@ def test_cql_with_filter(cql2elm_node):
 
 def test_null_input(cql2elm_node):
     """NULL input returns NULL."""
-    result = cql2elm_node.execute("SELECT cql_to_elm(NULL)")
+    result = cql2elm_node.execute("SELECT trex_fhir_cql_translate(NULL)")
     assert len(result) == 1
     assert result[0][0] is None
 
@@ -72,4 +72,4 @@ def test_null_input(cql2elm_node):
 def test_invalid_cql(cql2elm_node):
     """Invalid CQL syntax raises an error."""
     with pytest.raises(RuntimeError, match="(?i)(error|translation)"):
-        cql2elm_node.execute("SELECT cql_to_elm('this is not valid CQL at all')")
+        cql2elm_node.execute("SELECT trex_fhir_cql_translate('this is not valid CQL at all')")

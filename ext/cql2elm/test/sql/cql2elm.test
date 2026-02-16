@@ -1,11 +1,11 @@
 # name: test/sql/cql2elm.test
-# description: test cql_to_elm function
+# description: test trex_fhir_cql_translate function
 # group: [cql2elm]
 
 statement ok
-SELECT cql_to_elm('library Test version ''1.0.0'' using FHIR version ''4.0.1'' context Patient define AllPatients: [Patient]');
+SELECT trex_fhir_cql_translate('library Test version ''1.0.0'' using FHIR version ''4.0.1'' context Patient define AllPatients: [Patient]');
 
 query I
-SELECT json_extract_string(cql_to_elm('library Test version ''1.0.0'' using FHIR version ''4.0.1'' context Patient define AllPatients: [Patient]'), '$.identifier.id');
+SELECT json_extract_string(trex_fhir_cql_translate('library Test version ''1.0.0'' using FHIR version ''4.0.1'' context Patient define AllPatients: [Patient]'), '$.identifier.id');
 ----
 Test

@@ -4,26 +4,26 @@
 
 # Before we load the extension, this will fail
 statement error
-SELECT etl_start('test', 'host=localhost');
+SELECT trex_etl_start('test', 'host=localhost');
 ----
-Catalog Error: Scalar Function with name etl_start does not exist!
+Catalog Error: Scalar Function with name trex_etl_start does not exist!
 
 # Require statement will ensure the extension is loaded from now on
 require etl
 
-# Confirm etl_start exists and validates input
+# Confirm trex_etl_start exists and validates input
 statement error
-SELECT etl_start('test', 'host=localhost dbname=test user=test');
+SELECT trex_etl_start('test', 'host=localhost dbname=test user=test');
 ----
 connection string must include 'publication=<name>'
 
-# Confirm etl_stop returns error for nonexistent pipeline
+# Confirm trex_etl_stop returns error for nonexistent pipeline
 statement error
-SELECT etl_stop('nonexistent');
+SELECT trex_etl_stop('nonexistent');
 ----
 Pipeline 'nonexistent' not found
 
-# Confirm etl_status returns empty result set
+# Confirm trex_etl_status returns empty result set
 query IIIIIIII
-SELECT * FROM etl_status();
+SELECT * FROM trex_etl_status();
 ----
