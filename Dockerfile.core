@@ -67,5 +67,7 @@ COPY core/ ./core/
 # Copy functions (overridden by volume mount in development)
 COPY functions/ ./functions/
 
+ENV SCHEMA_DIR=/usr/src/core/schema
+
 EXPOSE 8001
 CMD ["trex"]

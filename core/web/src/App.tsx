@@ -26,6 +26,8 @@ import { SsoProviders } from "@/pages/admin/SsoProviders";
 import { Services } from "@/pages/admin/Services";
 import { TrexDB } from "@/pages/admin/TrexDB";
 import { Extensions } from "@/pages/admin/Extensions";
+import { Migrations } from "@/pages/admin/Migrations";
+import { ChangePassword } from "@/pages/ChangePassword";
 import { EtlPipelines } from "@/pages/admin/EtlPipelines";
 
 function HomeRedirect() {
@@ -46,6 +48,7 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/verify-email" element={<VerifyEmail />} />
         <Route path="/consent" element={<Consent />} />
+        <Route path="/change-password" element={<ChangePassword />} />
 
         {/* Authenticated routes */}
         <Route element={<Layout />}>
@@ -68,6 +71,7 @@ export default function App() {
             <Route path="etl" element={<EtlPipelines />} />
             <Route path="trexdb" element={<TrexDB />} />
             <Route path="extensions" element={<Extensions />} />
+            <Route path="migrations" element={<Migrations />} />
             <Route path="sso" element={<SsoProviders />} />
           </Route>
         </Route>

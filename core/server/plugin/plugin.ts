@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { addPlugin as addFlowPlugin } from "./flow.ts";
 import { addPlugin as addFunctionPlugin } from "./function.ts";
+import { addMigrationPlugin } from "./migration.ts";
 import { addPlugin as addUIPlugin } from "./ui.ts";
 
 interface ActivePluginEntry {
@@ -35,6 +36,9 @@ export class Plugins {
             break;
           case "flow":
             addFlowPlugin(value);
+            break;
+          case "migrations":
+            addMigrationPlugin(value, dir, shortName);
             break;
           default:
             console.log(`Unknown plugin type: ${key}`);

@@ -37,7 +37,7 @@ interface SessionInfo {
 
 interface AccountInfo {
   id: string;
-  provider: string;
+  providerId: string;
   accountId: string;
   createdAt: string;
 }
@@ -185,6 +185,105 @@ function ProfileTab() {
   );
 }
 
+// --- Security Tab (password change) ---
+
+function SecurityTab() {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleChangePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+
+    if (newPassword !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await authClient.changePassword({
+        currentPassword,
+        newPassword,
+        revokeOtherSessions: false,
+      });
+
+      if (result.error) {
+        setError(result.error.message || "Failed to change password.");
+        return;
+      }
+
+      toast.success("Password changed successfully.");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch {
+      setError("An unexpected error occurred.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Change Password</CardTitle>
+        <CardDescription>Update your account password</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleChangePassword} className="flex flex-col gap-4 max-w-md">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="current-password">Current Password</Label>
+            <Input
+              id="current-password"
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              required
+              autoComplete="current-password"
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="new-password">New Password</Label>
+            <Input
+              id="new-password"
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              required
+              minLength={8}
+              autoComplete="new-password"
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="confirm-password">Confirm New Password</Label>
+            <Input
+              id="confirm-password"
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              required
+              minLength={8}
+              autoComplete="new-password"
+            />
+          </div>
+
+          {error && (
+            <p className="text-sm text-destructive">{error}</p>
+          )}
+
+          <Button type="submit" className="w-fit" disabled={loading}>
+            {loading ? "Changing..." : "Change Password"}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
 // --- Linked Accounts Tab (T045 + T047 lockout protection) ---
 
 function LinkedAccountsTab() {
@@ -215,17 +314,17 @@ function LinkedAccountsTab() {
   // The user must retain at least one linked account (social or credential).
   const canUnlink = accounts.length > 1;
 
-  async function handleUnlink(provider: string) {
-    setUnlinking(provider);
+  async function handleUnlink(providerId: string) {
+    setUnlinking(providerId);
     try {
-      const result = await authClient.unlinkAccount({ providerId: provider });
+      const result = await authClient.unlinkAccount({ providerId });
       if (result.error) {
         toast.error(
           result.error.message || "Failed to unlink account."
         );
         return;
       }
-      toast.success(`${providerDisplayName(provider)} account unlinked.`);
+      toast.success(`${providerDisplayName(providerId)} account unlinked.`);
       fetchAccounts();
     } catch {
       toast.error("Failed to unlink account.");
@@ -255,7 +354,7 @@ function LinkedAccountsTab() {
     );
   }
 
-  const linkedProviders = accounts.map((a) => a.provider);
+  const linkedProviders = accounts.map((a) => a.providerId);
   const unlinkedProviders = KNOWN_PROVIDERS.filter(
     (p) => !linkedProviders.includes(p)
   );
@@ -287,7 +386,7 @@ function LinkedAccountsTab() {
                   </div>
                   <div>
                     <p className="text-sm font-medium">
-                      {providerDisplayName(account.provider)}
+                      {providerDisplayName(account.providerId)}
                     </p>
                     <p className="text-xs text-muted-foreground">
                       Linked{" "}
@@ -297,16 +396,16 @@ function LinkedAccountsTab() {
                     </p>
                   </div>
                 </div>
-                {account.provider !== "credential" && (
+                {account.providerId !== "credential" && (
                   <div className="relative group">
                     <Button
                       variant="ghost"
                       size="sm"
-                      disabled={!canUnlink || unlinking === account.provider}
-                      onClick={() => handleUnlink(account.provider)}
+                      disabled={!canUnlink || unlinking === account.providerId}
+                      onClick={() => handleUnlink(account.providerId)}
                     >
                       <UnlinkIcon className="size-4 mr-1" />
-                      {unlinking === account.provider
+                      {unlinking === account.providerId
                         ? "Unlinking..."
                         : "Unlink"}
                     </Button>
@@ -491,19 +590,24 @@ export function Profile() {
       <div>
         <h2 className="text-2xl font-bold">Account Settings</h2>
         <p className="text-muted-foreground">
-          Manage your profile, linked accounts, and active sessions
+          Manage your profile, security, linked accounts, and sessions
         </p>
       </div>
 
       <Tabs defaultValue="profile">
         <TabsList>
           <TabsTrigger value="profile">Profile</TabsTrigger>
+          <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="accounts">Linked Accounts</TabsTrigger>
           <TabsTrigger value="sessions">Sessions</TabsTrigger>
         </TabsList>
 
         <TabsContent value="profile" className="mt-4">
           <ProfileTab />
+        </TabsContent>
+
+        <TabsContent value="security" className="mt-4">
+          <SecurityTab />
         </TabsContent>
 
         <TabsContent value="accounts" className="mt-4">
