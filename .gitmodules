@@ -7,7 +7,7 @@
 [submodule "ai/llama.cpp"]
 	path = ext/ai/llama.cpp
 	url = https://github.com/ggml-org/llama.cpp.git
-[submodule "trex"]
-	path = ext/runtime
+[submodule "ext/runtime/trex-runtime"]
+	path = ext/runtime/trex-runtime
 	url = https://github.com/OHDSI/trex.git
 	branch = develop

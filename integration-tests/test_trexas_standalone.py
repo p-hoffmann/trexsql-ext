@@ -12,8 +12,8 @@ from conftest import REPO_ROOT, wait_for
 
 
 # Paths to trexas service entry points inside the trex submodule.
-MAIN_SERVICE_PATH = f"{REPO_ROOT}/ext/runtime/ext/trexas/main/index.ts"
-EVENT_WORKER_PATH = f"{REPO_ROOT}/ext/runtime/ext/trexas/event-worker/index.ts"
+MAIN_SERVICE_PATH = f"{REPO_ROOT}/ext/runtime/main/index.ts"
+EVENT_WORKER_PATH = f"{REPO_ROOT}/ext/runtime/event-worker/index.ts"
 
 
 def test_load_trexas(node_factory):

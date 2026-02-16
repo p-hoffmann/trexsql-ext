@@ -11,8 +11,8 @@ import urllib.request
 from conftest import REPO_ROOT, wait_for
 
 
-MAIN_SERVICE_PATH = f"{REPO_ROOT}/ext/runtime/ext/trexas/main/index.ts"
-EVENT_WORKER_PATH = f"{REPO_ROOT}/ext/runtime/ext/trexas/event-worker/index.ts"
+MAIN_SERVICE_PATH = f"{REPO_ROOT}/ext/runtime/main/index.ts"
+EVENT_WORKER_PATH = f"{REPO_ROOT}/ext/runtime/event-worker/index.ts"
 
 
 def test_swarm_register_trexas(node_factory):
