@@ -43,7 +43,7 @@ RUN ldconfig
 WORKDIR /usr/src
 
 # Install extensions via npm
-COPY package.json .npmrc deno.json ./
+COPY package.json package-lock.json .npmrc deno.json ./
 RUN npm install
 
 # Collect extension files from node_modules into extensions dir
