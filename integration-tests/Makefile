@@ -1,8 +1,8 @@
 REPO_ROOT=$(shell cd .. && pwd)
-SWARM_EXT=$(REPO_ROOT)/ext/swarm/build/debug/extension/swarm/swarm.trex
+DB_EXT=$(REPO_ROOT)/ext/db/build/debug/extension/db/db.trex
 PGWIRE_EXT=$(REPO_ROOT)/ext/pgwire/build/debug/extension/pgwire/pgwire.trex
-CIRCE_EXT=$(REPO_ROOT)/ext/circe/build/release/extension/circe/circe.trex
-LLAMA_EXT=$(REPO_ROOT)/ext/llama/build/debug/extension/llama/llama.trex
+ATLAS_EXT=$(REPO_ROOT)/ext/atlas/build/release/extension/circe/circe.trex
+AI_EXT=$(REPO_ROOT)/ext/ai/build/debug/extension/ai/ai.trex
 CHDB_EXT=$(REPO_ROOT)/ext/chdb/build/debug/extension/chdb/chdb.trex
 HANA_EXT=$(REPO_ROOT)/ext/hana/build/debug/extension/hana_scan/hana_scan.trex
 TPM_EXT=$(REPO_ROOT)/ext/tpm/build/debug/extension/tpm/tpm.trex
@@ -12,29 +12,29 @@ FHIR_EXT=$(REPO_ROOT)/ext/fhir/target/release/libfhir.so
 PYTHON_BIN?=python3
 VENV=./venv
 
-.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-swarm test-circe test-llama test-chdb test-chdb-swarm test-hana test-tpm test-etl test-etl-swarm test-fhir test-pg-trex check-extensions check-pgwire check-circe check-llama check-chdb check-hana check-tpm check-etl check-fhir check-migration check-swarm hana-up hana-down hana-clean pg-trex-up pg-trex-down clean
+.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-db test-atlas test-ai test-chdb test-chdb-db test-hana test-tpm test-etl test-etl-db test-fhir test-pg-trex check-extensions check-pgwire check-atlas check-ai check-chdb check-hana check-tpm check-etl check-fhir check-migration check-db hana-up hana-down hana-clean pg-trex-up pg-trex-down clean
 
 configure:
 	$(PYTHON_BIN) -m venv $(VENV)
 	$(VENV)/bin/pip install 'duckdb==1.4.4' pytest psycopg2-binary
 
 check-extensions:
-	@test -f $(SWARM_EXT) || (echo "Build swarm first: cd ../ext/swarm && make configure && make debug" && exit 1)
+	@test -f $(DB_EXT) || (echo "Build db first: cd ../ext/db && make configure && make debug" && exit 1)
 
 check-pgwire:
 	@test -f $(PGWIRE_EXT) || (echo "Build pgwire first: cd ../ext/pgwire && make configure && make debug" && exit 1)
 
-check-circe:
-	@test -f $(CIRCE_EXT) || (echo "Build circe first: cd ../ext/circe && make configure && make release" && exit 1)
+check-atlas:
+	@test -f $(ATLAS_EXT) || (echo "Build atlas first: cd ../ext/atlas && make configure && make release" && exit 1)
 
-check-llama:
-	@test -f $(LLAMA_EXT) || (echo "Build llama first: cd ../ext/llama && make configure && make debug" && exit 1)
+check-ai:
+	@test -f $(AI_EXT) || (echo "Build ai first: cd ../ext/ai && make configure && make debug" && exit 1)
 
 check-chdb:
 	@test -f $(CHDB_EXT) || (echo "Build chdb first: cd ../ext/chdb && make configure && make debug" && exit 1)
 
 test: check-extensions check-pgwire
-	$(VENV)/bin/pytest -v test_tier1_single_node.py test_tier2_two_node.py test_tier3_aggregation.py test_pgwire_standalone.py test_pgwire_swarm.py
+	$(VENV)/bin/pytest -v test_tier1_single_node.py test_tier2_two_node.py test_tier3_aggregation.py test_pgwire_standalone.py test_pgwire_db.py
 
 test-tier1: check-extensions
 	$(VENV)/bin/pytest -v test_tier1_single_node.py
@@ -69,20 +69,20 @@ test-partitioning: test-tier8
 test-pgwire: check-pgwire
 	$(VENV)/bin/pytest -v test_pgwire_standalone.py
 
-test-pgwire-swarm: check-extensions check-pgwire
-	$(VENV)/bin/pytest -v test_pgwire_swarm.py
+test-pgwire-db: check-extensions check-pgwire
+	$(VENV)/bin/pytest -v test_pgwire_db.py
 
-test-circe: check-circe
-	$(VENV)/bin/pytest -v test_circe_standalone.py
+test-atlas: check-atlas
+	$(VENV)/bin/pytest -v test_atlas_standalone.py
 
-test-llama: check-llama
-	$(VENV)/bin/pytest -v test_llama_standalone.py
+test-ai: check-ai
+	$(VENV)/bin/pytest -v test_ai_standalone.py
 
 test-chdb: check-chdb
 	$(VENV)/bin/pytest -v test_chdb_standalone.py
 
-test-chdb-swarm: check-extensions check-chdb
-	$(VENV)/bin/pytest -v test_chdb_swarm.py
+test-chdb-db: check-extensions check-chdb
+	$(VENV)/bin/pytest -v test_chdb_db.py
 
 check-tpm:
 	@test -f $(TPM_EXT) || (echo "Build tpm first: cd ../ext/tpm && make configure && make debug" && exit 1)
@@ -117,11 +117,11 @@ check-etl:
 test-etl: check-etl
 	$(VENV)/bin/pytest -v test_etl_standalone.py
 
-check-swarm:
-	@test -f $(SWARM_EXT) || (echo "Build swarm first: cd ../ext/swarm && make configure && make debug" && exit 1)
+check-db:
+	@test -f $(DB_EXT) || (echo "Build db first: cd ../ext/db && make configure && make debug" && exit 1)
 
-test-etl-swarm: check-etl check-swarm
-	$(VENV)/bin/pytest -v test_etl_swarm.py
+test-etl-db: check-etl check-db
+	$(VENV)/bin/pytest -v test_etl_db.py
 pg-trex-up:
 	docker compose -f docker-compose.pg_trex.yml up -d
 	@echo "Waiting for pg_trex to be ready..."

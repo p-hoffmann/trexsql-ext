@@ -45,14 +45,14 @@ pub fn get_shared_connection() -> Option<Arc<Mutex<Connection>>> {
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
     store_shared_connection(&con)?;
 
-    con.register_scalar_function::<etl_start::EtlStartScalar>("etl_start")
-        .expect("Failed to register etl_start scalar function");
+    con.register_scalar_function::<etl_start::EtlStartScalar>("trex_etl_start")
+        .expect("Failed to register trex_etl_start scalar function");
 
-    con.register_scalar_function::<etl_stop::EtlStopScalar>("etl_stop")
-        .expect("Failed to register etl_stop scalar function");
+    con.register_scalar_function::<etl_stop::EtlStopScalar>("trex_etl_stop")
+        .expect("Failed to register trex_etl_stop scalar function");
 
-    con.register_table_function::<etl_status::EtlStatusTable>("etl_status")
-        .expect("Failed to register etl_status table function");
+    con.register_table_function::<etl_status::EtlStatusTable>("trex_etl_status")
+        .expect("Failed to register trex_etl_status table function");
 
     Ok(())
 }

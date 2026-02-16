@@ -72,15 +72,15 @@ jobs:
         include:
           - PKGPATH: ./ext/chdb
             RUNNER: ubuntu-24.04
-          - PKGPATH: ./ext/circe
+          - PKGPATH: ./ext/atlas
             RUNNER: ubuntu-24.04
           - PKGPATH: ./ext/hana
-          - PKGPATH: ./ext/llama
+          - PKGPATH: ./ext/ai
             RUNNER: ubuntu-24.04
           - PKGPATH: ./ext/pgwire
           - PKGPATH: ./ext/tpm
           - PKGPATH: ./ext/migration
-          - PKGPATH: ./ext/swarm
+          - PKGPATH: ./ext/db
           - PKGPATH: ./ext/etl
           - PKGPATH: ./ext/bao
             RUNNER: ubuntu-24.04
@@ -352,7 +352,7 @@ jobs:
             pg-trex-test \
             postgres \
             -c shared_preload_libraries=pg_trex \
-            -c pg_trex.swarm_extension_path=/usr/lib/trexsql/extensions/swarm.trex
+            -c pg_trex.swarm_extension_path=/usr/lib/trexsql/extensions/db.trex
           sleep 8
           docker exec pg-trex-smoke pg_isready -U postgres
           docker exec pg-trex-smoke psql -U postgres -c "SELECT state FROM pg_trex_status()"

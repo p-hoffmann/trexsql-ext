@@ -232,7 +232,7 @@ static void Cql2ElmTranslateFunction(duckdb_function_info info, duckdb_data_chun
 
 void RegisterCql2ElmTranslateFunction(duckdb_connection connection) {
     duckdb_scalar_function function = duckdb_create_scalar_function();
-    duckdb_scalar_function_set_name(function, "cql_to_elm");
+    duckdb_scalar_function_set_name(function, "trex_fhir_cql_translate");
 
     duckdb_logical_type varchar_type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
     duckdb_scalar_function_add_parameter(function, varchar_type);

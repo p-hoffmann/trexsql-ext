@@ -15,7 +15,7 @@ MIGRATIONS_BAD_SQL_DIR = os.path.join(REPO_ROOT, "ext", "migration", "test", "sq
 
 
 def _node(node_factory):
-    return node_factory(load_migration=True, load_flight=False, load_swarm=False)
+    return node_factory(load_migration=True, load_db=False)
 
 
 def test_migrate_apply(node_factory):
