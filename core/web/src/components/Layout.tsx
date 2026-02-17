@@ -36,6 +36,10 @@ export function Layout() {
             TREX
           </Link>
           <div className="flex items-center gap-4">
+            <a href={`${import.meta.env.BASE_URL}docs/`}
+               className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+              Docs
+            </a>
             {(session.user as any).role === "admin" && (
               <Link to="/admin">
                 <Button variant="outline" size="sm">Admin</Button>

@@ -18,6 +18,7 @@ export default defineConfig({
       [`${basePath}/api`]: "http://localhost:8000",
       [`${basePath}/graphql`]: { target: "http://localhost:8000", ws: true },
       [`${basePath}/graphiql`]: "http://localhost:8000",
+      [`${basePath}/docs`]: "http://localhost:8000",
     },
   },
 })
