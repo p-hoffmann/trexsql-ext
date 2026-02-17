@@ -25,6 +25,10 @@ export function AdminLayout() {
         { to: "/admin/extensions", label: "Extensions" },
         { to: "/admin/plugins", label: "Plugins" },
         { to: "/admin/services", label: "Services" },
+        { to: "/admin/functions", label: "Functions" },
+        { to: "/admin/flows", label: "Flows" },
+        { to: "/admin/ui", label: "UI" },
+        { to: "/admin/logs", label: "Logs" },
       ],
     },
     {
@@ -33,8 +37,9 @@ export function AdminLayout() {
         { to: "/admin/trexdb", label: "Databases" },
         { to: "/admin/migrations", label: "Migrations" },
         { to: "/admin/databases", label: "Federation" },
-        { to: "/admin/etl", label: "ETL" },
+        { to: "/admin/etl", label: "Replication" },
         { to: "/admin/transforms", label: "Transforms" },
+        { to: "/admin/subscriptions", label: "Subscriptions" },
       ],
     },
     {

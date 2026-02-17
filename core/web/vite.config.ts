@@ -16,7 +16,7 @@ export default defineConfig({
   server: {
     proxy: {
       [`${basePath}/api`]: "http://localhost:8000",
-      [`${basePath}/graphql`]: "http://localhost:8000",
+      [`${basePath}/graphql`]: { target: "http://localhost:8000", ws: true },
       [`${basePath}/graphiql`]: "http://localhost:8000",
     },
   },

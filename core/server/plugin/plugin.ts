@@ -4,6 +4,7 @@ import { addPlugin as addFunctionPlugin } from "./function.ts";
 import { addMigrationPlugin } from "./migration.ts";
 import { addTransformPlugin } from "./transform.ts";
 import { addPlugin as addUIPlugin } from "./ui.ts";
+import { scanPluginDirectory } from "./utils.ts";
 
 interface ActivePluginEntry {
   name: string;
@@ -18,28 +19,28 @@ export class Plugins {
     app: Express,
     dir: string,
     pkg: any,
-    shortName: string
+    fullName: string
   ) {
     try {
       if (!pkg.trex) {
         console.log(
-          `Plugin ${shortName} has no trex config — skipping registration`
+          `Plugin ${fullName} has no trex config — skipping registration`
         );
         return;
       }
       for (const [key, value] of Object.entries(pkg.trex)) {
         switch (key) {
           case "functions":
-            addFunctionPlugin(app, value, dir, shortName);
+            addFunctionPlugin(app, value, dir, fullName);
             break;
           case "ui":
-            addUIPlugin(app, value, dir);
+            addUIPlugin(app, value, dir, fullName);
             break;
           case "flow":
             addFlowPlugin(value);
             break;
           case "migrations":
-            addMigrationPlugin(value, dir, shortName);
+            addMigrationPlugin(value, dir, fullName);
             break;
           case "transform":
             addTransformPlugin(app, value, dir, shortName);
@@ -48,13 +49,13 @@ export class Plugins {
             console.log(`Unknown plugin type: ${key}`);
         }
       }
-      Plugins.activeRegistry.set(shortName, {
-        name: shortName,
+      Plugins.activeRegistry.set(fullName, {
+        name: fullName,
         version: pkg.version,
         registeredAt: new Date(),
       });
     } catch (e) {
-      console.error(`Failed to register plugin ${shortName}:`, e);
+      console.error(`Failed to register plugin ${fullName}:`, e);
     }
   }
 
@@ -63,41 +64,16 @@ export class Plugins {
     dir: string,
     versionSuffix?: string
   ) {
-    async function scanLevel(scanDir: string) {
-      for await (const entry of Deno.readDir(scanDir)) {
-        if (!entry.isDirectory) continue;
-        if (entry.name.startsWith("@")) {
-          await scanLevel(`${scanDir}/${entry.name}`);
-          continue;
-        }
-        try {
-          const pkgJsonPath = `${scanDir}/${entry.name}/package.json`;
-          const pkg = JSON.parse(await Deno.readTextFile(pkgJsonPath));
-          if (versionSuffix) {
-            pkg.version = pkg.version + versionSuffix;
-          }
-          const shortName = pkg.name?.includes("/")
-            ? pkg.name.split("/").pop()
-            : pkg.name || entry.name;
-          console.log(
-            `Found plugin ${shortName} (v${pkg.version}) in ${scanDir}`
-          );
-          Plugins.addPlugin(app, `${scanDir}/${entry.name}`, pkg, shortName);
-          console.log(`Registered plugin ${shortName}`);
-        } catch (_e) {
-          console.log(
-            `${entry.name} does not have a valid package.json — skipped`
-          );
-        }
+    const scanned = await scanPluginDirectory(dir);
+    for (const { shortName, dir: pluginDir, pkg } of scanned) {
+      if (versionSuffix) {
+        pkg.version = pkg.version + versionSuffix;
       }
-    }
-
-    try {
-      await scanLevel(dir);
-    } catch (_e) {
       console.log(
-        `Plugins directory ${dir} not found or not readable — skipping`
+        `Found plugin ${shortName} (v${pkg.version}) in ${pluginDir}`
       );
+      Plugins.addPlugin(app, pluginDir, pkg, shortName);
+      console.log(`Registered plugin ${shortName}`);
     }
   }
 

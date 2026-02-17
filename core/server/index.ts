@@ -95,6 +95,85 @@ app.use(`${BASE_PATH}/api/auth`, async (req, res) => {
   }
 });
 
+// MCP server (before authContext — uses its own API key auth)
+try {
+  const { mountMcpServer } = await import("./mcp/index.ts");
+  mountMcpServer(app);
+  console.log(`MCP server mounted on ${BASE_PATH}/mcp`);
+} catch (err) {
+  console.error("MCP server failed to initialize:", err);
+}
+
+// API key management endpoint (session-authenticated for web UI bootstrap)
+app.post(`${BASE_PATH}/api/api-keys`, express.json(), async (req, res) => {
+  try {
+    const session = await auth.api.getSession({ headers: req.headers as any });
+    if (!session?.user || (session.user as any).role !== "admin") {
+      res.status(401).json({ error: "Admin authentication required" });
+      return;
+    }
+    const { generateApiKey } = await import("./mcp/auth.ts");
+    const { name, expiresAt } = req.body || {};
+    if (!name) {
+      res.status(400).json({ error: "name is required" });
+      return;
+    }
+    const result = await generateApiKey(
+      session.user.id,
+      name,
+      expiresAt ? new Date(expiresAt) : undefined,
+    );
+    res.json(result);
+  } catch (err) {
+    console.error("API key creation error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// List current admin user's API keys
+app.get(`${BASE_PATH}/api/api-keys`, async (req, res) => {
+  try {
+    const session = await auth.api.getSession({ headers: req.headers as any });
+    if (!session?.user || (session.user as any).role !== "admin") {
+      res.status(401).json({ error: "Admin authentication required" });
+      return;
+    }
+    const { pool } = await import("./auth.ts");
+    const result = await pool.query(
+      `SELECT id, name, key_prefix, "lastUsedAt", "expiresAt", "revokedAt", "createdAt" FROM trex.api_key WHERE "userId" = $1 ORDER BY "createdAt" DESC`,
+      [session.user.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("API key list error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Revoke an API key (soft-delete via revokedAt)
+app.delete(`${BASE_PATH}/api/api-keys/:id`, async (req, res) => {
+  try {
+    const session = await auth.api.getSession({ headers: req.headers as any });
+    if (!session?.user || (session.user as any).role !== "admin") {
+      res.status(401).json({ error: "Admin authentication required" });
+      return;
+    }
+    const { pool } = await import("./auth.ts");
+    const result = await pool.query(
+      `UPDATE trex.api_key SET "revokedAt" = NOW() WHERE id = $1 AND "userId" = $2 AND "revokedAt" IS NULL RETURNING id`,
+      [req.params.id, session.user.id]
+    );
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: "Key not found or already revoked" });
+      return;
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("API key revoke error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Auth context middleware for PostGraphile
 app.use(authContext);
 
@@ -107,12 +186,33 @@ try {
   console.error("Plugin system failed to initialize:", err);
 }
 
+// Run core schema migrations (SCHEMA_DIR) before plugin migrations
+try {
+  const schemaDir = Deno.env.get("SCHEMA_DIR");
+  if (schemaDir) {
+    // deno-lint-ignore no-explicit-any
+    const conn = new (globalThis as any).Trex.TrexDB("memory");
+    await conn.execute(`SELECT * FROM trex_migration_run_schema('${schemaDir}', 'trex', '_config')`, []);
+    console.log("Core schema migrations applied");
+  }
+} catch (err) {
+  console.error("Core schema migration failed:", err);
+}
+
 // Run plugin migrations after plugin discovery
 try {
   const { runAllPluginMigrations } = await import("./plugin/migration.ts");
   await runAllPluginMigrations();
 } catch (err) {
   console.error("Plugin migration execution failed:", err);
+}
+
+// Auto-create roles declared by plugins in the PostgreSQL role table
+try {
+  const { ensureRolesExist } = await import("./plugin/function.ts");
+  await ensureRolesExist();
+} catch (err) {
+  console.error("Role auto-creation failed:", err);
 }
 
 // PostGraphile
@@ -157,6 +257,96 @@ app.put(`${BASE_PATH}/_internal/upload`, async (req, res) => {
 });
 
 // Worker routing (must be before SPA catch-all)
+// Scoped function route: /fn/:scope/:service_name -> ./functions/@:scope/:service_name
+app.use(`${FUNCTIONS_BASE_PATH}/:scope/:service_name`, async (req, res, next) => {
+  const { scope, service_name: serviceName } = req.params;
+  const scopeDir = `@${scope}`;
+  const servicePath = `./functions/${scopeDir}/${serviceName}`;
+
+  try {
+    await Deno.stat(servicePath);
+  } catch {
+    return next();
+  }
+
+  const createWorker = async () => {
+    const memoryLimitMb = 150;
+    const workerTimeoutMs = 5 * 60 * 1000;
+    const noModuleCache = false;
+    const envVarsObj = Deno.env.toObject();
+    const envVars = Object.keys(envVarsObj).map((k) => [k, envVarsObj[k]]);
+    const forceCreate = false;
+    const cpuTimeSoftLimitMs = 10000;
+    const cpuTimeHardLimitMs = 20000;
+
+    return await EdgeRuntime.userWorkers.create({
+      servicePath,
+      memoryLimitMb,
+      workerTimeoutMs,
+      noModuleCache,
+      envVars,
+      forceCreate,
+      cpuTimeSoftLimitMs,
+      cpuTimeHardLimitMs,
+      context: {
+        useReadSyncFileAPI: true,
+        unstableSloppyImports: true,
+      },
+    });
+  };
+
+  const host = req.get("host") || "localhost";
+  const protocol = req.protocol || "http";
+  const webUrl = `${protocol}://${host}${req.originalUrl}`;
+  const webHeaders = new Headers();
+  for (const [key, val] of Object.entries(req.headers)) {
+    if (val) webHeaders.set(key, Array.isArray(val) ? val.join(", ") : val);
+  }
+  let reqBody: Blob | undefined;
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of req) {
+      chunks.push(typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk);
+    }
+    if (chunks.length > 0) reqBody = new Blob(chunks);
+  }
+  const webReq = new Request(webUrl, {
+    method: req.method,
+    headers: webHeaders,
+    body: reqBody,
+  });
+
+  const callWorker = async (): Promise<Response> => {
+    try {
+      const worker = await createWorker();
+      const controller = new AbortController();
+      return await worker.fetch(webReq, { signal: controller.signal });
+    } catch (e) {
+      if (e instanceof Deno.errors.WorkerAlreadyRetired) {
+        return await callWorker();
+      }
+      const error = { msg: e.toString() };
+      return new Response(JSON.stringify(error), {
+        status: STATUS_CODE.InternalServerError,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  };
+
+  try {
+    const workerResponse = await callWorker();
+    res.status(workerResponse.status);
+    workerResponse.headers.forEach((value, key) => {
+      res.setHeader(key, value);
+    });
+    const body = await workerResponse.text();
+    res.send(body);
+  } catch (err) {
+    res.status(STATUS_CODE.InternalServerError).json({ msg: String(err) });
+  }
+});
+
+// Unscoped function route: /fn/:service_name -> ./functions/:service_name
 app.use(`${FUNCTIONS_BASE_PATH}/:service_name`, async (req, res, next) => {
   const serviceName = req.params.service_name;
 
@@ -291,6 +481,29 @@ app.get("/", (_req, res) => {
 
 // Load SSO providers from DB (falls back to env vars if table doesn't exist)
 await initAuthFromDB();
+
+// Bootstrap initial API key from env var (for Docker/CI)
+const initialKeyName = Deno.env.get("TREX_INITIAL_API_KEY_NAME");
+if (initialKeyName) {
+  try {
+    const { pool } = await import("./auth.ts");
+    // Check if any API keys exist
+    const existing = await pool.query("SELECT 1 FROM trex.api_key LIMIT 1");
+    if (existing.rows.length === 0) {
+      const { generateApiKey } = await import("./mcp/auth.ts");
+      // Use the seed admin user
+      const adminResult = await pool.query(
+        `SELECT id FROM trex."user" WHERE role = 'admin' ORDER BY "createdAt" ASC LIMIT 1`
+      );
+      if (adminResult.rows.length > 0) {
+        const result = await generateApiKey(adminResult.rows[0].id, initialKeyName);
+        console.log(`[mcp] Initial API key created: ${result.key.slice(0, 13)}...(redacted)`);
+      }
+    }
+  } catch (err) {
+    console.error("[mcp] Failed to bootstrap initial API key:", err);
+  }
+}
 
 server.listen(8000, () => {
   console.log("server listening on port 8000");
