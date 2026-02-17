@@ -33,6 +33,7 @@ import { Functions } from "@/pages/admin/Functions";
 import { Flows } from "@/pages/admin/Flows";
 import { UiPlugins } from "@/pages/admin/UiPlugins";
 import { Logs } from "@/pages/admin/Logs";
+import { Subscriptions } from "@/pages/admin/Subscriptions";
 
 function HomeRedirect() {
   const { data: session, isPending } = useSession();
@@ -76,6 +77,7 @@ export default function App() {
             <Route path="trexdb" element={<TrexDB />} />
             <Route path="extensions" element={<Extensions />} />
             <Route path="migrations" element={<Migrations />} />
+            <Route path="subscriptions" element={<Subscriptions />} />
             <Route path="sso" element={<SsoProviders />} />
             <Route path="functions" element={<Functions />} />
             <Route path="flows" element={<Flows />} />
