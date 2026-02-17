@@ -34,10 +34,8 @@ export async function scanDiskPlugins(): Promise<
       try {
         const pkgJsonPath = `${dir}/${entry.name}/package.json`;
         const pkg = JSON.parse(await Deno.readTextFile(pkgJsonPath));
-        const shortName = pkg.name?.includes("/")
-          ? pkg.name.split("/").pop()
-          : pkg.name || entry.name;
-        diskPlugins.set(shortName, { name: shortName, version: pkg.version });
+        const fullName = pkg.name || entry.name;
+        diskPlugins.set(fullName, { name: fullName, version: pkg.version });
       } catch (_e) {
         // Skip entries without valid package.json
       }
@@ -121,7 +119,7 @@ export function addPluginRoutes(app: Express) {
           const packages = pkgsJson.value || pkgsJson;
 
           for (const pkg of packages) {
-            const pkgname = pkg.name?.replace(/@[^/]+\//, "") || pkg.name;
+            const pkgname = pkg.name || "";
             let bestVersion = { version: "", packageDescription: "" };
             if (pkg.versions && Array.isArray(pkg.versions)) {
               bestVersion = pkg.versions.reduce((m: any, c: any) => {
