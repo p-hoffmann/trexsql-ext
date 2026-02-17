@@ -20,6 +20,7 @@ export class Plugins {
     app: Express,
     dir: string,
     pkg: any,
+    shortName: string,
     fullName: string,
     source: "dev" | "npm"
   ) {
@@ -42,16 +43,16 @@ export class Plugins {
             addFlowPlugin(value);
             break;
           case "migrations":
-            addMigrationPlugin(value, dir, fullName);
+            addMigrationPlugin(value, dir, shortName);
             break;
           case "transform":
-            addTransformPlugin(app, value, dir, fullName);
+            addTransformPlugin(app, value, dir, shortName);
             break;
           default:
             console.log(`Unknown plugin type: ${key}`);
         }
       }
-      Plugins.activeRegistry.set(fullName, {
+      Plugins.activeRegistry.set(shortName, {
         name: fullName,
         version: pkg.version,
         source,
@@ -79,7 +80,8 @@ export class Plugins {
       console.log(
         `Found plugin ${shortName} (v${pkg.version}) [${source}] in ${pluginDir}`
       );
-      Plugins.addPlugin(app, pluginDir, pkg, shortName, source);
+      const fullName = pkg.name || shortName;
+      Plugins.addPlugin(app, pluginDir, pkg, shortName, fullName, source);
       console.log(`Registered plugin ${shortName} [${source}]`);
     }
   }
