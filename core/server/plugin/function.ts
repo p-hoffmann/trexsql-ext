@@ -10,6 +10,13 @@ import { PLUGINS_BASE_PATH } from "../config.ts";
 export const ROLE_SCOPES: Record<string, string[]> = {};
 export const REQUIRED_URL_SCOPES: Array<{ path: string; scopes: string[] }> = [];
 
+// Tracked registered functions metadata
+export const REGISTERED_FUNCTIONS: Array<{
+  name: string;
+  source: string;
+  function: string;
+}> = [];
+
 // Inter-service request map (function name -> handler)
 const fnmap: Record<string, (req: globalThis.Request) => Promise<globalThis.Response>> = {};
 
@@ -283,6 +290,9 @@ function _addFunction(
   name: string,
   xenv: any
 ) {
+  // Track registered function metadata
+  REGISTERED_FUNCTIONS.push({ name, source: url, function: fncfg.function });
+
   // Register in inter-service map
   fnmap[`${name}${fncfg.function}`] = (req: globalThis.Request) =>
     _callWorker(req, path, imports, fncfg, dir, xenv);
@@ -410,5 +420,32 @@ export async function addPlugin(
         );
       }
     }
+  }
+}
+
+export async function ensureRolesExist() {
+  const roleNames = Object.keys(ROLE_SCOPES);
+  if (roleNames.length === 0) return;
+
+  try {
+    const pg = (await import("pg")).default;
+    const pool = new pg.Pool({ connectionString: Deno.env.get("DATABASE_URL") });
+    try {
+      const existing = await pool.query("SELECT name FROM trex.role");
+      const existingNames = new Set(existing.rows.map((r: any) => r.name));
+      for (const name of roleNames) {
+        if (existingNames.has(name)) continue;
+        const id = crypto.randomUUID();
+        await pool.query(
+          'INSERT INTO trex.role (id, name, description) VALUES ($1, $2, $3) ON CONFLICT (name) DO NOTHING',
+          [id, name, "Auto-created from plugin registration"]
+        );
+        console.log(`Auto-created role: ${name}`);
+      }
+    } finally {
+      await pool.end();
+    }
+  } catch (err) {
+    console.error("ensureRolesExist error:", err);
   }
 }

@@ -1,13 +1,12 @@
 import type { Express, Request, Response } from "express";
 import { Plugins } from "../plugin/plugin.ts";
 import { getPluginsJson } from "../plugin/ui.ts";
+import { scanPluginDirectory } from "../plugin/utils.ts";
 import { authContext } from "../middleware/auth-context.ts";
 import { PLUGINS_BASE_PATH } from "../config.ts";
 
 function checkSemver(version: string, sver: string): boolean {
   if (!sver || sver === "latest" || sver === "all") return true;
-  // Simple semver range check: if version starts with sver major
-  // For full semver support, a library would be needed
   try {
     const vParts = version.split(".");
     const sParts = sver.replace(/[^\d.]/g, "").split(".");
@@ -21,31 +20,11 @@ function checkSemver(version: string, sver: string): boolean {
 export async function scanDiskPlugins(): Promise<
   Map<string, { name: string; version: string }>
 > {
-  const diskPlugins = new Map<string, { name: string; version: string }>();
   const pluginsPath = Deno.env.get("PLUGINS_PATH") || "./plugins";
-
-  async function scanDir(dir: string) {
-    for await (const entry of Deno.readDir(dir)) {
-      if (!entry.isDirectory) continue;
-      if (entry.name.startsWith("@")) {
-        await scanDir(`${dir}/${entry.name}`);
-        continue;
-      }
-      try {
-        const pkgJsonPath = `${dir}/${entry.name}/package.json`;
-        const pkg = JSON.parse(await Deno.readTextFile(pkgJsonPath));
-        const fullName = pkg.name || entry.name;
-        diskPlugins.set(fullName, { name: fullName, version: pkg.version });
-      } catch (_e) {
-        // Skip entries without valid package.json
-      }
-    }
-  }
-
-  try {
-    await scanDir(pluginsPath);
-  } catch (_e) {
-    // Plugins directory not readable
+  const scanned = await scanPluginDirectory(pluginsPath);
+  const diskPlugins = new Map<string, { name: string; version: string }>();
+  for (const { shortName, pkg } of scanned) {
+    diskPlugins.set(shortName, { name: shortName, version: pkg.version });
   }
   return diskPlugins;
 }

@@ -3,6 +3,7 @@ import { addPlugin as addFlowPlugin } from "./flow.ts";
 import { addPlugin as addFunctionPlugin } from "./function.ts";
 import { addMigrationPlugin } from "./migration.ts";
 import { addPlugin as addUIPlugin } from "./ui.ts";
+import { scanPluginDirectory } from "./utils.ts";
 
 interface ActivePluginEntry {
   name: string;
@@ -59,39 +60,16 @@ export class Plugins {
     dir: string,
     versionSuffix?: string
   ) {
-    async function scanLevel(scanDir: string) {
-      for await (const entry of Deno.readDir(scanDir)) {
-        if (!entry.isDirectory) continue;
-        if (entry.name.startsWith("@")) {
-          await scanLevel(`${scanDir}/${entry.name}`);
-          continue;
-        }
-        try {
-          const pkgJsonPath = `${scanDir}/${entry.name}/package.json`;
-          const pkg = JSON.parse(await Deno.readTextFile(pkgJsonPath));
-          if (versionSuffix) {
-            pkg.version = pkg.version + versionSuffix;
-          }
-          const fullName = pkg.name || entry.name;
-          console.log(
-            `Found plugin ${fullName} (v${pkg.version}) in ${scanDir}`
-          );
-          Plugins.addPlugin(app, `${scanDir}/${entry.name}`, pkg, fullName);
-          console.log(`Registered plugin ${fullName}`);
-        } catch (_e) {
-          console.log(
-            `${entry.name} does not have a valid package.json — skipped`
-          );
-        }
+    const scanned = await scanPluginDirectory(dir);
+    for (const { shortName, dir: pluginDir, pkg } of scanned) {
+      if (versionSuffix) {
+        pkg.version = pkg.version + versionSuffix;
       }
-    }
-
-    try {
-      await scanLevel(dir);
-    } catch (_e) {
       console.log(
-        `Plugins directory ${dir} not found or not readable — skipping`
+        `Found plugin ${shortName} (v${pkg.version}) in ${pluginDir}`
       );
+      Plugins.addPlugin(app, pluginDir, pkg, shortName);
+      console.log(`Registered plugin ${shortName}`);
     }
   }
 

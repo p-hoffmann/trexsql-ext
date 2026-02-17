@@ -23,7 +23,7 @@ CREATE POLICY admin_all_subscriptions ON subscription
   USING (current_setting('app.user_role', true) = 'admin')
   WITH CHECK (current_setting('app.user_role', true) = 'admin');
 
-COMMENT ON TABLE subscription IS E'@omit create,update,delete';
+COMMENT ON TABLE subscription IS E'@name notifySubscription\n@omit create,update,delete';
 
 DROP TRIGGER IF EXISTS trg_subscription_updated_at ON subscription;
 CREATE TRIGGER trg_subscription_updated_at
@@ -154,7 +154,7 @@ $$ LANGUAGE plpgsql VOLATILE SECURITY DEFINER;
 
 -- ── Delete ──────────────────────────────────────────────────────────────────
 
-CREATE OR REPLACE FUNCTION delete_subscription(p_name TEXT) RETURNS subscription AS $$
+CREATE OR REPLACE FUNCTION remove_subscription(p_name TEXT) RETURNS subscription AS $$
 DECLARE
   v_sub trex.subscription;
   v_func_name TEXT;

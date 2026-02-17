@@ -1,3 +1,4 @@
 {
-  "workspace": ["./server"]
+  "workspace": ["./server", "./event"],
+  "nodeModulesDir": "manual"
 }
