@@ -95,6 +95,10 @@ COPY core/ ./core/
 # Copy functions (overridden by volume mount in development)
 COPY functions/ ./functions/
 
+# Build documentation site
+COPY docs/ ./docs/
+RUN cd docs && npm ci && npm run build
+
 ENV SCHEMA_DIR=/usr/src/core/schema
 
 EXPOSE 8001
