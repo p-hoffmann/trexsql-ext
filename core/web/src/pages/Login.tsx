@@ -1,7 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
+import { BASE_PATH } from "@/lib/config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,6 +22,14 @@ export function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [registrationEnabled, setRegistrationEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetch(`${BASE_PATH}/api/settings/public`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((data) => setRegistrationEnabled(data["auth.selfRegistration"] === true))
+      .catch(() => setRegistrationEnabled(false));
+  }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -101,17 +110,19 @@ export function Login() {
 
           <ProviderButtons />
         </CardContent>
-        <CardFooter className="justify-center">
-          <p className="text-sm text-muted-foreground">
-            Don't have an account?{" "}
-            <Link
-              to="/register"
-              className="text-foreground underline underline-offset-4 hover:text-foreground/80"
-            >
-              Create account
-            </Link>
-          </p>
-        </CardFooter>
+        {registrationEnabled && (
+          <CardFooter className="justify-center">
+            <p className="text-sm text-muted-foreground">
+              Don't have an account?{" "}
+              <Link
+                to="/register"
+                className="text-foreground underline underline-offset-4 hover:text-foreground/80"
+              >
+                Create account
+              </Link>
+            </p>
+          </CardFooter>
+        )}
       </Card>
     </div>
   );

@@ -29,6 +29,8 @@ import { Extensions } from "@/pages/admin/Extensions";
 import { Migrations } from "@/pages/admin/Migrations";
 import { ChangePassword } from "@/pages/ChangePassword";
 import { EtlPipelines } from "@/pages/admin/EtlPipelines";
+import { AuthSettings } from "@/pages/admin/AuthSettings";
+import { RuntimeSettings } from "@/pages/admin/RuntimeSettings";
 import { Transforms } from "@/pages/admin/Transforms";
 import { Functions } from "@/pages/admin/Functions";
 import { Flows } from "@/pages/admin/Flows";
@@ -85,6 +87,8 @@ export default function App() {
             <Route path="analytics" element={<Analytics />} />
             <Route path="analytics/:id" element={<AnalyticsDetail />} />
             <Route path="sso" element={<SsoProviders />} />
+            <Route path="auth-settings" element={<AuthSettings />} />
+            <Route path="runtime-settings" element={<RuntimeSettings />} />
             <Route path="functions" element={<Functions />} />
             <Route path="flows" element={<Flows />} />
             <Route path="ui" element={<UiPlugins />} />
