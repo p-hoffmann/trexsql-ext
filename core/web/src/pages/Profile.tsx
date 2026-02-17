@@ -16,13 +16,25 @@ import {
 } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   MonitorIcon,
   SmartphoneIcon,
   LinkIcon,
   UnlinkIcon,
   ShieldIcon,
   Loader2Icon,
+  KeyIcon,
+  CopyIcon,
+  CheckIcon,
 } from "lucide-react";
+import { BASE_PATH } from "@/lib/config";
 
 // --- Types ---
 
@@ -582,9 +594,264 @@ function SessionsTab() {
   );
 }
 
+// --- API Keys Tab (admin-only) ---
+
+interface ApiKeyInfo {
+  id: string;
+  name: string;
+  key_prefix: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+}
+
+function getKeyStatus(key: ApiKeyInfo): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
+  if (key.revokedAt) return { label: "Revoked", variant: "destructive" };
+  if (key.expiresAt && new Date(key.expiresAt) < new Date()) return { label: "Expired", variant: "secondary" };
+  return { label: "Active", variant: "default" };
+}
+
+function ApiKeysTab() {
+  const [keys, setKeys] = useState<ApiKeyInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [revoking, setRevoking] = useState<string | null>(null);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [newKeyName, setNewKeyName] = useState("");
+  const [newKeyExpiry, setNewKeyExpiry] = useState("");
+  const [createdKey, setCreatedKey] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const fetchKeys = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${BASE_PATH}/api/api-keys`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch keys");
+      setKeys(await res.json());
+    } catch {
+      toast.error("Failed to load API keys.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchKeys();
+  }, [fetchKeys]);
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    setCreating(true);
+    try {
+      const body: Record<string, string> = { name: newKeyName };
+      if (newKeyExpiry) body.expiresAt = new Date(newKeyExpiry).toISOString();
+      const res = await fetch(`${BASE_PATH}/api/api-keys`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to create key");
+      }
+      const data = await res.json();
+      setCreatedKey(data.key);
+      setShowCreateDialog(false);
+      setNewKeyName("");
+      setNewKeyExpiry("");
+      fetchKeys();
+      toast.success("API key created.");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to create API key.");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleRevoke(id: string) {
+    setRevoking(id);
+    try {
+      const res = await fetch(`${BASE_PATH}/api/api-keys/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to revoke key");
+      toast.success("API key revoked.");
+      fetchKeys();
+    } catch {
+      toast.error("Failed to revoke API key.");
+    } finally {
+      setRevoking(null);
+    }
+  }
+
+  async function handleCopy() {
+    if (!createdKey) return;
+    await navigator.clipboard.writeText(createdKey);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-8">
+        <Loader2Icon className="size-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>API Keys</CardTitle>
+            <CardDescription>
+              Manage API keys for MCP server authentication
+            </CardDescription>
+          </div>
+          <Button onClick={() => setShowCreateDialog(true)}>
+            <KeyIcon className="size-4 mr-1" />
+            Create API Key
+          </Button>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col gap-3">
+            {keys.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No API keys yet. Create one to get started with the MCP server.
+              </p>
+            ) : (
+              keys.map((key) => {
+                const status = getKeyStatus(key);
+                const isActive = status.label === "Active";
+                return (
+                  <div
+                    key={key.id}
+                    className="flex items-center justify-between rounded-md border p-4"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+                        <KeyIcon className="size-4" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium">{key.name}</p>
+                          <Badge variant={status.variant} className="text-xs">
+                            {status.label}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <span className="font-mono">{key.key_prefix}...</span>
+                          <span>
+                            Created {new Date(key.createdAt).toLocaleDateString()}
+                          </span>
+                          <span>
+                            Expires{" "}
+                            {key.expiresAt
+                              ? new Date(key.expiresAt).toLocaleDateString()
+                              : "Never"}
+                          </span>
+                          <span>
+                            Last used{" "}
+                            {key.lastUsedAt
+                              ? new Date(key.lastUsedAt).toLocaleDateString()
+                              : "Never"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    {isActive && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={revoking === key.id}
+                        onClick={() => handleRevoke(key.id)}
+                      >
+                        {revoking === key.id ? "Revoking..." : "Revoke"}
+                      </Button>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Create key dialog */}
+      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create API Key</DialogTitle>
+            <DialogDescription>
+              Create a new API key for MCP server authentication.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleCreate} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="key-name">Name</Label>
+              <Input
+                id="key-name"
+                value={newKeyName}
+                onChange={(e) => setNewKeyName(e.target.value)}
+                placeholder="e.g. My MCP Client"
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="key-expiry">Expiration (optional)</Label>
+              <Input
+                id="key-expiry"
+                type="date"
+                value={newKeyExpiry}
+                onChange={(e) => setNewKeyExpiry(e.target.value)}
+                min={new Date().toISOString().split("T")[0]}
+              />
+            </div>
+            <DialogFooter>
+              <Button type="submit" disabled={creating || !newKeyName.trim()}>
+                {creating ? "Creating..." : "Create"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* One-time key display dialog */}
+      <Dialog open={!!createdKey} onOpenChange={(open) => { if (!open) setCreatedKey(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>API Key Created</DialogTitle>
+            <DialogDescription>
+              Copy this key now — it won't be shown again.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2">
+            <Input
+              value={createdKey || ""}
+              readOnly
+              className="font-mono text-sm"
+            />
+            <Button variant="outline" size="icon" onClick={handleCopy}>
+              {copied ? <CheckIcon className="size-4" /> : <CopyIcon className="size-4" />}
+            </Button>
+          </div>
+          <DialogFooter showCloseButton />
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 // --- Main Profile Page ---
 
 export function Profile() {
+  const { data: session } = useSession();
+  const isAdmin = (session?.user as any)?.role === "admin";
+
   return (
     <div className="space-y-6">
       <div>
@@ -600,6 +867,7 @@ export function Profile() {
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="accounts">Linked Accounts</TabsTrigger>
           <TabsTrigger value="sessions">Sessions</TabsTrigger>
+          {isAdmin && <TabsTrigger value="api-keys">API Keys</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="profile" className="mt-4">
@@ -617,6 +885,12 @@ export function Profile() {
         <TabsContent value="sessions" className="mt-4">
           <SessionsTab />
         </TabsContent>
+
+        {isAdmin && (
+          <TabsContent value="api-keys" className="mt-4">
+            <ApiKeysTab />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );
