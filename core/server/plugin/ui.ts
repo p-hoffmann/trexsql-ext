@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { PLUGINS_BASE_PATH } from "../config.ts";
+import { scopeUrlPrefix } from "./utils.ts";
 
 // Module-level storage for merged UI plugins JSON
 let pluginsJson: string = "{}";
@@ -15,12 +16,13 @@ export function getPluginsJson(): string {
   return pluginsJson;
 }
 
-export function addPlugin(_app: Express, value: any, dir: string, name: string) {
+export function addPlugin(_app: Express, value: any, dir: string, fullName: string = "") {
+  const scopePrefix = scopeUrlPrefix(fullName);
   if (value.routes) {
     for (const r of value.routes) {
       const urlPrefix = r.path || r.source;
       const fsPath = `${dir}/${r.dir || r.target}`;
-      const fullPrefix = `${PLUGINS_BASE_PATH}${urlPrefix}`;
+      const fullPrefix = `${PLUGINS_BASE_PATH}${scopePrefix}${urlPrefix}`;
       console.log(`Registering static route: ${fullPrefix} -> ${fsPath}`);
       REGISTERED_UI_ROUTES.push({ pluginName: name, urlPrefix: fullPrefix, fsPath });
       try {

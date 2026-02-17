@@ -3,7 +3,7 @@ import { STATUS_CODE } from "https://deno.land/std/http/status.ts";
 import type { Express, Request, Response } from "express";
 import { authContext } from "../middleware/auth-context.ts";
 import { pluginAuthz } from "../middleware/plugin-authz.ts";
-import { waitfor } from "./utils.ts";
+import { scopeUrlPrefix, waitfor } from "./utils.ts";
 import { PLUGINS_BASE_PATH } from "../config.ts";
 
 // Global registries accumulated from plugin configs
@@ -298,7 +298,8 @@ function _addFunction(
     _callWorker(req, path, imports, fncfg, dir, xenv);
 
   // Register Express route with auth middleware
-  app.all(PLUGINS_BASE_PATH + url + "/*", authContext, pluginAuthz, async (req: Request, res: Response) => {
+  const scopePrefix = scopeUrlPrefix(name);
+  app.all(PLUGINS_BASE_PATH + scopePrefix + url + "/*", authContext, pluginAuthz, async (req: Request, res: Response) => {
     try {
       // Reconstruct a web Request from Express req
       const host = req.get("host") || "localhost";

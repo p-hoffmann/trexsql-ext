@@ -17,40 +17,40 @@ export class Plugins {
     app: Express,
     dir: string,
     pkg: any,
-    shortName: string
+    fullName: string
   ) {
     try {
       if (!pkg.trex) {
         console.log(
-          `Plugin ${shortName} has no trex config — skipping registration`
+          `Plugin ${fullName} has no trex config — skipping registration`
         );
         return;
       }
       for (const [key, value] of Object.entries(pkg.trex)) {
         switch (key) {
           case "functions":
-            addFunctionPlugin(app, value, dir, shortName);
+            addFunctionPlugin(app, value, dir, fullName);
             break;
           case "ui":
-            addUIPlugin(app, value, dir, shortName);
+            addUIPlugin(app, value, dir, fullName);
             break;
           case "flow":
             addFlowPlugin(value);
             break;
           case "migrations":
-            addMigrationPlugin(value, dir, shortName);
+            addMigrationPlugin(value, dir, fullName);
             break;
           default:
             console.log(`Unknown plugin type: ${key}`);
         }
       }
-      Plugins.activeRegistry.set(shortName, {
-        name: shortName,
+      Plugins.activeRegistry.set(fullName, {
+        name: fullName,
         version: pkg.version,
         registeredAt: new Date(),
       });
     } catch (e) {
-      console.error(`Failed to register plugin ${shortName}:`, e);
+      console.error(`Failed to register plugin ${fullName}:`, e);
     }
   }
 
@@ -72,14 +72,12 @@ export class Plugins {
           if (versionSuffix) {
             pkg.version = pkg.version + versionSuffix;
           }
-          const shortName = pkg.name?.includes("/")
-            ? pkg.name.split("/").pop()
-            : pkg.name || entry.name;
+          const fullName = pkg.name || entry.name;
           console.log(
-            `Found plugin ${shortName} (v${pkg.version}) in ${scanDir}`
+            `Found plugin ${fullName} (v${pkg.version}) in ${scanDir}`
           );
-          Plugins.addPlugin(app, `${scanDir}/${entry.name}`, pkg, shortName);
-          console.log(`Registered plugin ${shortName}`);
+          Plugins.addPlugin(app, `${scanDir}/${entry.name}`, pkg, fullName);
+          console.log(`Registered plugin ${fullName}`);
         } catch (_e) {
           console.log(
             `${entry.name} does not have a valid package.json — skipped`
