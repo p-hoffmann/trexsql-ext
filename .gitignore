@@ -1,2 +1,6 @@
-extensions/*.trex
-extensions/*.duckdb_extension
+/.*
+node_modules
+/target
+/specs
+/extensions/*.trex
+/extensions/*.duckdb_extension

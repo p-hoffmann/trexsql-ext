@@ -286,7 +286,7 @@ export function EtlPipelines() {
     <div className="space-y-6">
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-2xl font-bold">ETL Pipelines</h2>
+          <h2 className="text-2xl font-bold">Replication Pipelines</h2>
           <p className="text-muted-foreground">
             Manage data replication pipelines from PostgreSQL sources.
           </p>
@@ -306,7 +306,7 @@ export function EtlPipelines() {
         columns={columns}
         data={pipelines}
         loading={pipelinesResult.fetching}
-        emptyMessage="No ETL pipelines running. Start a pipeline to replicate data from a PostgreSQL source."
+        emptyMessage="No replication pipelines running. Start a pipeline to replicate data from a PostgreSQL source."
       />
 
       <Dialog
@@ -318,7 +318,7 @@ export function EtlPipelines() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Start ETL Pipeline</DialogTitle>
+            <DialogTitle>Start Replication Pipeline</DialogTitle>
             <DialogDescription>
               Configure and start a data replication pipeline from a PostgreSQL source.
             </DialogDescription>
