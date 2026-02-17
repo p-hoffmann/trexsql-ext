@@ -21,6 +21,7 @@ TPM_EXT_TREX = f"{REPO_ROOT}/ext/tpm/build/debug/extension/tpm/tpm.trex"
 ETL_EXT_TREX = f"{REPO_ROOT}/ext/etl/build/debug/extension/etl/etl.trex"
 MIGRATION_EXT_TREX = f"{REPO_ROOT}/ext/migration/build/debug/extension/migration/migration.trex"
 CQL2ELM_EXT_TREX = f"{REPO_ROOT}/ext/cql2elm/build/release/extension/cql2elm/cql2elm.trex"
+TREXAS_EXT_TREX = f"{REPO_ROOT}/ext/runtime/build/debug/extension/trexas/trexas.trex"
 FHIR_EXT_TREX = f"{REPO_ROOT}/ext/fhir/build/debug/extension/fhir/fhir.trex"
 
 # trexsql Python API requires .duckdb_extension suffix for LOAD.
@@ -34,6 +35,7 @@ TPM_EXT = f"{REPO_ROOT}/ext/tpm/build/debug/extension/tpm/tpm.duckdb_extension"
 ETL_EXT = f"{REPO_ROOT}/ext/etl/build/debug/extension/etl/etl.duckdb_extension"
 MIGRATION_EXT = f"{REPO_ROOT}/ext/migration/build/debug/extension/migration/migration.duckdb_extension"
 CQL2ELM_EXT = f"{REPO_ROOT}/ext/cql2elm/build/release/extension/cql2elm/cql2elm.duckdb_extension"
+TREXAS_EXT = f"{REPO_ROOT}/ext/runtime/build/debug/extension/trexas/trexas.duckdb_extension"
 FHIR_EXT = f"{REPO_ROOT}/ext/fhir/build/debug/extension/fhir/fhir.duckdb_extension"
 
 for src, dst in [
@@ -47,6 +49,7 @@ for src, dst in [
     (TPM_EXT_TREX, TPM_EXT),
     (ETL_EXT_TREX, ETL_EXT),
     (MIGRATION_EXT_TREX, MIGRATION_EXT),
+    (TREXAS_EXT_TREX, TREXAS_EXT),
     (FHIR_EXT_TREX, FHIR_EXT),
 ]:
     if os.path.exists(src) and not os.path.exists(dst):
@@ -55,16 +58,18 @@ for src, dst in [
 _next_gossip_port = 19000
 _next_flight_port = 19100
 _next_pgwire_port = 19200
+_next_trexas_port = 19300
 
 
 def alloc_ports():
-    """Allocate a unique gossip+flight+pgwire port tuple per call."""
-    global _next_gossip_port, _next_flight_port, _next_pgwire_port
-    gp, fp, pp = _next_gossip_port, _next_flight_port, _next_pgwire_port
+    """Allocate a unique gossip+flight+pgwire+trexas port tuple per call."""
+    global _next_gossip_port, _next_flight_port, _next_pgwire_port, _next_trexas_port
+    gp, fp, pp, tp = _next_gossip_port, _next_flight_port, _next_pgwire_port, _next_trexas_port
     _next_gossip_port += 1
     _next_flight_port += 1
     _next_pgwire_port += 1
-    return gp, fp, pp
+    _next_trexas_port += 1
+    return gp, fp, pp, tp
 
 
 # ---------------------------------------------------------------------------
@@ -105,10 +110,11 @@ def _node_worker(ext_paths, cmd_queue, result_queue):
 class Node:
     """A trexsql node running in a separate process with extensions loaded."""
 
-    def __init__(self, ext_paths, gossip_port, flight_port, pgwire_port):
+    def __init__(self, ext_paths, gossip_port, flight_port, pgwire_port, trexas_port):
         self.gossip_port = gossip_port
         self.flight_port = flight_port
         self.pgwire_port = pgwire_port
+        self.trexas_port = trexas_port
         self._cmd_queue = mp.Queue()
         self._result_queue = mp.Queue()
         self._process = mp.Process(
@@ -169,7 +175,9 @@ def node_factory():
     def create_node(load_db=True, load_pgwire=False,
                      load_atlas=False, load_cql2elm=False, load_ai=False,
                      load_chdb=False, load_hana=False, load_tpm=False,
-                     load_etl=False, load_migration=False, load_fhir=False):
+                     load_etl=False, load_migration=False, load_fhir=False,
+                     load_trexas=False, load_flight=None, load_swarm=None):
+        # load_flight and load_swarm are accepted but ignored (both merged into db)
         ext_paths = []
         if load_db:
             ext_paths.append(DB_EXT)
@@ -193,8 +201,10 @@ def node_factory():
             ext_paths.append(MIGRATION_EXT)
         if load_fhir:
             ext_paths.append(FHIR_EXT)
-        gossip_port, flight_port, pgwire_port = alloc_ports()
-        node = Node(ext_paths, gossip_port, flight_port, pgwire_port)
+        if load_trexas:
+            ext_paths.append(TREXAS_EXT)
+        gossip_port, flight_port, pgwire_port, trexas_port = alloc_ports()
+        node = Node(ext_paths, gossip_port, flight_port, pgwire_port, trexas_port)
         nodes.append(node)
         return node
 

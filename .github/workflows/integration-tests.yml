@@ -225,6 +225,43 @@ jobs:
           path: ext/tpm/build/debug/extension/tpm/tpm.trex
           retention-days: 1
 
+  build-trexas:
+    name: "Build trexas"
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ext/runtime/target
+          key: rust-trexas-${{ runner.os }}-${{ hashFiles('ext/runtime/Cargo.lock') }}
+          restore-keys: rust-trexas-${{ runner.os }}-
+
+      - name: Install trexas build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev
+
+      - name: Build trexas
+        run: make configure && make debug
+        working-directory: ext/runtime
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ext-trexas
+          path: ext/runtime/build/debug/extension/trexas/trexas.trex
+          retention-days: 1
+
   build-atlas:
     name: "Build atlas"
     runs-on: ubuntu-24.04
@@ -502,6 +539,41 @@ jobs:
         run: venv/bin/pytest -v test_chdb_db.py
         working-directory: integration-tests
 
+  test-trexas:
+    name: "Test trexas"
+    runs-on: ubuntu-24.04
+    needs: [build-rust-core, build-trexas]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-db
+          path: ext/db/build/debug/extension/db/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-trexas
+          path: ext/runtime/build/debug/extension/trexas/
+
+      - name: Setup test environment
+        run: make configure
+        working-directory: integration-tests
+
+      - name: Run trexas standalone tests
+        run: venv/bin/pytest -v test_trexas_standalone.py
+        working-directory: integration-tests
+
+      - name: Run trexas swarm tests
+        run: venv/bin/pytest -v test_trexas_swarm.py
+        working-directory: integration-tests
+
   test-tpm:
     name: "Test tpm"
     runs-on: ubuntu-24.04
@@ -706,6 +778,7 @@ jobs:
       - test-atlas
       - test-ai
       - test-chdb
+      - test-trexas
       - test-tpm
       - test-migration
       - test-hana
@@ -719,6 +792,7 @@ jobs:
           echo "test-atlas:       ${{ needs.test-atlas.result }}"
           echo "test-ai:          ${{ needs.test-ai.result }}"
           echo "test-chdb:        ${{ needs.test-chdb.result }}"
+          echo "test-trexas:      ${{ needs.test-trexas.result }}"
           echo "test-tpm:         ${{ needs.test-tpm.result }}"
           echo "test-migration:   ${{ needs.test-migration.result }}"
           echo "test-hana:        ${{ needs.test-hana.result }}"
@@ -730,6 +804,7 @@ jobs:
                 "${{ needs.test-atlas.result }}" == "failure" ||
                 "${{ needs.test-ai.result }}" == "failure" ||
                 "${{ needs.test-chdb.result }}" == "failure" ||
+                "${{ needs.test-trexas.result }}" == "failure" ||
                 "${{ needs.test-tpm.result }}" == "failure" ||
                 "${{ needs.test-etl.result }}" == "failure" ||
                 "${{ needs.test-pg-trex.result }}" == "failure" ||

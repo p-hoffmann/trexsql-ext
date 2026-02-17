@@ -9,10 +9,11 @@ TPM_EXT=$(REPO_ROOT)/ext/tpm/build/debug/extension/tpm/tpm.trex
 ETL_EXT=$(REPO_ROOT)/ext/etl/build/debug/extension/etl/etl.trex
 MIGRATION_EXT=$(REPO_ROOT)/ext/migration/build/debug/extension/migration/migration.trex
 FHIR_EXT=$(REPO_ROOT)/ext/fhir/build/debug/extension/fhir/fhir.trex
+TREXAS_EXT=$(REPO_ROOT)/ext/runtime/build/debug/extension/trexas/trexas.trex
 PYTHON_BIN?=python3
 VENV=./venv
 
-.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-db test-atlas test-ai test-chdb test-chdb-db test-hana test-tpm test-etl test-etl-db test-fhir test-pg-trex check-extensions check-pgwire check-atlas check-ai check-chdb check-hana check-tpm check-etl check-fhir check-migration check-db hana-up hana-down hana-clean pg-trex-up pg-trex-down clean
+.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-db test-atlas test-ai test-chdb test-chdb-db test-hana test-tpm test-etl test-etl-db test-fhir test-trexas test-trexas-swarm test-pg-trex check-extensions check-pgwire check-atlas check-ai check-chdb check-hana check-tpm check-etl check-fhir check-migration check-trexas check-db hana-up hana-down hana-clean pg-trex-up pg-trex-down clean
 
 configure:
 	$(PYTHON_BIN) -m venv $(VENV)
@@ -111,6 +112,15 @@ test-tpm: check-tpm
 test-hana: check-hana
 	$(VENV)/bin/pytest -v test_hana_standalone.py
 
+check-trexas:
+	@test -f $(TREXAS_EXT) || (echo "Build trexas first: cd ../ext/runtime && make configure && make debug" && exit 1)
+
+test-trexas: check-trexas
+	$(VENV)/bin/pytest -v test_trexas_standalone.py
+
+test-trexas-swarm: check-extensions check-trexas
+	$(VENV)/bin/pytest -v test_trexas_swarm.py
+
 check-etl:
 	@test -f $(ETL_EXT) || (echo "Build etl first: cd ../ext/etl && make configure && make debug" && exit 1)
 
@@ -122,6 +132,7 @@ check-db:
 
 test-etl-db: check-etl check-db
 	$(VENV)/bin/pytest -v test_etl_db.py
+
 pg-trex-up:
 	docker compose -f docker-compose.pg_trex.yml up -d
 	@echo "Waiting for pg_trex to be ready..."
@@ -136,6 +147,7 @@ pg-trex-down:
 
 test-pg-trex:
 	$(VENV)/bin/pytest -v test_pg_trex.py
+
 check-migration:
 	@test -f $(MIGRATION_EXT) || (echo "Build migration first: cd ../ext/migration && make configure && make debug" && exit 1)
 
