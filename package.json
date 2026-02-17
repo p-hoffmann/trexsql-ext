@@ -14,7 +14,6 @@
     "@trex/hana": "latest",
     "@trex/migration": "latest",
     "@trex/pgwire": "latest",
-    "@trex/tpm": "latest",
-    "@trex/transform": "latest"
+    "@trex/tpm": "latest"
   }
 }
