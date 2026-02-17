@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { addPlugin as addFlowPlugin } from "./flow.ts";
 import { addPlugin as addFunctionPlugin } from "./function.ts";
 import { addMigrationPlugin } from "./migration.ts";
+import { addTransformPlugin } from "./transform.ts";
 import { addPlugin as addUIPlugin } from "./ui.ts";
 import { scanPluginDirectory } from "./utils.ts";
 
@@ -40,6 +41,9 @@ export class Plugins {
             break;
           case "migrations":
             addMigrationPlugin(value, dir, fullName);
+            break;
+          case "transform":
+            addTransformPlugin(app, value, dir, shortName);
             break;
           default:
             console.log(`Unknown plugin type: ${key}`);

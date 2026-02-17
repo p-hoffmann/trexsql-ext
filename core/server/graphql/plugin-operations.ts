@@ -1,6 +1,7 @@
 import { makeExtendSchemaPlugin, gql } from "graphile-utils";
 import { Plugins } from "../plugin/plugin.ts";
 import { getMigrationPlugins } from "../plugin/migration.ts";
+import { getTransformPlugins, registerTransformEndpoints, upsertTransformDeployment } from "../plugin/transform.ts";
 import { scanDiskPlugins } from "../routes/plugin.ts";
 import { reloadAuthProviders, pool as authPool } from "../auth.ts";
 import { REGISTERED_FUNCTIONS, ROLE_SCOPES, REQUIRED_URL_SCOPES } from "../plugin/function.ts";
@@ -157,6 +158,55 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
         error: String
       }
 
+      type TransformProject {
+        pluginName: String!
+        projectPath: String!
+      }
+
+      type TransformCompileResult {
+        name: String!
+        materialized: String!
+        order: Int!
+        status: String!
+      }
+
+      type TransformPlanResult {
+        name: String!
+        action: String!
+        materialized: String!
+        reason: String!
+      }
+
+      type TransformRunResult {
+        name: String!
+        action: String!
+        materialized: String!
+        durationMs: String!
+        message: String!
+      }
+
+      type TransformSeedResult {
+        name: String!
+        action: String!
+        rows: String!
+        message: String!
+      }
+
+      type TransformTestResult {
+        name: String!
+        status: String!
+        rowsReturned: String!
+      }
+
+      type TransformFreshnessResult {
+        name: String!
+        status: String!
+        maxLoadedAt: String!
+        ageHours: Float!
+        warnAfter: String!
+        errorAfter: String!
+      }
+
       type RegisteredFunction {
         pluginName: String!
         source: String!
@@ -205,6 +255,10 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
         trexExtensions: [TrexExtension!]!
         trexMigrations: [PluginMigrationSummary!]!
         etlPipelines: [EtlPipeline!]!
+        transformProjects: [TransformProject!]!
+        transformCompile(pluginName: String!): [TransformCompileResult!]!
+        transformPlan(pluginName: String!, destDb: String!, destSchema: String!, sourceDb: String!, sourceSchema: String!): [TransformPlanResult!]!
+        transformFreshness(pluginName: String!, destDb: String!, destSchema: String!): [TransformFreshnessResult!]!
         registeredFunctions: [RegisteredFunction!]!
         roleScopeMappings: [RoleScopeMapping!]!
         urlScopeRequirements: [UrlScopeRequirement!]!
@@ -236,6 +290,9 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
           retryMaxAttempts: Int
         ): EtlActionResult!
         stopEtlPipeline(name: String!): EtlActionResult!
+        transformRun(pluginName: String!, destDb: String!, destSchema: String!, sourceDb: String!, sourceSchema: String!): [TransformRunResult!]!
+        transformSeed(pluginName: String!, destDb: String!, destSchema: String!): [TransformSeedResult!]!
+        transformTest(pluginName: String!, destDb: String!, destSchema: String!, sourceDb: String!, sourceSchema: String!): [TransformTestResult!]!
       }
     `,
     resolvers: {
@@ -591,6 +648,87 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
           } catch (err: any) {
             console.error("etlPipelines error:", err);
             return [];
+          }
+        },
+
+        async transformProjects(_parent: any, _args: any, context: any) {
+          assertAdmin(context);
+          return getTransformPlugins();
+        },
+
+        async transformCompile(_parent: any, args: { pluginName: string }, context: any) {
+          assertAdmin(context);
+          const plugin = getTransformPlugins().find(p => p.pluginName === args.pluginName);
+          if (!plugin) throw new Error(`Transform plugin '${args.pluginName}' not found`);
+          try {
+            const conn = new Trex.TrexDB("memory");
+            const sql = `SELECT * FROM trex_transform_compile('${escapeSql(plugin.projectPath)}')`;
+            const result = await conn.execute(sql, []);
+            const rows = result?.rows || result || [];
+            return rows.map((r: any) => ({
+              name: r.name || r[0] || "",
+              materialized: r.materialized || r[1] || "",
+              order: parseInt(r.order ?? r[3] ?? "0", 10),
+              status: r.status || r[4] || "",
+            }));
+          } catch (err: any) {
+            console.error("transformCompile error:", err);
+            throw new Error(err.message || "Compile failed");
+          }
+        },
+
+        async transformPlan(
+          _parent: any,
+          args: { pluginName: string; destDb: string; destSchema: string; sourceDb: string; sourceSchema: string },
+          context: any,
+        ) {
+          assertAdmin(context);
+          const plugin = getTransformPlugins().find(p => p.pluginName === args.pluginName);
+          if (!plugin) throw new Error(`Transform plugin '${args.pluginName}' not found`);
+          try {
+            const destSchema = `${args.destDb}.${args.destSchema}`;
+            const sourceSchema = `${args.sourceDb}.${args.sourceSchema}`;
+            const conn = new Trex.TrexDB("memory");
+            const sql = `SELECT * FROM trex_transform_plan('${escapeSql(plugin.projectPath)}', '${escapeSql(destSchema)}', source_schema := '${escapeSql(sourceSchema)}')`;
+            const result = await conn.execute(sql, []);
+            const rows = result?.rows || result || [];
+            return rows.map((r: any) => ({
+              name: r.name || r[0] || "",
+              action: r.action || r[1] || "",
+              materialized: r.materialized || r[2] || "",
+              reason: r.reason || r[3] || "",
+            }));
+          } catch (err: any) {
+            console.error("transformPlan error:", err);
+            throw new Error(err.message || "Plan failed");
+          }
+        },
+
+        async transformFreshness(
+          _parent: any,
+          args: { pluginName: string; destDb: string; destSchema: string },
+          context: any,
+        ) {
+          assertAdmin(context);
+          const plugin = getTransformPlugins().find(p => p.pluginName === args.pluginName);
+          if (!plugin) throw new Error(`Transform plugin '${args.pluginName}' not found`);
+          try {
+            const destSchema = `${args.destDb}.${args.destSchema}`;
+            const conn = new Trex.TrexDB("memory");
+            const sql = `SELECT * FROM trex_transform_freshness('${escapeSql(plugin.projectPath)}', '${escapeSql(destSchema)}')`;
+            const result = await conn.execute(sql, []);
+            const rows = result?.rows || result || [];
+            return rows.map((r: any) => ({
+              name: r.name || r[0] || "",
+              status: r.status || r[1] || "",
+              maxLoadedAt: r.max_loaded_at || r[2] || "",
+              ageHours: parseFloat(r.age_hours ?? r[3] ?? "0"),
+              warnAfter: r.warn_after || r[4] || "",
+              errorAfter: r.error_after || r[5] || "",
+            }));
+          } catch (err: any) {
+            console.error("transformFreshness error:", err);
+            throw new Error(err.message || "Freshness check failed");
           }
         },
 
@@ -1075,6 +1213,95 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
           } catch (err: any) {
             console.error("stopEtlPipeline error:", err);
             return { success: false, message: null, error: err.message || String(err) };
+          }
+        },
+
+        async transformRun(
+          _parent: any,
+          args: { pluginName: string; destDb: string; destSchema: string; sourceDb: string; sourceSchema: string },
+          context: any,
+        ) {
+          assertAdmin(context);
+          const plugin = getTransformPlugins().find(p => p.pluginName === args.pluginName);
+          if (!plugin) throw new Error(`Transform plugin '${args.pluginName}' not found`);
+          try {
+            const destSchema = `${args.destDb}.${args.destSchema}`;
+            const sourceSchema = `${args.sourceDb}.${args.sourceSchema}`;
+            const conn = new Trex.TrexDB("memory");
+            const sql = `SELECT * FROM trex_transform_run('${escapeSql(plugin.projectPath)}', '${escapeSql(destSchema)}', source_schema := '${escapeSql(sourceSchema)}')`;
+            const result = await conn.execute(sql, []);
+            const rows = result?.rows || result || [];
+            const runResults = rows.map((r: any) => ({
+              name: r.name || r[0] || "",
+              action: r.action || r[1] || "",
+              materialized: r.materialized || r[2] || "",
+              durationMs: String(r.duration_ms ?? r[3] ?? "0"),
+              message: r.message || r[4] || "",
+            }));
+
+            try {
+              await registerTransformEndpoints(args.pluginName, args.destDb, args.destSchema);
+              await upsertTransformDeployment(args.pluginName, args.destDb, args.destSchema);
+            } catch (endpointErr: any) {
+              console.error("Endpoint registration error:", endpointErr);
+            }
+
+            return runResults;
+          } catch (err: any) {
+            console.error("transformRun error:", err);
+            throw new Error(err.message || "Run failed");
+          }
+        },
+
+        async transformSeed(
+          _parent: any,
+          args: { pluginName: string; destDb: string; destSchema: string },
+          context: any,
+        ) {
+          assertAdmin(context);
+          const plugin = getTransformPlugins().find(p => p.pluginName === args.pluginName);
+          if (!plugin) throw new Error(`Transform plugin '${args.pluginName}' not found`);
+          try {
+            const destSchema = `${args.destDb}.${args.destSchema}`;
+            const conn = new Trex.TrexDB("memory");
+            const sql = `SELECT * FROM trex_transform_seed('${escapeSql(plugin.projectPath)}', '${escapeSql(destSchema)}')`;
+            const result = await conn.execute(sql, []);
+            const rows = result?.rows || result || [];
+            return rows.map((r: any) => ({
+              name: r.name || r[0] || "",
+              action: r.action || r[1] || "",
+              rows: r.rows || r[2] || "",
+              message: r.message || r[3] || "",
+            }));
+          } catch (err: any) {
+            console.error("transformSeed error:", err);
+            throw new Error(err.message || "Seed failed");
+          }
+        },
+
+        async transformTest(
+          _parent: any,
+          args: { pluginName: string; destDb: string; destSchema: string; sourceDb: string; sourceSchema: string },
+          context: any,
+        ) {
+          assertAdmin(context);
+          const plugin = getTransformPlugins().find(p => p.pluginName === args.pluginName);
+          if (!plugin) throw new Error(`Transform plugin '${args.pluginName}' not found`);
+          try {
+            const destSchema = `${args.destDb}.${args.destSchema}`;
+            const sourceSchema = `${args.sourceDb}.${args.sourceSchema}`;
+            const conn = new Trex.TrexDB("memory");
+            const sql = `SELECT * FROM trex_transform_test('${escapeSql(plugin.projectPath)}', '${escapeSql(destSchema)}', source_schema := '${escapeSql(sourceSchema)}')`;
+            const result = await conn.execute(sql, []);
+            const rows = result?.rows || result || [];
+            return rows.map((r: any) => ({
+              name: r.name || r[0] || "",
+              status: r.status || r[1] || "",
+              rowsReturned: r.rows_returned || r[2] || "",
+            }));
+          } catch (err: any) {
+            console.error("transformTest error:", err);
+            throw new Error(err.message || "Test failed");
           }
         },
       },
