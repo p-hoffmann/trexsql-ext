@@ -11,19 +11,80 @@ trexsql is a distributed SQL engine built on top of a columnar database core. It
 
 trexsql extends the core database engine with loadable extensions (`.trex` files) that add distributed query capabilities, protocol servers, ETL pipelines, and more. The management application (`core/`) provides a web UI, GraphQL API, authentication, and a plugin system for extending functionality.
 
+```mermaid
+flowchart TD
+    subgraph Frontend
+        WebUI["Web UI · /trex/"]
+        GraphQL["GraphQL API · /trex/graphql"]
+        Docs["Docs · /trex/docs/"]
+    end
+
+    subgraph Server
+        Express["Express + PostGraphile"]
+        Auth["Better Auth"]
+        MCP["MCP Server"]
+        PluginSys["Plugin System"]
+    end
+
+    subgraph Plugins["Plugin Types"]
+        Functions
+        UI
+        Flows
+        Transforms
+        Migrations
+    end
+
+    subgraph Data["Data Layer"]
+        PostgreSQL["PostgreSQL (metadata)"]
+        Engine["trexsql Engine"]
+    end
+
+    subgraph Extensions
+        db & tpm & hana & pgwire & chdb
+        etl & fhir & migration & ai & atlas
+    end
+
+    Frontend --> Server
+    Server --> Plugins
+    Server --> Data
+    Engine --> Extensions
 ```
-┌─────────────────────────────────────────────────┐
-│  Web UI (React)          GraphQL API             │
-│  /trex/                  /trex/graphql            │
-├─────────────────────────────────────────────────┤
-│  Express Server + PostGraphile + Better Auth     │
-│  MCP Server    Plugin System    Function Workers  │
-├─────────────────────────────────────────────────┤
-│  PostgreSQL (metadata)   trexsql Engine           │
-├─────────────────────────────────────────────────┤
-│  Extensions: db · tpm · hana · pgwire · chdb     │
-│  etl · fhir · migration · ai · atlas             │
-└─────────────────────────────────────────────────┘
+
+## Cluster Architecture
+
+In a distributed deployment, multiple trexsql nodes form a cluster using a gossip protocol for membership and Arrow Flight SQL for data transport.
+
+```mermaid
+flowchart LR
+    Client["Client"] --> Coord
+
+    subgraph Node1["Node 1 (Coordinator)"]
+        Coord["Coordinator"]
+        G1["Gossip"]
+        F1["Flight SQL"]
+        E1["Engine"]
+        Coord --> E1
+        Coord --> F1
+    end
+
+    subgraph Node2["Node 2"]
+        G2["Gossip"]
+        F2["Flight SQL"]
+        E2["Engine"]
+    end
+
+    subgraph Node3["Node 3"]
+        G3["Gossip"]
+        F3["Flight SQL"]
+        E3["Engine"]
+    end
+
+    G1 <-.->|gossip| G2
+    G2 <-.->|gossip| G3
+    G1 <-.->|gossip| G3
+
+    F1 <-->|Arrow Flight| F2
+    F1 <-->|Arrow Flight| F3
 ```
 
 ## Quick Start

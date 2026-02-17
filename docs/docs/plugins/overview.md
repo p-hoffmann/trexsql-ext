@@ -14,8 +14,29 @@ trexsql has a plugin system that extends the management application with custom 
 | **UI** | Static frontend assets and navigation items | `trex.ui` |
 | **Migration** | SQL schema migrations | `trex.migrations` |
 | **Flow** | Prefect workflow deployments | `trex.flow` |
+| **Transform** | Data transformation projects with model endpoints | `trex.transform` |
 
 A single plugin can combine multiple types.
+
+## Plugin Lifecycle
+
+```mermaid
+flowchart TD
+    Startup["Server Startup"] --> Scan["Scan plugin directories"]
+    Scan --> ReadPkg["Read package.json"]
+    ReadPkg --> RegFn["Register functions"]
+    ReadPkg --> RegUI["Register UI routes"]
+    ReadPkg --> RegFlow["Register flows"]
+    ReadPkg --> RegMig["Register migrations"]
+    ReadPkg --> RegTx["Register transforms"]
+    RegMig --> RunMig["Run pending migrations"]
+    RegFn --> Roles["Ensure roles & scopes"]
+    Roles --> Ready["Server ready"]
+    RunMig --> Ready
+    RegUI --> Ready
+    RegFlow --> Ready
+    RegTx --> Ready
+```
 
 ## Plugin Discovery
 

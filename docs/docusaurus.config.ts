@@ -10,6 +10,11 @@ const config: Config = {
   url: "http://localhost:8001",
   baseUrl: "/trex/docs/",
 
+  markdown: {
+    mermaid: true,
+  },
+  themes: ["@docusaurus/theme-mermaid"],
+
   onBrokenLinks: "throw",
   onBrokenMarkdownLinks: "warn",
 
