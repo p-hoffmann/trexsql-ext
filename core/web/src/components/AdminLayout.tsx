@@ -34,6 +34,7 @@ export function AdminLayout() {
         { to: "/admin/migrations", label: "Migrations" },
         { to: "/admin/databases", label: "Federation" },
         { to: "/admin/etl", label: "ETL" },
+        { to: "/admin/subscriptions", label: "Subscriptions" },
       ],
     },
     {
