@@ -4,3 +4,4 @@ node_modules
 /specs
 /extensions/*.trex
 /extensions/*.duckdb_extension
+shinylive/

@@ -357,6 +357,15 @@ app.use(`${FUNCTIONS_BASE_PATH}/:service_name`, async (req, res, next) => {
   }
 });
 
+// Serve self-hosted Shinylive assets (must be before SPA catch-all)
+try {
+  const shinyliveDistPath = join(Deno.cwd(), "shinylive");
+  await Deno.stat(shinyliveDistPath);
+  const serveShiny = (await import("express")).default.static;
+  app.use(`${BASE_PATH}/shinylive`, serveShiny(shinyliveDistPath));
+  console.log("Serving Shinylive assets from shinylive/");
+} catch { /* shinylive assets not present — skip */ }
+
 // Static file serving for production frontend build
 try {
   const webDistPath = join(Deno.cwd(), "core", "web", "dist");

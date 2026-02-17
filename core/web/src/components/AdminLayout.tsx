@@ -38,6 +38,12 @@ export function AdminLayout() {
       ],
     },
     {
+      label: "Analytics",
+      items: [
+        { to: "/admin/analytics", label: "Dashboard" },
+      ],
+    },
+    {
       label: "Auth",
       items: [
         { to: "/admin/users", label: "Users" },

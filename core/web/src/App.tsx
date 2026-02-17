@@ -30,6 +30,8 @@ import { Migrations } from "@/pages/admin/Migrations";
 import { ChangePassword } from "@/pages/ChangePassword";
 import { EtlPipelines } from "@/pages/admin/EtlPipelines";
 import { Subscriptions } from "@/pages/admin/Subscriptions";
+import { Analytics } from "@/pages/admin/Analytics";
+import { AnalyticsDetail } from "@/pages/admin/AnalyticsDetail";
 
 function HomeRedirect() {
   const { data: session, isPending } = useSession();
@@ -74,6 +76,8 @@ export default function App() {
             <Route path="extensions" element={<Extensions />} />
             <Route path="migrations" element={<Migrations />} />
             <Route path="subscriptions" element={<Subscriptions />} />
+            <Route path="analytics" element={<Analytics />} />
+            <Route path="analytics/:id" element={<AnalyticsDetail />} />
             <Route path="sso" element={<SsoProviders />} />
           </Route>
         </Route>
