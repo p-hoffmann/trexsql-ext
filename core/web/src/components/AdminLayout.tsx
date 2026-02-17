@@ -39,7 +39,14 @@ export function AdminLayout() {
         { to: "/admin/migrations", label: "Migrations" },
         { to: "/admin/databases", label: "Federation" },
         { to: "/admin/etl", label: "Replication" },
+        { to: "/admin/transforms", label: "Transforms" },
         { to: "/admin/subscriptions", label: "Subscriptions" },
+      ],
+    },
+    {
+      label: "Analytics",
+      items: [
+        { to: "/admin/analytics", label: "Dashboard" },
       ],
     },
     {

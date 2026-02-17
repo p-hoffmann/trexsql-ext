@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
+    "@trex/ai": "latest",
     "@trex/as": "latest",
     "@trex/chdb": "latest",
     "@trex/circe": "latest",
@@ -13,6 +14,7 @@
     "@trex/hana": "latest",
     "@trex/migration": "latest",
     "@trex/pgwire": "latest",
-    "@trex/tpm": "latest"
+    "@trex/tpm": "latest",
+    "@trex/transform": "latest"
   }
 }

@@ -83,6 +83,7 @@ jobs:
           - PKGPATH: ./ext/db
           - PKGPATH: ./ext/etl
           - PKGPATH: ./ext/fhir
+          - PKGPATH: ./ext/transform
           - PKGPATH: ./ext/cql2elm
             RUNNER: ubuntu-24.04
           - PKGPATH: ./ext/bao
