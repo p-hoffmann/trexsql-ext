@@ -233,7 +233,6 @@ jobs:
           - PKGPATH: ./ext/etl
           - PKGPATH: ./ext/fhir
           - PKGPATH: ./ext/transform
-          - PKGPATH: ./ext/ai
 
     runs-on: ubuntu-24.04-arm
 
