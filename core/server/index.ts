@@ -186,12 +186,33 @@ try {
   console.error("Plugin system failed to initialize:", err);
 }
 
+// Run core schema migrations (SCHEMA_DIR) before plugin migrations
+try {
+  const schemaDir = Deno.env.get("SCHEMA_DIR");
+  if (schemaDir) {
+    // deno-lint-ignore no-explicit-any
+    const conn = new (globalThis as any).Trex.TrexDB("memory");
+    await conn.execute(`SELECT * FROM trex_migration_run_schema('${schemaDir}', 'trex', '_config')`, []);
+    console.log("Core schema migrations applied");
+  }
+} catch (err) {
+  console.error("Core schema migration failed:", err);
+}
+
 // Run plugin migrations after plugin discovery
 try {
   const { runAllPluginMigrations } = await import("./plugin/migration.ts");
   await runAllPluginMigrations();
 } catch (err) {
   console.error("Plugin migration execution failed:", err);
+}
+
+// Auto-create roles declared by plugins in the PostgreSQL role table
+try {
+  const { ensureRolesExist } = await import("./plugin/function.ts");
+  await ensureRolesExist();
+} catch (err) {
+  console.error("Role auto-creation failed:", err);
 }
 
 // PostGraphile

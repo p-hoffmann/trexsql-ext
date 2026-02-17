@@ -5,6 +5,13 @@ import { scopeUrlPrefix } from "./utils.ts";
 // Module-level storage for merged UI plugins JSON
 let pluginsJson: string = "{}";
 
+// Tracked registered UI static routes
+export const REGISTERED_UI_ROUTES: Array<{
+  pluginName: string;
+  urlPrefix: string;
+  fsPath: string;
+}> = [];
+
 export function getPluginsJson(): string {
   return pluginsJson;
 }
@@ -17,8 +24,13 @@ export function addPlugin(_app: Express, value: any, dir: string, fullName: stri
       const fsPath = `${dir}/${r.dir || r.target}`;
       const fullPrefix = `${PLUGINS_BASE_PATH}${scopePrefix}${urlPrefix}`;
       console.log(`Registering static route: ${fullPrefix} -> ${fsPath}`);
-      // deno-lint-ignore no-explicit-any
-      (Deno as any).core.ops.op_register_static_route(fullPrefix, fsPath);
+      REGISTERED_UI_ROUTES.push({ pluginName: name, urlPrefix: fullPrefix, fsPath });
+      try {
+        // deno-lint-ignore no-explicit-any
+        (Deno as any).core.ops.op_register_static_route(fullPrefix, fsPath);
+      } catch (e) {
+        console.error(`Failed to register static route ${fullPrefix}: ${e}`);
+      }
     }
   }
 

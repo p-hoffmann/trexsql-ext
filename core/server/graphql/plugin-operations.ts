@@ -2,7 +2,10 @@ import { makeExtendSchemaPlugin, gql } from "graphile-utils";
 import { Plugins } from "../plugin/plugin.ts";
 import { getMigrationPlugins } from "../plugin/migration.ts";
 import { scanDiskPlugins } from "../routes/plugin.ts";
-import { reloadAuthProviders } from "../auth.ts";
+import { reloadAuthProviders, pool as authPool } from "../auth.ts";
+import { REGISTERED_FUNCTIONS, ROLE_SCOPES, REQUIRED_URL_SCOPES } from "../plugin/function.ts";
+import { REGISTERED_UI_ROUTES, getPluginsJson } from "../plugin/ui.ts";
+import { REGISTERED_FLOWS } from "../plugin/flow.ts";
 
 declare const Trex: any;
 declare const Deno: any;
@@ -154,6 +157,43 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
         error: String
       }
 
+      type RegisteredFunction {
+        pluginName: String!
+        source: String!
+        entryPoint: String!
+      }
+
+      type RoleScopeMapping {
+        role: String!
+        scopes: [String!]!
+      }
+
+      type UrlScopeRequirement {
+        path: String!
+        scopes: [String!]!
+      }
+
+      type UiPluginRoute {
+        pluginName: String!
+        urlPrefix: String!
+        fsPath: String!
+      }
+
+      type RegisteredFlow {
+        name: String!
+        entrypoint: String!
+        image: String!
+        tags: [String!]!
+      }
+
+      type EventLogEntry {
+        id: String!
+        eventType: String!
+        level: String!
+        message: String!
+        createdAt: String!
+      }
+
       extend type Query {
         availablePlugins: [PluginInfo!]!
         trexNodes: [TrexNode!]!
@@ -165,6 +205,13 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
         trexExtensions: [TrexExtension!]!
         trexMigrations: [PluginMigrationSummary!]!
         etlPipelines: [EtlPipeline!]!
+        registeredFunctions: [RegisteredFunction!]!
+        roleScopeMappings: [RoleScopeMapping!]!
+        urlScopeRequirements: [UrlScopeRequirement!]!
+        uiPluginRoutes: [UiPluginRoute!]!
+        uiPluginsJson: JSON
+        registeredFlows: [RegisteredFlow!]!
+        eventLogs(level: String, limit: Int, before: String): [EventLogEntry!]!
       }
 
       extend type Mutation {
@@ -543,6 +590,103 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
             }));
           } catch (err: any) {
             console.error("etlPipelines error:", err);
+            return [];
+          }
+        },
+
+        registeredFunctions(_parent: any, _args: any, context: any) {
+          assertAdmin(context);
+          return REGISTERED_FUNCTIONS.map((f) => ({
+            pluginName: f.name,
+            source: f.source,
+            entryPoint: f.function,
+          }));
+        },
+
+        roleScopeMappings(_parent: any, _args: any, context: any) {
+          assertAdmin(context);
+          return Object.entries(ROLE_SCOPES).map(([role, scopes]) => ({
+            role,
+            scopes,
+          }));
+        },
+
+        urlScopeRequirements(_parent: any, _args: any, context: any) {
+          assertAdmin(context);
+          return REQUIRED_URL_SCOPES.map((r) => ({
+            path: r.path,
+            scopes: r.scopes,
+          }));
+        },
+
+        uiPluginRoutes(_parent: any, _args: any, context: any) {
+          assertAdmin(context);
+          return REGISTERED_UI_ROUTES.map((r) => ({
+            pluginName: r.pluginName,
+            urlPrefix: r.urlPrefix,
+            fsPath: r.fsPath,
+          }));
+        },
+
+        uiPluginsJson(_parent: any, _args: any, context: any) {
+          assertAdmin(context);
+          try {
+            return JSON.parse(getPluginsJson());
+          } catch {
+            return null;
+          }
+        },
+
+        registeredFlows(_parent: any, _args: any, context: any) {
+          assertAdmin(context);
+          return REGISTERED_FLOWS.map((f) => ({
+            name: f.name,
+            entrypoint: f.entrypoint,
+            image: f.image,
+            tags: f.tags,
+          }));
+        },
+
+        async eventLogs(_parent: any, args: { level?: string; limit?: number; before?: string }, context: any) {
+          assertAdmin(context);
+
+          try {
+            // Periodic retention: delete logs older than 30 days (fire-and-forget)
+            authPool.query(
+              `DELETE FROM trex.event_log WHERE created_at < NOW() - INTERVAL '30 days'`,
+            ).catch(() => {});
+
+            const limit = Math.min(Math.max(args.limit || 100, 1), 500);
+            const conditions: string[] = [];
+            const params: any[] = [];
+            let paramIdx = 1;
+
+            if (args.level) {
+              conditions.push(`level = $${paramIdx++}`);
+              params.push(args.level);
+            }
+            if (args.before) {
+              conditions.push(`id < $${paramIdx++}`);
+              params.push(args.before);
+            }
+
+            const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+            params.push(limit);
+
+            const result = await authPool.query(
+              `SELECT id, event_type, level, message, created_at FROM trex.event_log ${where} ORDER BY id DESC LIMIT $${paramIdx}`,
+              params,
+            );
+
+            return result.rows.map((r: any) => ({
+              id: String(r.id),
+              eventType: r.event_type,
+              level: r.level,
+              message: r.message,
+              createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+            }));
+          } catch (err: any) {
+            console.error("eventLogs error:", err);
             return [];
           }
         },
