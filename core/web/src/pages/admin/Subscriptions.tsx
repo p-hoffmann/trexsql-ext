@@ -18,7 +18,7 @@ import { PlusIcon } from "lucide-react";
 
 const LIST_SUBSCRIPTIONS_QUERY = `
   query ListSubscriptions($first: Int, $after: Cursor) {
-    allSubscriptions(first: $first, after: $after, orderBy: [PRIMARY_KEY_DESC]) {
+    allNotifySubscriptions(first: $first, after: $after, orderBy: [PRIMARY_KEY_DESC]) {
       totalCount
       pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
       nodes {
@@ -75,7 +75,7 @@ const SAVE_SUBSCRIPTION_MUTATION = `
         pEnabled: $pEnabled
       }
     ) {
-      subscriptionEdge {
+      notifySubscriptionEdge {
         node { id }
       }
     }
@@ -83,9 +83,9 @@ const SAVE_SUBSCRIPTION_MUTATION = `
 `;
 
 const DELETE_SUBSCRIPTION_MUTATION = `
-  mutation DeleteSubscription($pName: String!) {
-    deleteSubscription(input: { pName: $pName }) {
-      subscriptionEdge {
+  mutation RemoveSubscription($pName: String!) {
+    removeSubscription(input: { pName: $pName }) {
+      notifySubscriptionEdge {
         node { id }
       }
     }
@@ -141,7 +141,7 @@ export function Subscriptions() {
   const result = isSearching ? searchResult : listResult;
   const connection = isSearching
     ? result.data?.searchSubscriptions
-    : result.data?.allSubscriptions;
+    : result.data?.allNotifySubscriptions;
 
   const subscriptions: SubscriptionRow[] = connection?.nodes || [];
   const pageInfo = connection?.pageInfo;
