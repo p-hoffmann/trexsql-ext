@@ -25,6 +25,7 @@ export function AdminLayout() {
         { to: "/admin/extensions", label: "Extensions" },
         { to: "/admin/plugins", label: "Plugins" },
         { to: "/admin/services", label: "Services" },
+        { to: "/admin/runtime-settings", label: "Settings" },
       ],
     },
     {
@@ -44,6 +45,7 @@ export function AdminLayout() {
         { to: "/admin/sessions", label: "Sessions" },
         { to: "/admin/sso", label: "SSO Providers" },
         { to: "/admin/apps", label: "Applications" },
+        { to: "/admin/auth-settings", label: "Settings" },
       ],
     },
   ];

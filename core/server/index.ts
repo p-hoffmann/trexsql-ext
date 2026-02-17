@@ -29,6 +29,46 @@ const server = createServer(app);
 
 app.use(cors({ origin: true, credentials: true }));
 
+// Public settings endpoint — no auth required, only whitelisted keys
+const PUBLIC_SETTING_KEYS = ["auth.selfRegistration"];
+
+app.get(`${BASE_PATH}/api/settings/public`, async (_req, res) => {
+  try {
+    const { pool } = await import("./auth.ts");
+    const result = await pool.query(
+      `SELECT key, value FROM trex.setting WHERE key = ANY($1)`,
+      [PUBLIC_SETTING_KEYS]
+    );
+    const settings: Record<string, any> = {};
+    for (const row of result.rows) {
+      settings[row.key] = row.value;
+    }
+    res.json(settings);
+  } catch {
+    // Table may not exist yet — return safe defaults
+    res.json({ "auth.selfRegistration": false });
+  }
+});
+
+// Block self-registration when disabled
+app.post(`${BASE_PATH}/api/auth/sign-up/email`, async (req, res, next) => {
+  try {
+    const { pool } = await import("./auth.ts");
+    const result = await pool.query(
+      `SELECT value FROM trex.setting WHERE key = 'auth.selfRegistration'`
+    );
+    const enabled = result.rows.length > 0 && result.rows[0].value === true;
+    if (!enabled) {
+      res.status(403).json({ code: "REGISTRATION_DISABLED" });
+      return;
+    }
+    next();
+  } catch {
+    // If setting table doesn't exist, block registration by default
+    res.status(403).json({ code: "REGISTRATION_DISABLED" });
+  }
+});
+
 // Clear mustChangePassword flag (called after successful password change)
 // Must be registered before the Better Auth catch-all handler
 app.post(`${BASE_PATH}/api/auth/password-changed`, async (req, res) => {

@@ -29,6 +29,8 @@ import { Extensions } from "@/pages/admin/Extensions";
 import { Migrations } from "@/pages/admin/Migrations";
 import { ChangePassword } from "@/pages/ChangePassword";
 import { EtlPipelines } from "@/pages/admin/EtlPipelines";
+import { AuthSettings } from "@/pages/admin/AuthSettings";
+import { RuntimeSettings } from "@/pages/admin/RuntimeSettings";
 
 function HomeRedirect() {
   const { data: session, isPending } = useSession();
@@ -73,6 +75,8 @@ export default function App() {
             <Route path="extensions" element={<Extensions />} />
             <Route path="migrations" element={<Migrations />} />
             <Route path="sso" element={<SsoProviders />} />
+            <Route path="auth-settings" element={<AuthSettings />} />
+            <Route path="runtime-settings" element={<RuntimeSettings />} />
           </Route>
         </Route>
 
