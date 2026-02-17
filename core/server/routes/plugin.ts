@@ -98,7 +98,7 @@ export function addPluginRoutes(app: Express) {
           const packages = pkgsJson.value || pkgsJson;
 
           for (const pkg of packages) {
-            const pkgname = pkg.name?.replace(/@[^/]+\//, "") || pkg.name;
+            const pkgname = pkg.name || "";
             let bestVersion = { version: "", packageDescription: "" };
             if (pkg.versions && Array.isArray(pkg.versions)) {
               bestVersion = pkg.versions.reduce((m: any, c: any) => {

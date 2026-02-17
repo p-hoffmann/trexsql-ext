@@ -242,14 +242,13 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
 
               for (const pkg of packages) {
                 const fullName = pkg.name || "";
-                const pkgname = fullName.replace(/@[^/]+\//, "") || fullName;
                 let bestVersion = { version: "", packageDescription: "" };
                 if (pkg.versions && Array.isArray(pkg.versions)) {
                   bestVersion = pkg.versions.reduce((m: any, c: any) => {
                     return c.version > m.version ? c : m;
                   }, bestVersion);
                 }
-                registryMap.set(pkgname, {
+                registryMap.set(fullName, {
                   fullName,
                   description: bestVersion.packageDescription || pkg.description || "",
                   registryVersion: bestVersion.version || pkg.version || "",

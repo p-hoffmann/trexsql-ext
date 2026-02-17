@@ -41,6 +41,11 @@ export async function scanPluginDirectory(
   return results;
 }
 
+export function scopeUrlPrefix(fullName: string): string {
+  if (!fullName.startsWith("@") || !fullName.includes("/")) return "";
+  return "/" + fullName.slice(1, fullName.indexOf("/"));
+}
+
 export async function waitfor(url: string): Promise<string> {
   let reachable = false;
   while (!reachable) {

@@ -245,17 +245,16 @@ impl NpmRegistry {
       }
     }
 
-    // Strip @org/ scope prefix so `@data2evidence/foo` installs as `{dir}/foo/`
-    let dir_name = if resolved.package.starts_with('@') {
-      resolved
-        .package
-        .split('/')
-        .nth(1)
-        .unwrap_or(&resolved.package)
+    let package_dir = if resolved.package.starts_with('@') {
+      let parts: Vec<&str> = resolved.package.splitn(2, '/').collect();
+      if parts.len() == 2 {
+        std::path::Path::new(install_dir).join(parts[0]).join(parts[1])
+      } else {
+        std::path::Path::new(install_dir).join(&resolved.package)
+      }
     } else {
-      &resolved.package
+      std::path::Path::new(install_dir).join(&resolved.package)
     };
-    let package_dir = std::path::Path::new(install_dir).join(dir_name);
 
     std::fs::create_dir_all(&package_dir).map_err(|e| {
       NpmError::Other(format!("Failed to create install directory: {}", e))
@@ -495,19 +494,13 @@ impl NpmRegistry {
                 .and_then(|n| n.as_str())
                 .unwrap_or("")
                 .to_string();
-              // Strip @org/ scope from the name for consistency
-              let short_name = if name.contains('/') {
-                name.split('/').last().unwrap_or(&name).to_string()
-              } else {
-                name.clone()
-              };
               let version = pkg
                 .get("version")
                 .and_then(|v| v.as_str())
                 .unwrap_or("0.0.0")
                 .to_string();
               results.push(ListResponse {
-                package: short_name,
+                package: name,
                 version,
                 install_path: dir_path.to_string_lossy().to_string(),
               });
@@ -553,7 +546,16 @@ impl NpmRegistry {
     package_name: &str,
     install_dir: &str,
   ) -> NpmResult<DeleteResponse> {
-    let package_dir = std::path::Path::new(install_dir).join(package_name);
+    let package_dir = if package_name.starts_with('@') {
+      let parts: Vec<&str> = package_name.splitn(2, '/').collect();
+      if parts.len() == 2 {
+        std::path::Path::new(install_dir).join(parts[0]).join(parts[1])
+      } else {
+        std::path::Path::new(install_dir).join(package_name)
+      }
+    } else {
+      std::path::Path::new(install_dir).join(package_name)
+    };
 
     if !package_dir.exists() {
       return Ok(DeleteResponse {
@@ -567,11 +569,23 @@ impl NpmRegistry {
     }
 
     match std::fs::remove_dir_all(&package_dir) {
-      Ok(_) => Ok(DeleteResponse {
-        package: package_name.to_string(),
-        deleted: true,
-        error: None,
-      }),
+      Ok(_) => {
+        // Clean up empty scope directory if applicable
+        if let Some(parent) = package_dir.parent() {
+          if parent != std::path::Path::new(install_dir) {
+            if let Ok(mut entries) = std::fs::read_dir(parent) {
+              if entries.next().is_none() {
+                let _ = std::fs::remove_dir(parent);
+              }
+            }
+          }
+        }
+        Ok(DeleteResponse {
+          package: package_name.to_string(),
+          deleted: true,
+          error: None,
+        })
+      }
       Err(e) => Ok(DeleteResponse {
         package: package_name.to_string(),
         deleted: false,
@@ -616,32 +630,27 @@ impl NpmRegistry {
         format!("{}@{}", pkg_name, api_version)
       };
 
-      // Determine the short name for directory checking
-      let short_name = {
-        // Strip version: take part before last @, unless it's a scoped package start
-        let name_part = if let Some(pos) = package_spec.rfind('@') {
-          if pos == 0 {
-            &package_spec
-          } else {
-            &package_spec[..pos]
-          }
-        } else {
+      // Determine the package name (without version) for directory checking
+      let name_part = if let Some(pos) = package_spec.rfind('@') {
+        if pos == 0 {
           &package_spec
-        };
-        // Strip @org/ scope
-        if name_part.starts_with('@') {
-          name_part
-            .split('/')
-            .nth(1)
-            .unwrap_or(name_part)
-            .to_string()
         } else {
-          name_part.to_string()
+          &package_spec[..pos]
         }
+      } else {
+        &package_spec
       };
 
-      let pkg_dir =
-        std::path::Path::new(install_dir).join(&short_name);
+      let pkg_dir = if name_part.starts_with('@') {
+        let parts: Vec<&str> = name_part.splitn(2, '/').collect();
+        if parts.len() == 2 {
+          std::path::Path::new(install_dir).join(parts[0]).join(parts[1])
+        } else {
+          std::path::Path::new(install_dir).join(name_part)
+        }
+      } else {
+        std::path::Path::new(install_dir).join(name_part)
+      };
       let is_installed = pkg_dir.join("package.json").exists();
 
       if is_installed && !update {

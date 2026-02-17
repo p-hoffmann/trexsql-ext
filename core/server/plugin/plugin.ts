@@ -18,40 +18,40 @@ export class Plugins {
     app: Express,
     dir: string,
     pkg: any,
-    shortName: string
+    fullName: string
   ) {
     try {
       if (!pkg.trex) {
         console.log(
-          `Plugin ${shortName} has no trex config — skipping registration`
+          `Plugin ${fullName} has no trex config — skipping registration`
         );
         return;
       }
       for (const [key, value] of Object.entries(pkg.trex)) {
         switch (key) {
           case "functions":
-            addFunctionPlugin(app, value, dir, shortName);
+            addFunctionPlugin(app, value, dir, fullName);
             break;
           case "ui":
-            addUIPlugin(app, value, dir);
+            addUIPlugin(app, value, dir, fullName);
             break;
           case "flow":
             addFlowPlugin(value);
             break;
           case "migrations":
-            addMigrationPlugin(value, dir, shortName);
+            addMigrationPlugin(value, dir, fullName);
             break;
           default:
             console.log(`Unknown plugin type: ${key}`);
         }
       }
-      Plugins.activeRegistry.set(shortName, {
-        name: shortName,
+      Plugins.activeRegistry.set(fullName, {
+        name: fullName,
         version: pkg.version,
         registeredAt: new Date(),
       });
     } catch (e) {
-      console.error(`Failed to register plugin ${shortName}:`, e);
+      console.error(`Failed to register plugin ${fullName}:`, e);
     }
   }
 
