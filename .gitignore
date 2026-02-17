@@ -6,3 +6,4 @@ node_modules
 /extensions/*.duckdb_extension
 docs/build/
 docs/.docusaurus/
+shinylive/

@@ -79,6 +79,13 @@ RUN mkdir -p /root/.duckdb/extensions/v${DUCKDB_VERSION}/linux_amd64 && \
 # Override npm extensions with CI-built ones (no-op locally since dir only has .gitkeep)
 COPY extensions/ /usr/lib/trexsql/extensions/
 
+# Download and extract Shinylive assets for analytics dashboards
+ARG SHINYLIVE_VERSION=0.10.7
+RUN curl -sLO https://github.com/posit-dev/shinylive/releases/download/v${SHINYLIVE_VERSION}/shinylive-${SHINYLIVE_VERSION}.tar.gz && \
+    tar -xzf shinylive-${SHINYLIVE_VERSION}.tar.gz && \
+    mv shinylive-${SHINYLIVE_VERSION} shinylive && \
+    rm shinylive-${SHINYLIVE_VERSION}.tar.gz
+
 # Create plugins directory for plugin installs
 RUN mkdir -p ./plugins
 
