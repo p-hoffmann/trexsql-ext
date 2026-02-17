@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { authClient } from "@/lib/auth-client";
+import { BASE_PATH } from "@/lib/config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,6 +21,14 @@ export function Register() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [registrationEnabled, setRegistrationEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetch(`${BASE_PATH}/api/settings/public`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((data) => setRegistrationEnabled(data["auth.selfRegistration"] === true))
+      .catch(() => setRegistrationEnabled(false));
+  }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -43,6 +52,36 @@ export function Register() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (registrationEnabled === null) {
+    return null;
+  }
+
+  if (!registrationEnabled) {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-4">
+        <Card className="w-full max-w-sm">
+          <CardHeader className="text-center">
+            <CardTitle className="text-2xl">Registration Disabled</CardTitle>
+            <CardDescription>
+              Self-registration is currently disabled. Please contact an administrator to create an account.
+            </CardDescription>
+          </CardHeader>
+          <CardFooter className="justify-center">
+            <p className="text-sm text-muted-foreground">
+              Already have an account?{" "}
+              <Link
+                to="/login"
+                className="text-foreground underline underline-offset-4 hover:text-foreground/80"
+              >
+                Sign in
+              </Link>
+            </p>
+          </CardFooter>
+        </Card>
+      </div>
+    );
   }
 
   if (success) {
