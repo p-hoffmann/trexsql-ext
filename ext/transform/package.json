@@ -1,0 +1,8 @@
+{
+  "name": "@trex/transform",
+  "version": "0.1.0",
+  "description": "Transform plugin for trexsql",
+  "trex": {
+    "transform": {}
+  }
+}

@@ -29,6 +29,7 @@ import { Extensions } from "@/pages/admin/Extensions";
 import { Migrations } from "@/pages/admin/Migrations";
 import { ChangePassword } from "@/pages/ChangePassword";
 import { EtlPipelines } from "@/pages/admin/EtlPipelines";
+import { Transforms } from "@/pages/admin/Transforms";
 
 function HomeRedirect() {
   const { data: session, isPending } = useSession();
@@ -69,6 +70,7 @@ export default function App() {
             <Route path="plugins" element={<Plugins />} />
             <Route path="services" element={<Services />} />
             <Route path="etl" element={<EtlPipelines />} />
+            <Route path="transforms" element={<Transforms />} />
             <Route path="trexdb" element={<TrexDB />} />
             <Route path="extensions" element={<Extensions />} />
             <Route path="migrations" element={<Migrations />} />
