@@ -35,6 +35,8 @@ import { Flows } from "@/pages/admin/Flows";
 import { UiPlugins } from "@/pages/admin/UiPlugins";
 import { Logs } from "@/pages/admin/Logs";
 import { Subscriptions } from "@/pages/admin/Subscriptions";
+import { Analytics } from "@/pages/admin/Analytics";
+import { AnalyticsDetail } from "@/pages/admin/AnalyticsDetail";
 
 function HomeRedirect() {
   const { data: session, isPending } = useSession();
@@ -80,6 +82,8 @@ export default function App() {
             <Route path="extensions" element={<Extensions />} />
             <Route path="migrations" element={<Migrations />} />
             <Route path="subscriptions" element={<Subscriptions />} />
+            <Route path="analytics" element={<Analytics />} />
+            <Route path="analytics/:id" element={<AnalyticsDetail />} />
             <Route path="sso" element={<SsoProviders />} />
             <Route path="functions" element={<Functions />} />
             <Route path="flows" element={<Flows />} />
