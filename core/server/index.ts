@@ -135,6 +135,11 @@ app.use(`${BASE_PATH}/api/auth`, async (req, res) => {
   }
 });
 
+// Deno doesn't have `global` — polyfill for npm packages that expect Node.js
+if (typeof (globalThis as any).global === "undefined") {
+  (globalThis as any).global = globalThis;
+}
+
 // MCP server (before authContext — uses its own API key auth)
 try {
   const { mountMcpServer } = await import("./mcp/index.ts");
