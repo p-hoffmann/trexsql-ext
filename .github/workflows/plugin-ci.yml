@@ -271,12 +271,13 @@ jobs:
 
       - name: Build
         run: |
+          if [ -n "${{ matrix.CARGO_BUILD_JOBS }}" ]; then
+            export CARGO_BUILD_JOBS=${{ matrix.CARGO_BUILD_JOBS }}
+          fi
           cd ${{ matrix.PKGPATH }}
           make configure
           make release
           mv build/release/extension/*/*.trex . 2>/dev/null || true
-        env:
-          CARGO_BUILD_JOBS: ${{ matrix.CARGO_BUILD_JOBS || '' }}
 
       - name: Extract extension name
         id: extname
