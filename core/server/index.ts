@@ -27,7 +27,11 @@ addEventListener("unhandledrejection", (ev) => {
 const app = express();
 const server = createServer(app);
 
-app.use(cors({ origin: true, credentials: true }));
+const trustedOrigins = (Deno.env.get("BETTER_AUTH_TRUSTED_ORIGINS") || "").split(",").filter(Boolean);
+app.use(cors({
+  origin: trustedOrigins.length > 0 ? trustedOrigins : false,
+  credentials: true,
+}));
 
 // Public settings endpoint — no auth required, only whitelisted keys
 const PUBLIC_SETTING_KEYS = ["auth.selfRegistration"];
@@ -163,10 +167,18 @@ app.post(`${BASE_PATH}/api/api-keys`, express.json(), async (req, res) => {
       res.status(400).json({ error: "name is required" });
       return;
     }
+    let expiresDate: Date | undefined;
+    if (expiresAt) {
+      expiresDate = new Date(expiresAt);
+      if (isNaN(expiresDate.getTime())) {
+        res.status(400).json({ error: "Invalid expiresAt date" });
+        return;
+      }
+    }
     const result = await generateApiKey(
       session.user.id,
       name,
-      expiresAt ? new Date(expiresAt) : undefined,
+      expiresDate,
     );
     res.json(result);
   } catch (err) {
@@ -233,7 +245,9 @@ try {
   if (schemaDir) {
     // deno-lint-ignore no-explicit-any
     const conn = new (globalThis as any).Trex.TrexDB("memory");
-    await conn.execute(`SELECT * FROM trex_migration_run_schema('${schemaDir}', 'trex', '_config')`, []);
+    const { escapeSql: esc } = await import("./lib/sql.ts");
+    const safeDir = esc(schemaDir);
+    await conn.execute(`SELECT * FROM trex_migration_run_schema('${safeDir}', 'trex', '_config')`, []);
     console.log("Core schema migrations applied");
   }
 } catch (err) {
@@ -275,13 +289,23 @@ app.get(`${BASE_PATH}/_internal/health`, (_req, res) => {
   res.status(STATUS_CODE.OK).json({ message: "ok" });
 });
 
-app.get(`${BASE_PATH}/_internal/metric`, async (_req, res) => {
+app.get(`${BASE_PATH}/_internal/metric`, async (req, res) => {
+  const session = await auth.api.getSession({ headers: req.headers as any });
+  if (!session?.user || (session.user as any).role !== "admin") {
+    res.status(401).json({ error: "Admin authentication required" });
+    return;
+  }
   const metric = await EdgeRuntime.getRuntimeMetrics();
   res.json(metric);
 });
 
 app.put(`${BASE_PATH}/_internal/upload`, async (req, res) => {
   try {
+    const session = await auth.api.getSession({ headers: req.headers as any });
+    if (!session?.user || (session.user as any).role !== "admin") {
+      res.status(401).json({ error: "Admin authentication required" });
+      return;
+    }
     let body = "";
     for await (const chunk of req) {
       body += chunk;
@@ -356,20 +380,27 @@ app.use(`${FUNCTIONS_BASE_PATH}/:scope/:service_name`, async (req, res, next) =>
   });
 
   const callWorker = async (): Promise<Response> => {
-    try {
-      const worker = await createWorker();
-      const controller = new AbortController();
-      return await worker.fetch(webReq, { signal: controller.signal });
-    } catch (e) {
-      if (e instanceof Deno.errors.WorkerAlreadyRetired) {
-        return await callWorker();
+    const MAX_RETRIES = 3;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const worker = await createWorker();
+        const controller = new AbortController();
+        return await worker.fetch(webReq, { signal: controller.signal });
+      } catch (e) {
+        if (e instanceof Deno.errors.WorkerAlreadyRetired && attempt < MAX_RETRIES - 1) {
+          continue;
+        }
+        const error = { msg: e.toString() };
+        return new Response(JSON.stringify(error), {
+          status: STATUS_CODE.InternalServerError,
+          headers: { "Content-Type": "application/json" },
+        });
       }
-      const error = { msg: e.toString() };
-      return new Response(JSON.stringify(error), {
-        status: STATUS_CODE.InternalServerError,
-        headers: { "Content-Type": "application/json" },
-      });
     }
+    return new Response(JSON.stringify({ msg: "Worker unavailable after retries" }), {
+      status: STATUS_CODE.InternalServerError,
+      headers: { "Content-Type": "application/json" },
+    });
   };
 
   try {
@@ -402,6 +433,10 @@ app.use(`${FUNCTIONS_BASE_PATH}/:service_name`, async (req, res, next) => {
   if (serviceName.startsWith("tmp")) {
     try {
       servicePath = await Deno.realPath(`/tmp/${serviceName}`);
+      if (!servicePath.startsWith("/tmp/")) {
+        res.status(400).json({ error: "Invalid service path" });
+        return;
+      }
     } catch (err) {
       res.status(STATUS_CODE.BadRequest).json(err);
       return;
@@ -464,21 +499,27 @@ app.use(`${FUNCTIONS_BASE_PATH}/:service_name`, async (req, res, next) => {
   });
 
   const callWorker = async (): Promise<Response> => {
-    try {
-      const worker = await createWorker();
-      const controller = new AbortController();
-      return await worker.fetch(webReq, { signal: controller.signal });
-    } catch (e) {
-      if (e instanceof Deno.errors.WorkerAlreadyRetired) {
-        return await callWorker();
+    const MAX_RETRIES = 3;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const worker = await createWorker();
+        const controller = new AbortController();
+        return await worker.fetch(webReq, { signal: controller.signal });
+      } catch (e) {
+        if (e instanceof Deno.errors.WorkerAlreadyRetired && attempt < MAX_RETRIES - 1) {
+          continue;
+        }
+        const error = { msg: e.toString() };
+        return new Response(JSON.stringify(error), {
+          status: STATUS_CODE.InternalServerError,
+          headers: { "Content-Type": "application/json" },
+        });
       }
-
-      const error = { msg: e.toString() };
-      return new Response(JSON.stringify(error), {
-        status: STATUS_CODE.InternalServerError,
-        headers: { "Content-Type": "application/json" },
-      });
     }
+    return new Response(JSON.stringify({ msg: "Worker unavailable after retries" }), {
+      status: STATUS_CODE.InternalServerError,
+      headers: { "Content-Type": "application/json" },
+    });
   };
 
   try {

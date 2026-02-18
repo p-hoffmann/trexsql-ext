@@ -70,7 +70,7 @@ export function Login() {
               <Label htmlFor="email">Email</Label>
               <Input
                 id="email"
-                type="text"
+                type="email"
                 placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}

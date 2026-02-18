@@ -16,6 +16,8 @@ pub fn catalog_contains_table(shmem: &PgTrexShmem, table_name: &str) -> bool {
             continue;
         }
 
+        std::sync::atomic::fence(Ordering::Acquire);
+
         let count = shmem.catalog.count.load(Ordering::Acquire) as usize;
         let count = count.min(MAX_CATALOG_ENTRIES);
 
@@ -28,6 +30,7 @@ pub fn catalog_contains_table(shmem: &PgTrexShmem, table_name: &str) -> bool {
             }
         }
 
+        std::sync::atomic::fence(Ordering::Acquire);
         let gen2 = shmem.catalog.generation.load(Ordering::Acquire);
         if gen1 == gen2 {
             return found;
@@ -47,6 +50,8 @@ pub fn read_catalog(shmem: &PgTrexShmem) -> Vec<CatalogEntry> {
             continue;
         }
 
+        std::sync::atomic::fence(Ordering::Acquire);
+
         let count = shmem.catalog.count.load(Ordering::Acquire) as usize;
         let count = count.min(MAX_CATALOG_ENTRIES);
 
@@ -55,6 +60,7 @@ pub fn read_catalog(shmem: &PgTrexShmem) -> Vec<CatalogEntry> {
             entries.push(shmem.catalog.entries[i]);
         }
 
+        std::sync::atomic::fence(Ordering::Acquire);
         let gen2 = shmem.catalog.generation.load(Ordering::Acquire);
         if gen1 == gen2 {
             return entries;
@@ -113,11 +119,11 @@ pub fn refresh_catalog(
     let count = new_entries.len();
 
     // Seqlock write protocol
-    // Step 1: increment generation to odd (signals write in progress)
+    // Step 1: AcqRel prevents subsequent writes from reordering before generation increment
     shmem
         .catalog
         .generation
-        .fetch_add(1, Ordering::Release);
+        .fetch_add(1, Ordering::AcqRel);
 
     // Step 2: write count and entries
     shmem

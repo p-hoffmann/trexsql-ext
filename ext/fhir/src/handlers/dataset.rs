@@ -406,26 +406,12 @@ pub async fn update_dataset(
     let schema_name = dataset_id.replace('-', "_");
 
     let mut added = Vec::new();
-    let registry = custom_defs.as_ref().unwrap_or_else(|| {
-        panic!("Expected custom definitions")
-    });
+    let registry = custom_defs.as_ref().ok_or_else(|| {
+        AppError::Internal("Expected custom definitions from parsed bundle".to_string())
+    })?;
 
     for type_name in &new_types {
-        let table_name = type_name.to_lowercase();
-        let check_table = format!(
-            "SELECT 1 FROM information_schema.tables WHERE table_schema = '{}' AND table_name = '{}'",
-            schema_name, table_name
-        );
-
-        let exists = match state.executor.submit(check_table).await {
-            QueryResult::Select { rows, .. } => !rows.is_empty(),
-            _ => false,
-        };
-
-        if exists {
-            continue;
-        }
-
+        // generate_ddl uses CREATE TABLE IF NOT EXISTS, so concurrent calls are safe
         match crate::schema::generator::generate_ddl(registry, type_name, &schema_name) {
             Ok(ddl) => {
                 match state.executor.submit(ddl).await {

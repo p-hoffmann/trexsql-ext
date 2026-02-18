@@ -418,7 +418,7 @@ fn execute_select_to_ipc(conn: &Connection, sql: &str) -> Result<Vec<u8>, String
     let schema = arrow_result.get_schema();
     let batches: Vec<RecordBatch> = arrow_result.collect();
 
-    Ok(serialize_batches_to_ipc(&schema, &batches))
+    serialize_batches_to_ipc(&schema, &batches)
 }
 
 /// Execute a non-SELECT statement and return an empty Arrow IPC stream.
@@ -427,23 +427,21 @@ fn execute_non_select_to_ipc(conn: &Connection, sql: &str) -> Result<Vec<u8>, St
         .map_err(|e| format!("execute: {e}"))?;
 
     let schema = Schema::empty();
-    Ok(serialize_batches_to_ipc(&Arc::new(schema), &[]))
+    serialize_batches_to_ipc(&Arc::new(schema), &[])
 }
 
 /// Serialize Arrow RecordBatches to IPC stream format bytes.
-fn serialize_batches_to_ipc(schema: &Arc<Schema>, batches: &[RecordBatch]) -> Vec<u8> {
+fn serialize_batches_to_ipc(schema: &Arc<Schema>, batches: &[RecordBatch]) -> Result<Vec<u8>, String> {
     let mut buf = Vec::new();
     let mut writer = StreamWriter::try_new(&mut buf, schema)
-        .expect("pg_trex: failed to create Arrow IPC StreamWriter");
+        .map_err(|e| format!("Arrow IPC StreamWriter init: {e}"))?;
     for batch in batches {
-        writer
-            .write(batch)
-            .expect("pg_trex: failed to write Arrow IPC batch");
+        writer.write(batch)
+            .map_err(|e| format!("Arrow IPC write: {e}"))?;
     }
-    writer
-        .finish()
-        .expect("pg_trex: failed to finish Arrow IPC stream");
-    buf
+    writer.finish()
+        .map_err(|e| format!("Arrow IPC finish: {e}"))?;
+    Ok(buf)
 }
 
 // ---------------------------------------------------------------------------
@@ -655,7 +653,7 @@ fn collect_responses(
 /// Called by PostgreSQL's postmaster when the background worker process starts.
 /// This function:
 /// 1. Unblocks signals (SIGHUP, SIGTERM)
-/// 2. Initializes the trexsql engine (in-memory DuckDB with extensions)
+/// 2. Initializes the trexsql engine with extensions
 /// 3. Starts the swarm gossip cluster
 /// 4. Creates the query thread pool
 /// 5. Enters the main loop: poll slots, dispatch queries, handle signals
@@ -862,7 +860,7 @@ mod tests {
     #[test]
     fn test_serialize_batches_to_ipc_empty() {
         let schema = Arc::new(Schema::empty());
-        let bytes = serialize_batches_to_ipc(&schema, &[]);
+        let bytes = serialize_batches_to_ipc(&schema, &[]).unwrap();
         // Should produce valid Arrow IPC stream bytes (header + EOS marker)
         assert!(!bytes.is_empty());
     }

@@ -75,30 +75,34 @@ export function Logs() {
   // Auto-refresh: prepend only newer entries
   useEffect(() => {
     const interval = setInterval(async () => {
-      const res = await client
-        .query(EVENT_LOGS_QUERY, {
-          level: levelFilter === "All" ? null : levelFilter,
-          limit: PAGE_SIZE,
-          before: null,
-        }, { requestPolicy: "network-only" })
-        .toPromise();
+      try {
+        const res = await client
+          .query(EVENT_LOGS_QUERY, {
+            level: levelFilter === "All" ? null : levelFilter,
+            limit: PAGE_SIZE,
+            before: null,
+          }, { requestPolicy: "network-only" })
+          .toPromise();
 
-      const fresh: EventLogRow[] = res.data?.eventLogs || [];
-      if (fresh.length === 0) return;
+        const fresh: EventLogRow[] = res.data?.eventLogs || [];
+        if (fresh.length === 0) return;
 
-      const currentHeadId = headIdRef.current;
-      if (!currentHeadId) {
-        // No existing rows — just replace
-        setAllRows(fresh);
-        setHasMore(fresh.length >= PAGE_SIZE);
-        headIdRef.current = fresh[0].id;
-        return;
-      }
+        const currentHeadId = headIdRef.current;
+        if (!currentHeadId) {
+          setAllRows(fresh);
+          setHasMore(fresh.length >= PAGE_SIZE);
+          headIdRef.current = fresh[0].id;
+          return;
+        }
 
-      const newEntries = fresh.filter((r) => BigInt(r.id) > BigInt(currentHeadId));
-      if (newEntries.length > 0) {
-        setAllRows((prev) => [...newEntries, ...prev]);
-        headIdRef.current = newEntries[0].id;
+        const newEntries = fresh.filter((r) => {
+          try { return BigInt(r.id) > BigInt(currentHeadId); } catch { return false; }
+        });
+        if (newEntries.length > 0) {
+          setAllRows((prev) => [...newEntries, ...prev]);
+          headIdRef.current = newEntries[0].id;
+        }
+      } catch {
       }
     }, 5000);
     return () => clearInterval(interval);

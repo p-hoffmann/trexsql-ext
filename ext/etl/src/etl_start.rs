@@ -312,7 +312,7 @@ fn start_pipeline(
                     password,
                     tls: etl_lib::config::TlsConfig {
                         trusted_root_certs: String::new(),
-                        enabled: false,
+                        enabled: true,
                     },
                     keepalive: None,
                 };
