@@ -4,7 +4,6 @@ use crate::error::TransformationResult;
 use sqlparser::ast::{ColumnDef, DataType, Statement};
 use std::collections::HashMap;
 
-/// Transformer for PostgreSQL data types to HANA data types
 pub struct DataTypeTransformer {
     mappings: HashMap<String, String>,
     preserve_precision: bool,
@@ -14,7 +13,6 @@ impl DataTypeTransformer {
     pub fn new(config: &TransformationConfig) -> Self {
         let mut mappings = config.data_types.custom_mappings.clone();
 
-        // Add default mappings if not overridden
         for (pg_type, hana_type) in get_default_mappings() {
             mappings.entry(pg_type).or_insert(hana_type);
         }
@@ -106,7 +104,6 @@ impl Transformer for DataTypeTransformer {
                 }
             }
             Statement::AlterTable { operations, .. } => {
-                // Handle ALTER TABLE operations that modify column types
                 for operation in operations {
                     match operation {
                         sqlparser::ast::AlterTableOperation::AddColumn { column_def, .. } => {
@@ -140,7 +137,6 @@ impl DataTypeTransformer {
             if let sqlparser::ast::ColumnOption::Default(expr) = &option.option {
                 if let sqlparser::ast::Expr::Function(func) = expr {
                     if func.name.to_string().to_lowercase() == "nextval" {
-                        // This is a SERIAL-type column
                         if matches!(column.data_type, DataType::Integer(_)) {
                             is_serial_column = true;
                         } else if matches!(column.data_type, DataType::BigInt(_)) {
@@ -159,7 +155,6 @@ impl DataTypeTransformer {
                         if func.name.to_string().to_lowercase() == "nextval"))
             });
 
-            // Add IDENTITY column option
             column.options.push(sqlparser::ast::ColumnOptionDef {
                 name: None,
                 option: sqlparser::ast::ColumnOption::Generated {
@@ -178,7 +173,6 @@ impl DataTypeTransformer {
                         if func.name.to_string().to_lowercase() == "nextval"))
             });
 
-            // Add IDENTITY column option
             column.options.push(sqlparser::ast::ColumnOptionDef {
                 name: None,
                 option: sqlparser::ast::ColumnOption::Generated {

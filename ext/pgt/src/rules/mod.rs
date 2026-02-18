@@ -1,4 +1,3 @@
-/// Transformation rules and mappings
 pub mod mappings;
 pub mod patterns;
 
@@ -7,7 +6,6 @@ use crate::error::{TransformationError, TransformationResult};
 use sqlparser::ast::Statement;
 use std::collections::HashMap;
 
-/// Rule-based transformation engine with validation and complex transformation logic
 pub struct TransformationRules {
     data_type_rules: HashMap<String, String>,
     function_rules: HashMap<String, String>,
@@ -16,7 +14,6 @@ pub struct TransformationRules {
     config: RulesConfig,
 }
 
-/// Validation rule for HANA compatibility checking
 #[derive(Debug, Clone)]
 pub struct ValidationRule {
     pub name: String,
@@ -25,7 +22,6 @@ pub struct ValidationRule {
     pub suggestion: String,
 }
 
-/// Rule for applying transformations to the transformed SQL
 #[derive(Debug, Clone)]
 pub struct PostTransformationRule {
     pub name: String,
@@ -44,7 +40,6 @@ impl TransformationRules {
             config,
         };
 
-        // Initialize with default validation rules
         rules.initialize_validation_rules();
 
         rules
@@ -73,7 +68,6 @@ impl TransformationRules {
         });
     }
 
-    /// Validate statements against HANA compatibility rules
     pub fn validate_hana_compatibility(
         &self,
         statements: &[Statement],
@@ -104,7 +98,6 @@ impl TransformationRules {
         Ok(())
     }
 
-    /// Check for single IDENTITY column per table
     fn check_single_identity_column(stmt: &Statement) -> Result<(), String> {
         use sqlparser::ast::{ColumnOption, GeneratedAs, Statement};
 
@@ -136,9 +129,7 @@ impl TransformationRules {
         Ok(())
     }
 
-    /// Check for PostgreSQL extensions
     fn check_no_extensions(stmt: &Statement) -> Result<(), String> {
-        // For now, just check the string representation
         let stmt_str = stmt.to_string().to_uppercase();
         if stmt_str.contains("CREATE EXTENSION") {
             return Err("PostgreSQL extensions are not supported in HANA".to_string());

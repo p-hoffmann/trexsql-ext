@@ -91,7 +91,6 @@ impl PipelineRegistry {
         }
     }
 
-    /// Get the singleton instance.
     pub fn instance() -> &'static PipelineRegistry {
         static INSTANCE: OnceLock<PipelineRegistry> = OnceLock::new();
         INSTANCE.get_or_init(PipelineRegistry::new)
@@ -145,7 +144,6 @@ impl PipelineRegistry {
         Ok(())
     }
 
-    /// Attach a spawned thread handle to a reserved pipeline.
     pub fn set_thread_handle(
         &self,
         name: &str,
@@ -157,7 +155,6 @@ impl PipelineRegistry {
         }
     }
 
-    /// Update the state of a pipeline.
     pub fn update_state(&self, name: &str, state: PipelineState) {
         let _info_snapshot = {
             let mut pipelines = self.pipelines.lock().unwrap();
@@ -202,7 +199,6 @@ impl PipelineRegistry {
         }
     }
 
-    /// Update pipeline stats (rows replicated, last activity).
     pub fn update_stats(&self, name: &str, rows_delta: u64) {
         let mut pipelines = self.pipelines.lock().unwrap();
         if let Some((_, info)) = pipelines.get_mut(name) {
@@ -211,7 +207,6 @@ impl PipelineRegistry {
         }
     }
 
-    /// Set an error message on a pipeline.
     pub fn set_error(&self, name: &str, error: &str) {
         let _info_snapshot = {
             let mut pipelines = self.pipelines.lock().unwrap();
@@ -276,14 +271,12 @@ impl PipelineRegistry {
         }
     }
 
-    /// Get info for all registered pipelines.
     pub fn get_all_info(&self) -> Vec<PipelineInfo> {
         let pipelines = self.pipelines.lock().unwrap();
         pipelines.values().map(|(_, info)| info.clone()).collect()
     }
 }
 
-/// Get a shared reference to the pipeline registry.
 pub fn registry() -> &'static PipelineRegistry {
     PipelineRegistry::instance()
 }

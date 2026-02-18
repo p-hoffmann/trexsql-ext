@@ -18,7 +18,6 @@ unsafe impl Send for TrexDatabase {}
 unsafe impl Sync for TrexDatabase {}
 
 impl TrexDatabase {
-    /// Open a database. `path` is the file path or ":memory:".
     /// `flags`: bit 0 = allow unsigned extensions.
     pub fn open(path: &str, flags: u32) -> Result<Self, String> {
         unsafe {
@@ -27,7 +26,6 @@ impl TrexDatabase {
                 return Err("Failed to create config".into());
             }
 
-            // Set allow_unsigned_extensions if requested
             if flags & 1 != 0 {
                 let key = CString::new("allow_unsigned_extensions").unwrap();
                 let val = CString::new("true").unwrap();
@@ -59,12 +57,10 @@ impl TrexDatabase {
                 return Err(msg);
             }
 
-            // Create a high-level Connection from the raw database handle.
-            // owned=false means Connection won't close the database on drop.
+            // Connection won't close the database on drop -- we manage that in TrexDatabase::drop
             let conn = Connection::open_from_raw(raw_db)
                 .map_err(|e| format!("Failed to create connection: {e}"))?;
 
-            // Suppress DuckDB logging
             let _ = conn.execute_batch("CALL disable_logging()");
 
             Ok(TrexDatabase {
@@ -74,20 +70,17 @@ impl TrexDatabase {
         }
     }
 
-    /// Execute a non-query SQL statement. Returns Ok(()) on success.
     pub fn execute(&self, sql: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute_batch(sql)
             .map_err(|e| format!("{e}"))
     }
 
-    /// Execute a query and materialize the result.
     pub fn query(&self, sql: &str) -> Result<TrexResult, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         TrexResult::from_query(&conn, sql)
     }
 
-    /// Get the raw database handle for creating appenders.
     pub fn raw_db(&self) -> ffi::duckdb_database {
         self.raw_db
     }
@@ -95,11 +88,10 @@ impl TrexDatabase {
 
 impl Drop for TrexDatabase {
     fn drop(&mut self) {
-        // Drop the connection first (disconnect from db)
+        // Connection must be dropped before closing the database
         unsafe {
             ManuallyDrop::drop(self.conn.get_mut().unwrap());
         }
-        // Then close the database
         if !self.raw_db.is_null() {
             unsafe {
                 ffi::duckdb_close(&mut self.raw_db);

@@ -2,10 +2,8 @@ import type { Express } from "express";
 import { PLUGINS_BASE_PATH } from "../config.ts";
 import { scopeUrlPrefix } from "./utils.ts";
 
-// Module-level storage for merged UI plugins JSON
 let pluginsJson: string = "{}";
 
-// Tracked registered UI static routes
 export const REGISTERED_UI_ROUTES: Array<{
   pluginName: string;
   urlPrefix: string;

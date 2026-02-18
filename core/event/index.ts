@@ -2,7 +2,6 @@ const eventManager = new globalThis.EventManager();
 
 console.log("event manager running");
 
-// Database logging setup
 interface LogEntry {
   event_type: string;
   level: string;

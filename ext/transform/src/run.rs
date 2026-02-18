@@ -71,8 +71,7 @@ fn process_incremental_markers(sql: &str, schema: &str, model_name: &str, is_new
         let end_pos = match after_start.find(end_marker) {
             Some(pos) => pos,
             None => {
-                // Unmatched start marker — leave as-is
-                result.push_str(remaining);
+                    result.push_str(remaining);
                 break;
             }
         };
@@ -82,10 +81,8 @@ fn process_incremental_markers(sql: &str, schema: &str, model_name: &str, is_new
         remaining = &after_start[end_pos + end_marker.len()..];
 
         if is_new {
-            // First run: strip the entire block
             result.push_str(before.trim_end());
         } else {
-            // Subsequent runs: keep the block content, remove markers, resolve __this__
             result.push_str(before.trim_end());
             result.push_str(&block.replace("__this__", &this_ref));
         }
@@ -152,12 +149,10 @@ fn materialize_merge(
     let staging = format!("__staging_{model_name}__");
     let esc_staging = escape_sql_ident(&staging);
 
-    // 1. Create temp staging table
     execute_sql(&format!(
         "CREATE TEMPORARY TABLE \"{esc_staging}\" AS {rewritten}"
     ))?;
 
-    // Run merge operations, always cleaning up staging table even on error
     let result = materialize_merge_inner(
         schema,
         model_name,
@@ -168,7 +163,6 @@ fn materialize_merge(
         merge_exclude_columns,
     );
 
-    // Always cleanup staging table
     let _ = execute_sql(&format!("DROP TABLE IF EXISTS \"{esc_staging}\""));
 
     result
@@ -186,7 +180,7 @@ fn materialize_merge_inner(
     let esc_schema = escape_sql_ident(schema);
     let esc_name = escape_sql_ident(model_name);
 
-    // 2. Introspect columns from staging table (temp schema for temporary tables)
+    // Temporary tables live in the 'temp' schema
     let col_rows = query_sql(&format!(
         "SELECT column_name FROM information_schema.columns \
          WHERE table_schema = 'temp' AND table_name = '{}'",
@@ -196,7 +190,6 @@ fn materialize_merge_inner(
     let all_columns: Vec<String> = col_rows.iter().map(|r| r.columns[0].clone()).collect();
     let key_set: HashSet<&str> = unique_key.iter().map(|s| s.as_str()).collect();
 
-    // 3. Determine update columns
     let update_cols: Vec<&String> = if let Some(whitelist) = merge_update_columns {
         whitelist.iter().filter(|c| !key_set.contains(c.as_str())).collect()
     } else {
@@ -209,7 +202,6 @@ fn materialize_merge_inner(
             .collect()
     };
 
-    // 4. UPDATE existing rows
     if !update_cols.is_empty() {
         let set_clause: Vec<String> = update_cols
             .iter()
@@ -237,7 +229,6 @@ fn materialize_merge_inner(
         ))?;
     }
 
-    // 5. INSERT new rows
     let insert_join: Vec<String> = unique_key
         .iter()
         .map(|k| {
@@ -281,7 +272,6 @@ fn materialize_microbatch(
     let trunc = batch_size.as_trunc();
     let interval = batch_size.as_interval();
 
-    // Compute batch_end
     let batch_end_rows = query_sql(&format!(
         "SELECT date_trunc('{trunc}', CURRENT_TIMESTAMP)::VARCHAR"
     ))?;
@@ -290,7 +280,6 @@ fn materialize_microbatch(
         .map(|r| r.columns[0].clone())
         .ok_or("Failed to compute batch_end")?;
 
-    // Compute batch_start
     let batch_start = if let Some(watermark) = last_watermark {
         let start_rows = query_sql(&format!(
             "SELECT ('{watermark}'::TIMESTAMP - {lookback} * INTERVAL '{interval}')::VARCHAR",
@@ -315,7 +304,6 @@ fn materialize_microbatch(
         match min_val {
             Some(v) => v,
             None => {
-                // No existing data — just insert everything
                 execute_sql(&format!(
                     "INSERT INTO \"{esc_schema}\".\"{esc_name}\" {rewritten}"
                 ))?;
@@ -324,7 +312,6 @@ fn materialize_microbatch(
         }
     };
 
-    // Delete rows in batch range
     execute_sql(&format!(
         "DELETE FROM \"{esc_schema}\".\"{esc_name}\" \
          WHERE \"{esc_updated_at}\" >= '{batch_start}'::TIMESTAMP \
@@ -333,7 +320,6 @@ fn materialize_microbatch(
         batch_end = escape_sql_str(&batch_end),
     ))?;
 
-    // Insert fresh data for batch range
     execute_sql(&format!(
         "INSERT INTO \"{esc_schema}\".\"{esc_name}\" \
          SELECT * FROM ({rewritten}) AS __batch__ \
@@ -375,7 +361,6 @@ fn inline_ephemeral_models(
         return sql.to_string();
     }
 
-    // Find which ephemeral models this SQL references
     let referenced: Vec<String> = match extract_dependencies(sql) {
         Ok(deps) => deps
             .into_iter()
@@ -388,7 +373,6 @@ fn inline_ephemeral_models(
         return sql.to_string();
     }
 
-    // Recursively resolve ephemeral-to-ephemeral dependencies and topologically sort
     let mut all_needed: HashSet<String> = HashSet::new();
     let mut queue: std::collections::VecDeque<String> = referenced.into_iter().collect();
     while let Some(name) = queue.pop_front() {
@@ -406,7 +390,6 @@ fn inline_ephemeral_models(
         }
     }
 
-    // Topological sort of ephemeral models needed
     let mut edges: HashMap<String, HashSet<String>> = HashMap::new();
     for name in &all_needed {
         let mut deps = HashSet::new();
@@ -428,7 +411,6 @@ fn inline_ephemeral_models(
         Err(_) => return sql.to_string(),
     };
 
-    // Build CTE definitions — rewrite table references in ephemeral SQL too
     let mut cte_parts: Vec<String> = Vec::new();
     for name in &sorted {
         if let Some(eph_sql) = ephemeral_models.get(name) {
@@ -456,12 +438,10 @@ fn inline_ephemeral_models(
         return sql.to_string();
     }
 
-    // Prepend CTEs to the model SQL
     let trimmed = sql.trim_start();
     let cte_prefix = cte_parts.join(",\n     ");
 
     if let Some(rest) = trimmed.strip_prefix("WITH") {
-        // Model already has a WITH clause — prepend our CTEs before existing ones
         format!("WITH {},\n     {}", cte_prefix, rest.trim_start())
     } else {
         format!("WITH {}\n{}", cte_prefix, sql)
@@ -483,7 +463,6 @@ fn materialize_snapshot(
     let staging = format!("__snap_staging_{model_name}__");
     let esc_staging = escape_sql_ident(&staging);
 
-    // Build hash expression based on strategy (unqualified — used on staging table context)
     let hash_expr = match strategy {
         SnapshotStrategy::Timestamp => {
             let col = escape_sql_ident(updated_at.unwrap());
@@ -499,14 +478,12 @@ fn materialize_snapshot(
         }
     };
 
-    // 1. Create staging table with pre-computed hash
     execute_sql(&format!(
         "CREATE TEMPORARY TABLE \"{esc_staging}\" AS \
          SELECT *, {hash_expr} AS _stg_hash FROM ({rewritten})"
     ))?;
 
     let result = if is_new {
-        // First run: create target with snapshot columns
         execute_sql(&format!(
             "CREATE TABLE \"{esc_schema}\".\"{esc_name}\" AS \
              SELECT *, CURRENT_TIMESTAMP AS _snapshot_valid_from, \
@@ -515,7 +492,6 @@ fn materialize_snapshot(
              FROM \"{esc_staging}\""
         ))
     } else {
-        // Key matching: target vs staging
         let key_match_target_staging: Vec<String> = unique_key
             .iter()
             .map(|k| {
@@ -527,7 +503,6 @@ fn materialize_snapshot(
             .collect();
         let key_match_str = key_match_target_staging.join(" AND ");
 
-        // Key matching: staging vs target alias (__tgt__)
         let key_match_staging_tgt: Vec<String> = unique_key
             .iter()
             .map(|k| {
@@ -537,7 +512,6 @@ fn materialize_snapshot(
             .collect();
         let key_match_staging_tgt_str = key_match_staging_tgt.join(" AND ");
 
-        // Close changed/deleted records
         execute_sql(&format!(
             "UPDATE \"{esc_schema}\".\"{esc_name}\" SET _snapshot_valid_to = CURRENT_TIMESTAMP \
              WHERE _snapshot_valid_to IS NULL \
@@ -545,7 +519,6 @@ fn materialize_snapshot(
                   OR _snapshot_hash != (SELECT _stg_hash FROM \"{esc_staging}\" WHERE {key_match_str}))"
         ))?;
 
-        // Insert new/changed versions
         execute_sql(&format!(
             "INSERT INTO \"{esc_schema}\".\"{esc_name}\" \
              SELECT \"{esc_staging}\".*, CURRENT_TIMESTAMP, NULL, \"{esc_staging}\"._stg_hash \
@@ -559,7 +532,6 @@ fn materialize_snapshot(
         ))
     };
 
-    // Always cleanup staging
     let _ = execute_sql(&format!("DROP TABLE IF EXISTS \"{esc_staging}\""));
     result
 }
@@ -581,7 +553,7 @@ fn materialize_model(
     source_schema: Option<&str>,
 ) -> Result<Option<String>, Box<dyn Error>> {
     let with_ephemerals = inline_ephemeral_models(sql, ephemeral_models, schema, known_names, source_names, source_schema);
-    // Process incremental markers before rewriting (markers are comments that sqlparser strips)
+    // Must process incremental markers before SQL rewriting because sqlparser strips comments
     let processed = process_incremental_markers(&with_ephemerals, schema, model_name, is_new);
     let rewritten = if let (Some(src_names), Some(src_schema)) = (source_names, source_schema) {
         rewrite_table_references_dual(&processed, known_names, src_names, schema, src_schema)?
@@ -593,7 +565,6 @@ fn materialize_model(
 
     match materialization {
         Materialization::Ephemeral => {
-            // Ephemeral models are never materialized — they get inlined as CTEs
             Ok(None)
         }
         Materialization::View => {
@@ -633,7 +604,6 @@ fn materialize_model(
                 execute_sql(&format!(
                     "CREATE TABLE \"{esc_schema}\".\"{esc_name}\" AS {rewritten}"
                 ))?;
-                // For microbatch, return initial watermark
                 if let Some(config) = incremental_config {
                     if config.strategy == IncrementalStrategy::Microbatch {
                         if let Some(batch_size) = config.batch_size {
@@ -662,7 +632,6 @@ fn materialize_model(
                     if let Some(keys) = config.and_then(|c| c.unique_key.as_ref()) {
                         materialize_delete_insert(schema, model_name, &rewritten, keys)?;
                     } else {
-                        // No unique key — full refresh
                         execute_sql(&format!(
                             "DROP TABLE IF EXISTS \"{esc_schema}\".\"{esc_name}\""
                         ))?;
@@ -718,7 +687,6 @@ fn run_project(path: &str, schema: &str, source_schema: Option<&str>) -> Result<
     let project = load_project(path)?;
     let compiled = compile_project(&project)?;
 
-    // Ensure schema exists
     execute_sql(&format!(
         "CREATE SCHEMA IF NOT EXISTS \"{}\"",
         escape_sql_ident(schema)
@@ -749,7 +717,6 @@ fn run_project(path: &str, schema: &str, source_schema: Option<&str>) -> Result<
         }
     }
 
-    // Find directly changed models (exclude ephemeral — they're never in state)
     let mut directly_changed: HashSet<String> = HashSet::new();
     let mut checksums: HashMap<String, String> = HashMap::new();
     for model in &project.models {
@@ -774,7 +741,6 @@ fn run_project(path: &str, schema: &str, source_schema: Option<&str>) -> Result<
     let all_model_names: Vec<String> = project.models.iter().map(|m| m.name.clone()).collect();
     let affected = transitive_dependents(&directly_changed, &all_model_names, &edges);
 
-    // Drop models that no longer exist in the project
     let project_names: HashSet<String> = known_names.clone();
     let mut results = Vec::new();
 
@@ -813,7 +779,6 @@ fn run_project(path: &str, schema: &str, source_schema: Option<&str>) -> Result<
         }
     }
 
-    // Build ephemeral model map
     let ephemeral_models: HashMap<String, String> = project
         .models
         .iter()
@@ -821,7 +786,6 @@ fn run_project(path: &str, schema: &str, source_schema: Option<&str>) -> Result<
         .map(|m| (m.name.clone(), m.sql.clone()))
         .collect();
 
-    // Process models in compiled (topological) order
     for cr in &compiled {
         if cr.materialized == "seed" || cr.materialized == "ephemeral" {
             continue;
@@ -836,7 +800,7 @@ fn run_project(path: &str, schema: &str, source_schema: Option<&str>) -> Result<
         let is_new = !existing_state.contains_key(&cr.name);
         let needs_rebuild = affected.contains(&cr.name);
 
-        // Detect incremental strategy change — force rebuild if strategy changed
+        // Force rebuild when incremental strategy changes to avoid incompatible state
         let strategy_changed = if model.materialization == Materialization::Incremental {
             let current_strategy = model
                 .incremental_strategy
@@ -850,8 +814,7 @@ fn run_project(path: &str, schema: &str, source_schema: Option<&str>) -> Result<
             false
         };
 
-        // For append, microbatch, and snapshot, always run even when checksums match
-        // (they process new data, not changed definitions)
+        // These strategies process new data each run regardless of definition changes
         let always_run = match model.materialization {
             Materialization::Snapshot => true,
             Materialization::Incremental => {
@@ -875,12 +838,10 @@ fn run_project(path: &str, schema: &str, source_schema: Option<&str>) -> Result<
             continue;
         }
 
-        // Build incremental config if applicable
         let inc_config = if model.materialization == Materialization::Incremental {
             let strategy = model
                 .incremental_strategy
                 .unwrap_or(IncrementalStrategy::DeleteInsert);
-            // Clear watermark when strategy changes to avoid stale state
             let last_watermark = if strategy_changed {
                 None
             } else {
@@ -907,7 +868,6 @@ fn run_project(path: &str, schema: &str, source_schema: Option<&str>) -> Result<
 
         execute_sql("BEGIN TRANSACTION;")?;
 
-        // Execute pre-hooks
         if let Some(hooks) = &model.pre_hooks {
             if let Err(e) = execute_hooks(hooks, schema, &model.name) {
                 let _ = execute_sql("ROLLBACK;");
@@ -932,7 +892,6 @@ fn run_project(path: &str, schema: &str, source_schema: Option<&str>) -> Result<
             source_schema,
         ) {
             Ok(new_watermark) => {
-                // Execute post-hooks
                 if let Some(hooks) = &model.post_hooks {
                     if let Err(e) = execute_hooks(hooks, schema, &model.name) {
                         let _ = execute_sql("ROLLBACK;");

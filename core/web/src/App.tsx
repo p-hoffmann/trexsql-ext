@@ -51,7 +51,6 @@ export default function App() {
     <GraphQLProvider>
     <BrowserRouter basename={BASE_PATH}>
       <Routes>
-        {/* Public routes */}
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -60,11 +59,9 @@ export default function App() {
         <Route path="/consent" element={<Consent />} />
         <Route path="/change-password" element={<ChangePassword />} />
 
-        {/* Authenticated routes */}
         <Route element={<Layout />}>
           <Route path="/profile" element={<Profile />} />
 
-          {/* Admin routes */}
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<Navigate to="users" replace />} />
             <Route path="users" element={<Users />} />
@@ -96,7 +93,6 @@ export default function App() {
           </Route>
         </Route>
 
-        {/* Root redirect */}
         <Route path="/" element={<HomeRedirect />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

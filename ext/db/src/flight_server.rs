@@ -66,8 +66,6 @@ impl DuckDBFlightService {
             })
     }
 
-    /// Execute a SQL query against trexsql and collect the resulting
-    /// RecordBatches along with the schema.
     fn execute_query(
         connection: &Arc<Mutex<Connection>>,
         sql: &str,

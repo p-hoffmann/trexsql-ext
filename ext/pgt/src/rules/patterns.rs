@@ -1,7 +1,6 @@
 use crate::error::TransformationResult;
 use regex::Regex;
 
-/// Pattern-based SQL transformations
 pub struct PatternTransformer {
     patterns: Vec<TransformationPattern>,
 }
@@ -16,9 +15,7 @@ impl PatternTransformer {
         transformer
     }
 
-    /// Add default transformation patterns
     fn add_default_patterns(&mut self) {
-        // LIMIT/OFFSET transformation
         self.add_pattern(TransformationPattern::new(
             "limit_offset",
             r"LIMIT\s+(\d+)\s+OFFSET\s+(\d+)",
@@ -26,7 +23,6 @@ impl PatternTransformer {
             "Transform PostgreSQL LIMIT/OFFSET to HANA syntax",
         ));
 
-        // ILIKE to case-insensitive LIKE
         self.add_pattern(TransformationPattern::new(
             "ilike_transform",
             r"(\w+)\s+ILIKE\s+'([^']*)'",
@@ -34,7 +30,6 @@ impl PatternTransformer {
             "Transform ILIKE to case-insensitive LIKE",
         ));
 
-        // Boolean literals
         self.add_pattern(TransformationPattern::new(
             "boolean_true",
             r"\btrue\b",
@@ -49,7 +44,6 @@ impl PatternTransformer {
             "Standardize boolean false literal",
         ));
 
-        // EXTRACT function transformations
         self.add_pattern(TransformationPattern::new(
             "extract_dow",
             r"EXTRACT\(\s*dow\s+FROM\s+([^)]+)\)",
@@ -71,7 +65,6 @@ impl PatternTransformer {
             "Transform EXTRACT(epoch FROM timestamp) to SECONDS_BETWEEN",
         ));
 
-        // PostgreSQL-specific operators to functions
         self.add_pattern(TransformationPattern::new(
             "regex_match",
             r"(\w+)\s*~\s*'([^']*)'",
@@ -86,7 +79,6 @@ impl PatternTransformer {
             "Transform case-insensitive regex match to LOCATE_REGEXPR with flag",
         ));
 
-        // String concatenation with ||
         self.add_pattern(TransformationPattern::new(
             "string_concat_null_handling",
             r"(\w+)\s*\|\|\s*(\w+)",
@@ -94,7 +86,6 @@ impl PatternTransformer {
             "Transform || operator to CONCAT function for better null handling",
         ));
 
-        // POSITION function transformation
         self.add_pattern(TransformationPattern::new(
             "position_function",
             r"POSITION\(\s*'([^']*)'\s+IN\s+(\w+)\)",
@@ -102,7 +93,6 @@ impl PatternTransformer {
             "Transform POSITION(substring IN string) to LOCATE(substring, string)",
         ));
 
-        // SUBSTRING with FROM/FOR syntax
         self.add_pattern(TransformationPattern::new(
             "substring_from_for",
             r"SUBSTRING\(\s*(\w+)\s+FROM\s+(\d+)\s+FOR\s+(\d+)\)",
@@ -110,7 +100,6 @@ impl PatternTransformer {
             "Transform SUBSTRING(string FROM start FOR length) to SUBSTRING(string, start, length)",
         ));
 
-        // Array access (convert to string manipulation)
         self.add_pattern(TransformationPattern::new(
             "array_access",
             r"(\w+)\[(\d+)\]",
@@ -118,7 +107,6 @@ impl PatternTransformer {
             "Transform array access to string splitting (assuming comma-separated values)",
         ));
 
-        // Date/time arithmetic
         self.add_pattern(TransformationPattern::new(
             "interval_addition",
             r"(\w+)\s*\+\s*INTERVAL\s+'(\d+)'\s+(\w+)",
@@ -126,7 +114,6 @@ impl PatternTransformer {
             "Transform date + INTERVAL to HANA date functions",
         ));
 
-        // COALESCE optimization for PostgreSQL patterns
         self.add_pattern(TransformationPattern::new(
             "coalesce_empty_string",
             r"COALESCE\(\s*(\w+),\s*''\s*\)",
@@ -135,12 +122,10 @@ impl PatternTransformer {
         ));
     }
 
-    /// Add a transformation pattern
     pub fn add_pattern(&mut self, pattern: TransformationPattern) {
         self.patterns.push(pattern);
     }
 
-    /// Apply all patterns to transform SQL
     pub fn transform(&self, sql: &str) -> TransformationResult<String> {
         let mut result = sql.to_string();
         let mut applied_transformations = Vec::new();
@@ -166,7 +151,6 @@ impl PatternTransformer {
         Ok(result)
     }
 
-    /// Get all available patterns
     pub fn patterns(&self) -> &[TransformationPattern] {
         &self.patterns
     }
@@ -178,7 +162,6 @@ impl Default for PatternTransformer {
     }
 }
 
-/// A single transformation pattern
 pub struct TransformationPattern {
     pub name: String,
     pub description: String,
@@ -199,7 +182,6 @@ impl TransformationPattern {
         }
     }
 
-    /// Apply this pattern to the input SQL
     pub fn apply(&self, sql: &str) -> TransformationResult<(String, bool)> {
         if self.regex.is_match(sql) {
             let result = self.regex.replace_all(sql, &self.replacement).to_string();
@@ -209,23 +191,19 @@ impl TransformationPattern {
         }
     }
 
-    /// Check if this pattern matches the input
     pub fn matches(&self, sql: &str) -> bool {
         self.regex.is_match(sql)
     }
 
-    /// Get the regex pattern as a string
     pub fn pattern(&self) -> String {
         self.regex.as_str().to_string()
     }
 
-    /// Get the replacement string
     pub fn replacement(&self) -> &str {
         &self.replacement
     }
 }
 
-/// Conditional pattern transformer that applies patterns based on context
 pub struct ConditionalPatternTransformer {
     patterns: Vec<ConditionalPattern>,
 }
@@ -237,12 +215,10 @@ impl ConditionalPatternTransformer {
         }
     }
 
-    /// Add a conditional pattern
     pub fn add_conditional_pattern(&mut self, pattern: ConditionalPattern) {
         self.patterns.push(pattern);
     }
 
-    /// Transform SQL based on conditional patterns
     pub fn transform(
         &self,
         sql: &str,
@@ -276,7 +252,6 @@ impl Default for ConditionalPatternTransformer {
     }
 }
 
-/// A transformation pattern with application conditions
 pub struct ConditionalPattern {
     pub pattern: TransformationPattern,
     pub conditions: Vec<PatternCondition>,
@@ -295,10 +270,9 @@ impl ConditionalPattern {
         self
     }
 
-    /// Check if this pattern should be applied given the context
     pub fn should_apply(&self, context: &TransformationContext) -> bool {
         if self.conditions.is_empty() {
-            return true; // No conditions means always apply
+            return true;
         }
 
         self.conditions
@@ -307,7 +281,6 @@ impl ConditionalPattern {
     }
 }
 
-/// Condition for applying a pattern
 pub enum PatternCondition {
     StatementType(String),
     ContextContains(String),
@@ -340,7 +313,6 @@ impl PatternCondition {
     }
 }
 
-/// Context information for pattern application
 pub struct TransformationContext {
     pub statement_type: Option<String>,
     pub current_function: Option<String>,

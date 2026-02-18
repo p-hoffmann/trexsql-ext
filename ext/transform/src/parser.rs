@@ -192,8 +192,6 @@ fn extract_from_expr(
     }
 }
 
-/// Rewrite unqualified table references with dual-schema routing:
-/// source_names → source_schema, other known_names → dest_schema.
 pub fn rewrite_table_references_dual(
     sql: &str,
     known_names: &HashSet<String>,
@@ -220,7 +218,6 @@ pub fn rewrite_table_references_dual(
     Ok(rewritten.join(";\n"))
 }
 
-/// Rewrite unqualified table references that match known names to be schema-qualified.
 pub fn rewrite_table_references(
     sql: &str,
     known_names: &HashSet<String>,

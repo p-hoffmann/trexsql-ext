@@ -24,10 +24,8 @@ struct Cli {
 fn main() {
     let cli = Cli::parse();
 
-    // Initialize logging
     init_logging(cli.verbose, cli.quiet);
 
-    // Parse dialect
     let dialect = match Dialect::from_str(&cli.dialect) {
         Ok(d) => d,
         Err(e) => {
@@ -42,10 +40,8 @@ fn main() {
         println!();
     }
 
-    // Load default configuration
     let config = TransformationConfig::default();
 
-    // Run interactive mode
     if let Err(e) = interactive_command(&config, dialect) {
         eprintln!("Error: {}", e);
         std::process::exit(1);
@@ -76,7 +72,6 @@ fn interactive_command(config: &TransformationConfig, dialect: Dialect) -> Resul
         let mut input = String::new();
         let mut line = String::new();
 
-        // Read input until empty line
         loop {
             line.clear();
             match io::stdin().read_line(&mut line) {

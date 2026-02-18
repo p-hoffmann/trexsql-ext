@@ -1,6 +1,5 @@
 use thiserror::Error;
 
-/// Main error type for transformation operations
 #[derive(Error, Debug)]
 pub enum TransformationError {
     #[error("Parse error: {message} at line {line}, column {column}")]
@@ -58,7 +57,6 @@ pub enum TransformationError {
     SerializationError(#[from] serde_json::Error),
 }
 
-/// Warning that doesn't prevent transformation but should be noted
 #[derive(Debug, Clone)]
 pub struct TransformationWarning {
     pub message: String,
@@ -66,7 +64,6 @@ pub struct TransformationWarning {
     pub severity: WarningSeverity,
 }
 
-/// Severity level for warnings
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WarningSeverity {
     Low,
@@ -74,7 +71,6 @@ pub enum WarningSeverity {
     High,
 }
 
-/// Source location information for errors and warnings
 #[derive(Debug, Clone)]
 pub struct SourceLocation {
     pub line: usize,
@@ -82,7 +78,6 @@ pub struct SourceLocation {
     pub file: Option<String>,
 }
 
-/// Result type for transformation operations
 pub type TransformationResult<T> = Result<T, TransformationError>;
 
 impl Clone for TransformationError {
@@ -156,7 +151,6 @@ impl Clone for TransformationError {
 }
 
 impl TransformationError {
-    /// Create a new unsupported feature error
     pub fn unsupported(feature: &str) -> Self {
         Self::UnsupportedFeature {
             feature: feature.to_string(),
@@ -165,7 +159,6 @@ impl TransformationError {
         }
     }
 
-    /// Create a new unsupported feature error with context and suggestion
     pub fn unsupported_with_context(
         feature: &str,
         context: &str,
@@ -178,7 +171,6 @@ impl TransformationError {
         }
     }
 
-    /// Create a new data type error
     pub fn data_type(pg_type: &str, suggested_hana_type: &str, context: &str) -> Self {
         Self::DataTypeError {
             pg_type: pg_type.to_string(),
@@ -187,7 +179,6 @@ impl TransformationError {
         }
     }
 
-    /// Create a new function error
     pub fn function(function: &str, reason: &str) -> Self {
         Self::FunctionError {
             function: function.to_string(),
@@ -195,7 +186,6 @@ impl TransformationError {
         }
     }
 
-    /// Create a new validation error
     pub fn validation(hana_rule_violations: Vec<String>, suggestions: Vec<String>) -> Self {
         Self::ValidationError {
             hana_rule_violations,
@@ -203,7 +193,6 @@ impl TransformationError {
         }
     }
 
-    /// Create a new partial transformation error
     pub fn partial_transformation(
         succeeded: usize,
         failed: usize,
@@ -218,7 +207,6 @@ impl TransformationError {
         }
     }
 
-    /// Create a new configuration error
     pub fn config(message: &str) -> Self {
         Self::ConfigError {
             message: message.to_string(),
@@ -227,7 +215,6 @@ impl TransformationError {
 }
 
 impl TransformationWarning {
-    /// Create a new warning
     pub fn new(message: &str, severity: WarningSeverity) -> Self {
         Self {
             message: message.to_string(),
@@ -236,7 +223,6 @@ impl TransformationWarning {
         }
     }
 
-    /// Create a new warning with location
     pub fn with_location(
         message: &str,
         severity: WarningSeverity,
@@ -249,17 +235,14 @@ impl TransformationWarning {
         }
     }
 
-    /// Create a low severity warning
     pub fn low(message: &str) -> Self {
         Self::new(message, WarningSeverity::Low)
     }
 
-    /// Create a medium severity warning
     pub fn medium(message: &str) -> Self {
         Self::new(message, WarningSeverity::Medium)
     }
 
-    /// Create a high severity warning
     pub fn high(message: &str) -> Self {
         Self::new(message, WarningSeverity::High)
     }
@@ -279,7 +262,6 @@ impl std::fmt::Display for TransformationWarning {
 }
 
 impl SourceLocation {
-    /// Create a new source location
     pub fn new(line: usize, column: usize) -> Self {
         Self {
             line,
@@ -288,7 +270,6 @@ impl SourceLocation {
         }
     }
 
-    /// Create a new source location with file
     pub fn with_file(line: usize, column: usize, file: &str) -> Self {
         Self {
             line,
@@ -298,7 +279,6 @@ impl SourceLocation {
     }
 }
 
-/// Performance metrics for transformation operations
 #[derive(Debug, Clone, Default)]
 pub struct PerformanceMetrics {
     pub parse_time_ms: u64,
@@ -306,7 +286,6 @@ pub struct PerformanceMetrics {
     pub total_time_ms: u64,
 }
 
-/// Detailed result with metadata and warnings for Phase 3C
 #[derive(Debug, Clone)]
 pub struct DetailedResult<T> {
     pub result: TransformationResult<T>,
@@ -314,7 +293,6 @@ pub struct DetailedResult<T> {
     pub metadata: Option<EnhancedTransformationMetadata>,
 }
 
-/// Enhanced metadata for Phase 3C features
 #[derive(Debug, Clone)]
 pub struct EnhancedTransformationMetadata {
     pub transformations_applied: Vec<String>,

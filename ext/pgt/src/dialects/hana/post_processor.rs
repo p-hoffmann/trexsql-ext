@@ -1,7 +1,6 @@
 use crate::error::TransformationResult;
 use regex::Regex;
 
-/// Post-processor to fix SQL formatting issues from sqlparser
 pub struct PostProcessor;
 
 impl PostProcessor {
@@ -9,25 +8,19 @@ impl PostProcessor {
         Self
     }
 
-    /// Apply post-processing fixes to SQL string
     pub fn process(&self, sql: &str) -> TransformationResult<String> {
         let mut result = sql.to_string();
 
-        // Fix FULL OUTER JOIN formatting issue
-        // sqlparser outputs "FULL JOIN" but we want "FULL OUTER JOIN" for HANA compatibility
+        // sqlparser outputs "FULL JOIN" but HANA requires "FULL OUTER JOIN"
         result = self.fix_full_outer_join(&result)?;
 
-        // Fix INDEX USING clause removal
-        // Remove USING btree/gin/etc clauses from CREATE INDEX statements
+        // HANA doesn't support USING btree/gin/etc on CREATE INDEX
         result = self.fix_index_using_clause(&result)?;
 
         Ok(result)
     }
 
-    /// Fix FULL OUTER JOIN formatting
     fn fix_full_outer_join(&self, sql: &str) -> TransformationResult<String> {
-        // Replace "FULL JOIN" with "FULL OUTER JOIN" but be careful not to replace
-        // cases where it's actually supposed to be "FULL JOIN" in other contexts
         let regex = Regex::new(r"\bFULL\s+JOIN\b").map_err(|e| {
             crate::error::TransformationError::ParseError {
                 message: format!("Regex error: {}", e),
@@ -39,9 +32,7 @@ impl PostProcessor {
         Ok(regex.replace_all(sql, "FULL OUTER JOIN").to_string())
     }
 
-    /// Remove USING clause from CREATE INDEX statements
     fn fix_index_using_clause(&self, sql: &str) -> TransformationResult<String> {
-        // Remove "USING btree", "USING gin", "USING BTREE", "USING GIN", etc.
         let regex = Regex::new(
             r"\bUSING\s+(?:btree|gin|hash|gist|spgist|brin|BTREE|GIN|HASH|GIST|SPGIST|BRIN)\b",
         )
@@ -51,10 +42,8 @@ impl PostProcessor {
             column: 0,
         })?;
 
-        // Replace with empty string and clean up extra spaces
         let result = regex.replace_all(sql, "").to_string();
 
-        // Clean up any double spaces that might have been left
         let cleanup_regex =
             Regex::new(r"\s+").map_err(|e| crate::error::TransformationError::ParseError {
                 message: format!("Regex error: {}", e),

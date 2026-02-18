@@ -155,14 +155,12 @@ export function AppDetail() {
   const app: OAuthAppDetail | null =
     result.data?.oauthApplicationById || null;
 
-  // Edit state
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState("");
   const [editRedirectUris, setEditRedirectUris] = useState<string[]>([]);
   const [editScope, setEditScope] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // Dialog state
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [rotateDialogOpen, setRotateDialogOpen] = useState(false);
   const [newSecret, setNewSecret] = useState<string | null>(null);

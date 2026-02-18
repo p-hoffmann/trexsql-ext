@@ -36,8 +36,6 @@ import {
 } from "lucide-react";
 import { BASE_PATH } from "@/lib/config";
 
-// --- Types ---
-
 interface SessionInfo {
   id: string;
   token: string;
@@ -57,8 +55,6 @@ interface AccountInfo {
 // Known social providers the system supports.
 // Extend this list as new providers are configured in Better Auth.
 const KNOWN_PROVIDERS = ["github", "google", "microsoft", "apple"] as const;
-
-// --- Helpers ---
 
 function parseUserAgent(ua: string | null): {
   browser: string;
@@ -89,8 +85,6 @@ function providerDisplayName(provider: string): string {
   };
   return names[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
 }
-
-// --- Profile Tab ---
 
 function ProfileTab() {
   const { data: session, isPending } = useSession();
@@ -196,8 +190,6 @@ function ProfileTab() {
     </Card>
   );
 }
-
-// --- Security Tab (password change) ---
 
 function SecurityTab() {
   const [currentPassword, setCurrentPassword] = useState("");
@@ -594,8 +586,6 @@ function SessionsTab() {
   );
 }
 
-// --- API Keys Tab (admin-only) ---
-
 interface ApiKeyInfo {
   id: string;
   name: string;
@@ -845,8 +835,6 @@ function ApiKeysTab() {
     </>
   );
 }
-
-// --- Main Profile Page ---
 
 export function Profile() {
   const { data: session } = useSession();

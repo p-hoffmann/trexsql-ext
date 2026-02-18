@@ -89,7 +89,6 @@ export function Databases() {
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
 
-  // Form state
   const [formId, setFormId] = useState("");
   const [formHost, setFormHost] = useState("");
   const [formPort, setFormPort] = useState("5432");
