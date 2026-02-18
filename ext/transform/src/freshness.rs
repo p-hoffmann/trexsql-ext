@@ -44,7 +44,6 @@ fn check_freshness(
         let esc_name = escape_sql_ident(&source.name);
         let esc_field = escape_sql_ident(&source.loaded_at_field);
 
-        // Get max loaded_at value
         let max_rows = query_sql(&format!(
             "SELECT MAX(\"{esc_field}\")::VARCHAR FROM \"{esc_schema}\".\"{esc_name}\""
         ));
@@ -59,7 +58,6 @@ fn check_freshness(
                 if max_val.is_empty() {
                     ("NULL".to_string(), f64::INFINITY, "error".to_string())
                 } else {
-                    // Compute age in hours
                     let age_rows = query_sql(&format!(
                         "SELECT EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - '{}'::TIMESTAMP) / 3600.0",
                         crate::escape_sql_str(&max_val)

@@ -11,12 +11,11 @@ pub struct TrexResult {
 }
 
 impl TrexResult {
-    /// Execute a query and materialize all rows into memory.
     pub fn from_query(conn: &Connection, sql: &str) -> Result<Self, String> {
         let mut stmt = conn.prepare(sql).map_err(|e| format!("{e}"))?;
         let mut rows_iter = stmt.query([]).map_err(|e| format!("{e}"))?;
 
-        // Get column info from the executed statement (must be after query())
+        // Column info is only available after query() has been called
         let (column_count, column_names) = {
             let s = rows_iter.as_ref().expect("statement should be available");
             let names: Vec<CString> = s
@@ -51,7 +50,7 @@ impl TrexResult {
         self.column_names.len() as i32
     }
 
-    /// Returns pointer to column name. Owned by the result; valid until result is freed.
+    /// Returned pointer is owned by the result; valid until result is freed.
     pub fn column_name(&self, col: i32) -> *const c_char {
         match self.column_names.get(col as usize) {
             Some(name) => name.as_ptr(),
@@ -59,7 +58,6 @@ impl TrexResult {
         }
     }
 
-    /// Advance to next row. Returns true if a row is available.
     pub fn next(&mut self) -> bool {
         self.current_row += 1;
         (self.current_row as usize) < self.rows.len()
@@ -81,7 +79,7 @@ impl TrexResult {
         }
     }
 
-    /// Returns a newly allocated CString. Caller must free with trexsql_free_string.
+    /// Caller must free with trexsql_free_string.
     pub fn get_string(&self, col: i32) -> Option<CString> {
         let val = self.current_value(col)?;
         let s = value_to_string(val);
@@ -178,25 +176,21 @@ mod tests {
         let mut result = TrexResult::from_query(&conn, "SELECT id, name FROM t ORDER BY id").unwrap();
         assert_eq!(result.column_count(), 2);
 
-        // Check column names
         let name0 = unsafe { CStr::from_ptr(result.column_name(0)) };
         assert_eq!(name0.to_str().unwrap(), "id");
         let name1 = unsafe { CStr::from_ptr(result.column_name(1)) };
         assert_eq!(name1.to_str().unwrap(), "name");
 
-        // Row 1
         assert!(result.next());
         assert_eq!(result.get_long(0), 1);
         let s = result.get_string(1).unwrap();
         assert_eq!(s.to_str().unwrap(), "hello");
 
-        // Row 2
         assert!(result.next());
         assert_eq!(result.get_long(0), 2);
         let s = result.get_string(1).unwrap();
         assert_eq!(s.to_str().unwrap(), "world");
 
-        // No more rows
         assert!(!result.next());
     }
 

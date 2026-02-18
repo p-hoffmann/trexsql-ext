@@ -1,7 +1,6 @@
 use etl_lib::types::Cell;
 use etl_lib::types::Type;
 
-/// Convert a PostgreSQL type to the corresponding trexsql SQL type name.
 pub fn pg_type_to_duckdb(typ: &Type) -> &'static str {
     match *typ {
         Type::BOOL => "BOOLEAN",
@@ -33,7 +32,6 @@ pub fn pg_type_to_duckdb(typ: &Type) -> &'static str {
     }
 }
 
-/// Convert a Cell value to a SQL literal string.
 pub fn cell_to_sql_literal(cell: &Cell) -> String {
     match cell {
         Cell::Null => "NULL".to_string(),

@@ -4,17 +4,14 @@ use std::path::Path;
 
 use crate::error::{TransformationError, TransformationResult};
 
-/// Read SQL content from a file
 pub fn read_sql_file<P: AsRef<Path>>(path: P) -> TransformationResult<String> {
     fs::read_to_string(path.as_ref()).map_err(|e| TransformationError::IoError(e))
 }
 
-/// Write SQL content to a file
 pub fn write_sql_file<P: AsRef<Path>>(path: P, content: &str) -> TransformationResult<()> {
     fs::write(path.as_ref(), content).map_err(|e| TransformationError::IoError(e))
 }
 
-/// Ensure parent directory exists for a file path
 pub fn ensure_parent_dir<P: AsRef<Path>>(path: P) -> TransformationResult<()> {
     if let Some(parent) = path.as_ref().parent() {
         if !parent.exists() {
@@ -24,7 +21,6 @@ pub fn ensure_parent_dir<P: AsRef<Path>>(path: P) -> TransformationResult<()> {
     Ok(())
 }
 
-/// Check if a path is a SQL file
 pub fn is_sql_file<P: AsRef<Path>>(path: P) -> bool {
     path.as_ref()
         .extension()
@@ -33,18 +29,15 @@ pub fn is_sql_file<P: AsRef<Path>>(path: P) -> bool {
         .unwrap_or(false)
 }
 
-/// Get file size in bytes
 pub fn get_file_size<P: AsRef<Path>>(path: P) -> io::Result<u64> {
     let metadata = fs::metadata(path)?;
     Ok(metadata.len())
 }
 
-/// Check if file exists and is readable
 pub fn is_readable_file<P: AsRef<Path>>(path: P) -> bool {
     path.as_ref().is_file() && path.as_ref().exists()
 }
 
-/// Get file stem (filename without extension)
 pub fn get_file_stem<P: AsRef<Path>>(path: P) -> Option<String> {
     path.as_ref()
         .file_stem()
@@ -52,7 +45,6 @@ pub fn get_file_stem<P: AsRef<Path>>(path: P) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// Create backup of existing file before overwriting
 pub fn backup_file<P: AsRef<Path>>(path: P) -> TransformationResult<Option<std::path::PathBuf>> {
     let path = path.as_ref();
 

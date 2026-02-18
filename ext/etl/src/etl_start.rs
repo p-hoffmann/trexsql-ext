@@ -400,7 +400,6 @@ fn start_copy_only_pipeline(
             pipeline_registry::registry()
                 .update_state(&pipeline_name, PipelineState::Starting);
 
-            // Load postgres scanner and attach source
             {
                 let conn = shared_conn
                     .lock()
@@ -420,7 +419,6 @@ fn start_copy_only_pipeline(
             pipeline_registry::registry()
                 .update_state(&pipeline_name, PipelineState::Snapshotting);
 
-            // Discover tables from information_schema
             let tables: Vec<String> = {
                 let conn = shared_conn
                     .lock()
@@ -440,12 +438,10 @@ fn start_copy_only_pipeline(
 
             let mut had_error = false;
             for table in &tables {
-                // Check for shutdown between tables
                 match shutdown.try_recv() {
                     Ok(_) | Err(oneshot::error::TryRecvError::Closed) => {
                         pipeline_registry::registry()
                             .update_state(&pipeline_name, PipelineState::Stopping);
-                        // Detach source
                         if let Ok(conn) = shared_conn.lock() {
                             let _ = conn.execute_batch(&format!("DETACH \"{}\"", attach_name));
                         }
@@ -466,7 +462,6 @@ fn start_copy_only_pipeline(
                     escaped_table
                 );
 
-                // Ensure target schema exists
                 let ensure_schema_sql = format!(
                     "CREATE SCHEMA IF NOT EXISTS \"{}\"",
                     escaped_schema
@@ -479,7 +474,6 @@ fn start_copy_only_pipeline(
                         }
                         match conn.execute_batch(&copy_sql) {
                             Ok(_) => {
-                                // Get row count for stats
                                 let count_sql = format!(
                                     "SELECT COUNT(*) FROM \"{}\".\"{}\"",
                                     escaped_schema, escaped_table
@@ -509,7 +503,6 @@ fn start_copy_only_pipeline(
                 }
             }
 
-            // Detach source
             if let Ok(conn) = shared_conn.lock() {
                 let _ = conn.execute_batch(&format!("DETACH \"{}\"", attach_name));
             }
