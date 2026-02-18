@@ -28,9 +28,7 @@ ext/pgwire/
 ext/swarm/
 ext/tpm/
 
-# pg_trex: only keep build artifacts needed by Dockerfile
-ext/pg_trex/target/release/
-ext/pg_trex/src/
+# pg_trex: exclude build artifacts and tests
+ext/pg_trex/target/
 ext/pg_trex/test/
-ext/pg_trex/Cargo.*
 ext/pg_trex/Makefile

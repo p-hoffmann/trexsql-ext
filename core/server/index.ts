@@ -227,32 +227,6 @@ try {
   console.error("Plugin system failed to initialize:", err);
 }
 
-// Run core schema migrations (SCHEMA_DIR) directly against PostgreSQL
-try {
-  const schemaDir = Deno.env.get("SCHEMA_DIR");
-  const databaseUrlForMigration = Deno.env.get("DATABASE_URL");
-  if (schemaDir && databaseUrlForMigration) {
-    const { Pool: PgPool } = await import("pg");
-    const { readdirSync, readFileSync } = await import("node:fs");
-    const migrationPool = new PgPool({ connectionString: databaseUrlForMigration });
-    try {
-      const files = readdirSync(schemaDir)
-        .filter((f: string) => f.endsWith(".sql"))
-        .sort();
-      for (const file of files) {
-        const sql = readFileSync(join(schemaDir, file), "utf-8");
-        await migrationPool.query(sql);
-        console.log(`Schema migration applied: ${file}`);
-      }
-      console.log("Core schema migrations applied");
-    } finally {
-      await migrationPool.end();
-    }
-  }
-} catch (err) {
-  console.error("Core schema migration failed:", err);
-}
-
 // Run plugin migrations after plugin discovery
 try {
   const { runAllPluginMigrations } = await import("./plugin/migration.ts");

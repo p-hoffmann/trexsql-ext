@@ -35,7 +35,38 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs && \
 COPY src/ /usr/src/trexsql/src/
 RUN cargo build --release
 
-# ── Stage 2: Collect npm extensions + official DuckDB extensions ───────────
+# ── Stage 2: Build pg_trex extension ─────────────────────────────────────────
+FROM postgres:17 AS pg-trex-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl gcc libc6-dev pkg-config libssl-dev make \
+      postgresql-server-dev-17 \
+    && rm -rf /var/lib/apt/lists/*
+
+SHELL ["/bin/bash", "-c"]
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0
+
+RUN . /root/.cargo/env && cargo install cargo-pgrx --version 0.16.1 --locked
+RUN . /root/.cargo/env && cargo pgrx init --pg17=$(which pg_config)
+
+COPY --from=trex-builder /opt/trexsql /opt/trexsql
+RUN ln -sf /opt/trexsql/libtrexsql.so /usr/lib/libduckdb.so && ldconfig
+ENV TREXSQL_LIB_DIR=/opt/trexsql
+ENV TREXSQL_INCLUDE_DIR=/opt/trexsql
+
+WORKDIR /usr/src/pg_trex
+COPY ext/pg_trex/Cargo.toml ext/pg_trex/Cargo.lock ./
+RUN . /root/.cargo/env && \
+    mkdir -p src/bin && echo '#[allow(warnings)] fn main(){}' > src/bin/pgrx_embed_pg_trex.rs && \
+    echo '' > src/lib.rs && \
+    (cargo build --release 2>/dev/null || true) && \
+    rm -rf src target/release/libpg_trex* target/release/deps/pg_trex* \
+      target/release/.fingerprint/pg_trex-*
+
+COPY ext/pg_trex/src/ ./src/
+RUN . /root/.cargo/env && cargo build --release
+
+# ── Stage 3: Collect npm extensions + official DuckDB extensions ──────────
 FROM node:20-trixie-slim AS npm-deps
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
@@ -63,14 +94,14 @@ RUN mkdir -p /root/.duckdb/extensions/v${DUCKDB_VERSION}/linux_amd64 && \
 # CI override (no-op locally since dir only has .gitkeep)
 COPY extensions/ /usr/lib/trexsql/extensions/
 
-# ── Stage 3: Build documentation site ─────────────────────────────────────
+# ── Stage 4: Build documentation site ─────────────────────────────────────
 FROM node:20-trixie-slim AS docs-builder
 
 WORKDIR /usr/src/docs
 COPY docs/ .
 RUN npm ci && npm run build
 
-# ── Stage 4: Runtime (postgres:17 + everything) ───────────────────────────
+# ── Stage 5: Runtime (postgres:17 + everything) ───────────────────────────
 FROM postgres:17
 
 # ── System dependencies ──
@@ -102,8 +133,8 @@ RUN ldconfig
 # ── trex binary ──
 COPY --from=trex-builder /usr/src/trexsql/target/release/trex /usr/bin/
 
-# ── pg_trex extension (pre-built) ──
-COPY ext/pg_trex/target/debug/libpg_trex.so /usr/lib/postgresql/17/lib/pg_trex.so
+# ── pg_trex extension ──
+COPY --from=pg-trex-builder /usr/src/pg_trex/target/release/libpg_trex.so /usr/lib/postgresql/17/lib/pg_trex.so
 COPY ext/pg_trex/pg_trex.control /usr/share/postgresql/17/extension/
 COPY ext/pg_trex/sql/pg_trex--0.1.0.sql /usr/share/postgresql/17/extension/
 

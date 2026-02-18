@@ -210,11 +210,7 @@ fn load_extensions_from_dir(conn: &Connection, dir: &str) -> (u32, u32) {
     (loaded, failed)
 }
 
-/// Open an in-memory trexsql instance and load extensions.
-///
-/// When pg_trex.extension_dir is set, all .trex files from that directory are
-/// loaded (mirroring the trex binary's behavior). Otherwise, falls back to
-/// loading individual extensions from swarm_extension_path / flight_extension_path.
+/// Open an in-memory trexsql instance and load extensions from extension_dir.
 fn init_trexsql_engine() -> Result<Connection, String> {
     pgrx::log!("pg_trex: initializing trexsql engine");
 
@@ -233,28 +229,7 @@ fn init_trexsql_engine() -> Result<Connection, String> {
             loaded, failed, extension_dir
         );
     } else {
-        // Legacy per-path loading
-        let swarm_path = guc::get_str(&guc::SWARM_EXTENSION_PATH, "");
-        if !swarm_path.is_empty() {
-            validate_extension_path(&swarm_path)?;
-            pgrx::log!("pg_trex: loading swarm extension from {}", swarm_path);
-            conn.execute_batch(&format!("LOAD '{}'", swarm_path))
-                .map_err(|e| format!("LOAD swarm ({}): {}", swarm_path, e))?;
-            pgrx::log!("pg_trex: swarm extension loaded successfully");
-        } else {
-            pgrx::log!("pg_trex: swarm_extension_path not configured, skipping swarm");
-        }
-
-        let flight_path = guc::get_str(&guc::FLIGHT_EXTENSION_PATH, "");
-        if !flight_path.is_empty() {
-            validate_extension_path(&flight_path)?;
-            pgrx::log!("pg_trex: loading flight extension from {}", flight_path);
-            conn.execute_batch(&format!("LOAD '{}'", flight_path))
-                .map_err(|e| format!("LOAD flight ({}): {}", flight_path, e))?;
-            pgrx::log!("pg_trex: flight extension loaded successfully");
-        } else {
-            pgrx::log!("pg_trex: flight_extension_path not configured, skipping flight");
-        }
+        pgrx::log!("pg_trex: extension_dir not configured, no extensions loaded");
     }
 
     pgrx::log!("pg_trex: trexsql engine initialized");
@@ -262,11 +237,17 @@ fn init_trexsql_engine() -> Result<Connection, String> {
 }
 
 // ---------------------------------------------------------------------------
-// Swarm startup
+// Cluster startup
 // ---------------------------------------------------------------------------
 
-/// Call swarm_start() on the trexsql connection with GUC-configured addresses.
-fn start_swarm(conn: &Connection) -> Result<(), String> {
+/// Start the cluster via trex_db_start() with GUC-configured addresses.
+fn start_cluster(conn: &Connection) -> Result<(), String> {
+    let extension_dir = guc::get_str(&guc::EXTENSION_DIR, "");
+    if extension_dir.is_empty() {
+        pgrx::log!("pg_trex: extension_dir not set, skipping cluster start");
+        return Ok(());
+    }
+
     let gossip_addr = guc::get_str(&guc::GOSSIP_ADDR, "127.0.0.1:7946");
     let flight_addr = guc::get_str(&guc::FLIGHT_ADDR, "127.0.0.1:50051");
     let seeds = guc::get_str(&guc::SEEDS, "");
@@ -274,14 +255,8 @@ fn start_swarm(conn: &Connection) -> Result<(), String> {
     let node_name = guc::get_str(&guc::NODE_NAME, "");
     let data_node = guc::DATA_NODE.get();
 
-    let swarm_path = guc::get_str(&guc::SWARM_EXTENSION_PATH, "");
-    if swarm_path.is_empty() {
-        pgrx::log!("pg_trex: swarm extension not loaded, skipping swarm_start");
-        return Ok(());
-    }
-
     pgrx::log!(
-        "pg_trex: starting swarm (gossip={}, flight={}, seeds={}, cluster={}, node={}, data_node={})",
+        "pg_trex: starting cluster (gossip={}, flight={}, seeds={}, cluster={}, node={}, data_node={})",
         gossip_addr, flight_addr, seeds, cluster_id, node_name, data_node
     );
 
@@ -292,18 +267,18 @@ fn start_swarm(conn: &Connection) -> Result<(), String> {
     stmt.execute(params![&gossip_addr, &flight_addr, &seeds, &cluster_id, &node_name, data_node])
         .map_err(|e| format!("trex_db_start: {e}"))?;
 
-    pgrx::log!("pg_trex: swarm started successfully");
+    pgrx::log!("pg_trex: cluster started successfully");
     Ok(())
 }
 
-/// Stop the swarm (called before re-starting with new addresses on SIGHUP).
-fn stop_swarm(conn: &Connection) {
-    let swarm_path = guc::get_str(&guc::SWARM_EXTENSION_PATH, "");
-    if swarm_path.is_empty() {
+/// Stop the cluster (called before re-starting with new addresses on SIGHUP).
+fn stop_cluster(conn: &Connection) {
+    let extension_dir = guc::get_str(&guc::EXTENSION_DIR, "");
+    if extension_dir.is_empty() {
         return;
     }
 
-    pgrx::log!("pg_trex: stopping swarm for reconfiguration");
+    pgrx::log!("pg_trex: stopping cluster for reconfiguration");
     if let Err(e) = conn.execute_batch("SELECT trex_db_stop()") {
         pgrx::warning!("pg_trex: trex_db_stop failed: {}", e);
     }
@@ -333,7 +308,7 @@ impl CachedGucs {
         }
     }
 
-    /// Check if cluster-related addresses changed (requires swarm restart).
+    /// Check if cluster-related addresses changed (requires cluster restart).
     fn cluster_changed(&self, new: &CachedGucs) -> bool {
         self.gossip_addr != new.gossip_addr
             || self.flight_addr != new.flight_addr
@@ -342,7 +317,7 @@ impl CachedGucs {
     }
 }
 
-/// Handle SIGHUP: re-read GUC values and restart swarm if cluster config changed.
+/// Handle SIGHUP: re-read GUC values and restart cluster if config changed.
 fn handle_sighup(conn: &Connection, cached: &mut CachedGucs) {
     pgrx::log!("pg_trex: received SIGHUP, reloading configuration");
 
@@ -357,10 +332,10 @@ fn handle_sighup(conn: &Connection, cached: &mut CachedGucs) {
     }
 
     if cached.cluster_changed(&new) {
-        pgrx::log!("pg_trex: cluster configuration changed, restarting swarm");
-        stop_swarm(conn);
-        if let Err(e) = start_swarm(conn) {
-            pgrx::warning!("pg_trex: failed to restart swarm after SIGHUP: {}", e);
+        pgrx::log!("pg_trex: cluster configuration changed, restarting cluster");
+        stop_cluster(conn);
+        if let Err(e) = start_cluster(conn) {
+            pgrx::warning!("pg_trex: failed to restart cluster after SIGHUP: {}", e);
         }
     }
 
@@ -708,6 +683,83 @@ fn collect_responses(
 }
 
 // ---------------------------------------------------------------------------
+// Schema migration + pg_attach
+// ---------------------------------------------------------------------------
+
+/// Run core schema migrations via the migration extension and attach PostgreSQL
+/// tables via pg_attach. Migrations use postgres_scanner (ATTACH ... TYPE postgres)
+/// so they do not go through SPI. pg_attach uses spi_bridge and must run on a
+/// spawned thread while the main thread pumps process_pending().
+fn run_migrations_and_attach(conn: &Connection) {
+    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+    let schema_dir = std::env::var("SCHEMA_DIR").unwrap_or_default();
+
+    if !database_url.is_empty() && !schema_dir.is_empty() {
+        pgrx::log!("pg_trex: running core schema migrations");
+        let escaped_url = database_url.replace('\'', "''");
+        let escaped_dir = schema_dir.replace('\'', "''");
+
+        let migration_sql = format!(
+            "INSTALL postgres;\
+             ATTACH '{}' AS _config (TYPE postgres);\
+             SELECT * FROM trex_migration_run_schema('{}', 'trex', '_config');\
+             DETACH _config;",
+            escaped_url, escaped_dir,
+        );
+
+        match conn.execute_batch(&migration_sql) {
+            Ok(_) => pgrx::log!("pg_trex: core schema migrations completed"),
+            Err(e) => pgrx::warning!("pg_trex: core schema migrations failed (non-fatal): {}", e),
+        }
+    }
+
+    // pg_attach uses spi_bridge::request() which deadlocks on the main thread,
+    // so we run it on a spawned thread and pump process_pending() until done.
+    let (done_tx, done_rx) = crossbeam_channel::bounded::<Result<(), String>>(1);
+    let attach_conn = match conn.try_clone() {
+        Ok(c) => c,
+        Err(e) => {
+            pgrx::warning!("pg_trex: could not clone connection for pg_attach: {}", e);
+            return;
+        }
+    };
+
+    thread::Builder::new()
+        .name("pg_trex-attach".into())
+        .spawn(move || {
+            let result = attach_conn
+                .execute_batch("SELECT * FROM pg_attach('trex')")
+                .map_err(|e| format!("{e}"));
+            let _ = done_tx.send(result);
+        })
+        .unwrap_or_else(|e| {
+            pgrx::warning!("pg_trex: failed to spawn pg_attach thread: {}", e);
+        });
+
+    // Pump SPI bridge while waiting for pg_attach to complete
+    loop {
+        spi_bridge::process_pending();
+        match done_rx.try_recv() {
+            Ok(Ok(())) => {
+                pgrx::log!("pg_trex: pg_attach('trex') completed");
+                break;
+            }
+            Ok(Err(e)) => {
+                pgrx::warning!("pg_trex: pg_attach('trex') failed (non-fatal): {}", e);
+                break;
+            }
+            Err(crossbeam_channel::TryRecvError::Empty) => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                pgrx::warning!("pg_trex: pg_attach thread disconnected");
+                break;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Worker main entry point
 // ---------------------------------------------------------------------------
 
@@ -716,10 +768,11 @@ fn collect_responses(
 /// Called by PostgreSQL's postmaster when the background worker process starts.
 /// This function:
 /// 1. Unblocks signals (SIGHUP, SIGTERM)
-/// 2. Initializes the trexsql engine (in-memory DuckDB with extensions)
-/// 3. Starts the swarm gossip cluster
-/// 4. Creates the query thread pool
-/// 5. Enters the main loop: poll slots, dispatch queries, handle signals
+/// 2. Initializes the trexsql engine (in-memory instance with extensions)
+/// 3. Runs schema migrations and pg_attach
+/// 4. Starts the cluster (gossip + flight)
+/// 5. Creates the query thread pool
+/// 6. Enters the main loop: poll slots, dispatch queries, handle signals
 pub fn worker_main(shmem: &pgrx::PgLwLock<PgTrexShmem>) {
     // Mark worker as starting
     {
@@ -805,12 +858,14 @@ pub fn worker_main(shmem: &pgrx::PgLwLock<PgTrexShmem>) {
             pgrx::warning!("pg_trex: {}", e);
         });
 
+    // Run schema migrations (via postgres_scanner) and pg_attach before cluster start
+    run_migrations_and_attach(&conn);
+
     // When SWARM_CONFIG is set, the db extension's init already started gossip
     // and orchestrated services (including trexas). Skip the GUC-based startup.
     if std::env::var("SWARM_CONFIG").is_ok() {
-        pgrx::log!("pg_trex: SWARM_CONFIG detected, skipping GUC-based swarm start");
-    } else if let Err(e) = start_swarm(&conn) {
-        // Swarm failure is not fatal -- the engine can still serve local queries
+        pgrx::log!("pg_trex: SWARM_CONFIG detected, skipping GUC-based cluster start");
+    } else if let Err(e) = start_cluster(&conn) {
         pgrx::warning!("pg_trex: trex_db_start failed (non-fatal): {}", e);
     }
 
@@ -935,14 +990,14 @@ pub fn worker_main(shmem: &pgrx::PgLwLock<PgTrexShmem>) {
     pgrx::log!("pg_trex: shutting down thread pool");
     drop(pool);
 
-    // Stop swarm — either via GUC path or SWARM_CONFIG path
+    // Stop cluster — either via SWARM_CONFIG path or GUC-based
     if std::env::var("SWARM_CONFIG").is_ok() {
         pgrx::log!("pg_trex: stopping SWARM_CONFIG-managed services");
         if let Err(e) = conn.execute_batch("SELECT trex_db_stop()") {
             pgrx::warning!("pg_trex: trex_db_stop failed: {}", e);
         }
     } else {
-        stop_swarm(&conn);
+        stop_cluster(&conn);
     }
 
     // Mark worker as stopped
