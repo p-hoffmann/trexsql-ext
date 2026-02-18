@@ -731,7 +731,7 @@ fn run_migrations_and_attach(conn: &Connection) {
             let _ = done_tx.send(result);
         })
         .unwrap_or_else(|e| {
-            pgrx::warning!("pg_trex: failed to spawn pg_attach thread: {}", e);
+            panic!("pg_trex: failed to spawn pg_attach thread: {}", e);
         });
 
     // Pump SPI bridge while waiting for pg_attach to complete
