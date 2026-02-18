@@ -11,9 +11,7 @@ import { REGISTERED_FLOWS } from "../plugin/flow.ts";
 declare const Trex: any;
 declare const Deno: any;
 
-function escapeSql(s: string): string {
-  return s.replace(/'/g, "''");
-}
+import { escapeSql, validateInt } from "../lib/sql.ts";
 
 function assertAdmin(context: any) {
   const role = context.pgSettings?.["app.user_role"];
@@ -337,7 +335,10 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
           const registryUrl = Deno.env.get("PLUGINS_INFORMATION_URL");
           if (registryUrl) {
             try {
-              const pkgsRes = await fetch(registryUrl);
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 10000);
+              const pkgsRes = await fetch(registryUrl, { signal: controller.signal });
+              clearTimeout(timeout);
               const pkgsJson = await pkgsRes.json();
               const packages = pkgsJson.value || pkgsJson;
 
@@ -1169,10 +1170,10 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
 
             let sql: string;
             if (args.batchSize != null || args.batchTimeoutMs != null || args.retryDelayMs != null || args.retryMaxAttempts != null) {
-              const batchSize = args.batchSize ?? 1000;
-              const batchTimeout = args.batchTimeoutMs ?? 5000;
-              const retryDelay = args.retryDelayMs ?? 10000;
-              const retryMax = args.retryMaxAttempts ?? 5;
+              const batchSize = validateInt(args.batchSize ?? 1000, "batchSize");
+              const batchTimeout = validateInt(args.batchTimeoutMs ?? 5000, "batchTimeoutMs");
+              const retryDelay = validateInt(args.retryDelayMs ?? 10000, "retryDelayMs");
+              const retryMax = validateInt(args.retryMaxAttempts ?? 5, "retryMaxAttempts");
               sql = `SELECT trex_etl_start('${escapeSql(name)}', '${escapeSql(connStr)}', '${escapeSql(mode)}', ${batchSize}, ${batchTimeout}, ${retryDelay}, ${retryMax})`;
             } else {
               sql = `SELECT trex_etl_start('${escapeSql(name)}', '${escapeSql(connStr)}', '${escapeSql(mode)}')`;

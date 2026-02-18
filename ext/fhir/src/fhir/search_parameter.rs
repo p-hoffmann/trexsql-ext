@@ -421,17 +421,20 @@ fn generate_date_condition(json_path: &str, value: &str) -> Result<String, Strin
 
 fn generate_number_condition(json_path: &str, value: &str) -> Result<String, String> {
     let (prefix, num_value) = parse_prefix(value);
-    let escaped = num_value.replace('\'', "''");
+
+    let parsed: f64 = num_value
+        .parse()
+        .map_err(|_| format!("Invalid numeric value: {}", num_value))?;
 
     let field = format!("CAST(json_extract_string(_raw, '{}') AS DOUBLE)", json_path);
 
     match prefix {
-        "eq" | "" => Ok(format!("{} = {}", field, escaped)),
-        "ne" => Ok(format!("{} != {}", field, escaped)),
-        "lt" => Ok(format!("{} < {}", field, escaped)),
-        "gt" => Ok(format!("{} > {}", field, escaped)),
-        "ge" => Ok(format!("{} >= {}", field, escaped)),
-        "le" => Ok(format!("{} <= {}", field, escaped)),
+        "eq" | "" => Ok(format!("{} = {}", field, parsed)),
+        "ne" => Ok(format!("{} != {}", field, parsed)),
+        "lt" => Ok(format!("{} < {}", field, parsed)),
+        "gt" => Ok(format!("{} > {}", field, parsed)),
+        "ge" => Ok(format!("{} >= {}", field, parsed)),
+        "le" => Ok(format!("{} <= {}", field, parsed)),
         _ => Err(format!("Unknown number prefix: {}", prefix)),
     }
 }
@@ -440,19 +443,21 @@ fn generate_quantity_condition(json_path: &str, value: &str) -> Result<String, S
     let (prefix, rest) = parse_prefix(value);
     let parts: Vec<&str> = rest.splitn(3, '|').collect();
 
-    let number = parts[0].replace('\'', "''");
+    let parsed: f64 = parts[0]
+        .parse()
+        .map_err(|_| format!("Invalid numeric quantity value: {}", parts[0]))?;
     let field = format!(
         "CAST(json_extract_string(_raw, '{}.value') AS DOUBLE)",
         json_path
     );
 
     let num_condition = match prefix {
-        "eq" | "" => format!("{} = {}", field, number),
-        "ne" => format!("{} != {}", field, number),
-        "lt" => format!("{} < {}", field, number),
-        "gt" => format!("{} > {}", field, number),
-        "ge" => format!("{} >= {}", field, number),
-        "le" => format!("{} <= {}", field, number),
+        "eq" | "" => format!("{} = {}", field, parsed),
+        "ne" => format!("{} != {}", field, parsed),
+        "lt" => format!("{} < {}", field, parsed),
+        "gt" => format!("{} > {}", field, parsed),
+        "ge" => format!("{} >= {}", field, parsed),
+        "le" => format!("{} <= {}", field, parsed),
         _ => return Err(format!("Unknown quantity prefix: {}", prefix)),
     };
 

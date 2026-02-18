@@ -88,10 +88,8 @@ impl TrexDatabase {
 
 impl Drop for TrexDatabase {
     fn drop(&mut self) {
-        // Connection must be dropped before closing the database
-        unsafe {
-            ManuallyDrop::drop(self.conn.get_mut().unwrap());
-        }
+        let conn = self.conn.get_mut().unwrap_or_else(|e| e.into_inner());
+        unsafe { ManuallyDrop::drop(conn); }
         if !self.raw_db.is_null() {
             unsafe {
                 ffi::duckdb_close(&mut self.raw_db);

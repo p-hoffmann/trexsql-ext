@@ -97,7 +97,7 @@ export function AnalyticsDetail() {
   useEffect(() => {
     if (dashboard && dashboard.language !== "markdown" && !editorUrl) {
       const subpath = dashboard.language === "r" ? "r" : "py";
-      const fragment = dashboard.code ? `#${dashboard.code}` : "";
+      const fragment = dashboard.code ? `#${encodeURIComponent(dashboard.code)}` : "";
       setEditorUrl(`${BASE_PATH}/shinylive/${subpath}/editor/${fragment}`);
     }
   }, [dashboard, editorUrl]);

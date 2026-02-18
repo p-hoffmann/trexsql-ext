@@ -217,7 +217,7 @@ private:
     std::unordered_map<std::string, BatchResult> batch_results_;
     
     
-    std::unordered_map<std::string, std::unique_ptr<StreamingSession>> streaming_sessions_;
+    std::unordered_map<std::string, std::shared_ptr<StreamingSession>> streaming_sessions_;
     mutable std::mutex streaming_mutex_;
     
 public:
@@ -231,7 +231,6 @@ public:
     bool LoadModel(const std::string& model_name, const ModelConfig& config);
     bool UnloadModel(const std::string& model_name);
     std::shared_ptr<LoadedModel> GetModel(const std::string& model_name);
-    LoadedModel* GetModelRaw(const std::string& model_name);
     
     
     bool IsModelLoaded(const std::string& model_name) const;

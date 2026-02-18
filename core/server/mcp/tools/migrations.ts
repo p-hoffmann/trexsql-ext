@@ -5,9 +5,7 @@ import { getMigrationPlugins } from "../../plugin/migration.ts";
 declare const Trex: any;
 declare const Deno: any;
 
-function escapeSql(s: string): string {
-  return s.replace(/'/g, "''");
-}
+import { escapeSql } from "../../lib/sql.ts";
 
 export function registerMigrationTools(server: McpServer) {
   server.tool(

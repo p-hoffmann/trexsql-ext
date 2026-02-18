@@ -53,6 +53,16 @@ export function Consent() {
 
       const data = await res.json();
       if (data?.redirectTo) {
+        try {
+          const url = new URL(data.redirectTo);
+          if (url.protocol !== "https:" && url.protocol !== "http:") {
+            toast.error("Invalid redirect URI");
+            return;
+          }
+        } catch {
+          toast.error("Invalid redirect URI");
+          return;
+        }
         window.location.href = data.redirectTo;
       } else if (!res.ok) {
         toast.error(data?.message || "Authorization failed");
@@ -65,13 +75,26 @@ export function Consent() {
   }
 
   function handleDeny() {
-    const denyUrl = new URL(redirectUri);
-    denyUrl.searchParams.set("error", "access_denied");
-    denyUrl.searchParams.set("error_description", "The user denied the authorization request");
-    if (state) {
-      denyUrl.searchParams.set("state", state);
+    if (!redirectUri) {
+      toast.error("No redirect URI provided");
+      return;
     }
-    window.location.href = denyUrl.toString();
+    try {
+      const denyUrl = new URL(redirectUri);
+      // Only allow http(s) schemes to prevent javascript: or data: redirects
+      if (denyUrl.protocol !== "https:" && denyUrl.protocol !== "http:") {
+        toast.error("Invalid redirect URI");
+        return;
+      }
+      denyUrl.searchParams.set("error", "access_denied");
+      denyUrl.searchParams.set("error_description", "The user denied the authorization request");
+      if (state) {
+        denyUrl.searchParams.set("state", state);
+      }
+      window.location.href = denyUrl.toString();
+    } catch {
+      toast.error("Invalid redirect URI");
+    }
   }
 
   return (

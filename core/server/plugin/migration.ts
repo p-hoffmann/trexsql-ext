@@ -40,9 +40,7 @@ export function getMigrationPlugins(): MigrationPluginInfo[] {
   return Array.from(migrationRegistry.values());
 }
 
-function escapeSql(s: string): string {
-  return s.replace(/'/g, "''");
-}
+import { escapeSql } from "../lib/sql.ts";
 
 export async function runAllPluginMigrations(): Promise<void> {
   if (migrationRegistry.size === 0) {

@@ -108,6 +108,10 @@ pub fn execute_query(shmem: &PgTrexShmem, sql: &str, flags: u32) -> Result<Vec<V
     wait_for_completion(shmem, slot_idx)?;
 
     let final_state = shmem.request_slots[slot_idx].state.load(Ordering::Acquire);
+    if final_state == SLOT_CANCELLED {
+        guard.release();
+        return Err("pg_trex: query was cancelled".to_string());
+    }
     let response_bytes = read_response(resp_handle)?;
     guard.release();
 
@@ -218,12 +222,6 @@ fn acquire_slot(shmem: &PgTrexShmem, dsm_handle: u32) -> Result<usize, String> {
     for idx in 0..MAX_CONCURRENT {
         let slot = &shmem.request_slots[idx];
 
-        // Write dsm_handle and backend_pid BEFORE the CAS so the worker sees
-        // valid values as soon as the slot transitions to SLOT_PENDING. The
-        // AcqRel on the CAS provides the release barrier for these stores.
-        slot.dsm_handle.store(dsm_handle, Ordering::Relaxed);
-        slot.backend_pid.store(my_pid, Ordering::Relaxed);
-
         match slot.state.compare_exchange(
             SLOT_FREE,
             SLOT_PENDING,
@@ -231,15 +229,11 @@ fn acquire_slot(shmem: &PgTrexShmem, dsm_handle: u32) -> Result<usize, String> {
             Ordering::Relaxed,
         ) {
             Ok(_) => {
+                slot.dsm_handle.store(dsm_handle, Ordering::Release);
+                slot.backend_pid.store(my_pid, Ordering::Release);
                 return Ok(idx);
             }
-            Err(_) => {
-                // CAS failed — another backend owns this slot. Zero out our
-                // speculative writes (harmless since the slot is not Free).
-                slot.dsm_handle.store(0, Ordering::Relaxed);
-                slot.backend_pid.store(0, Ordering::Relaxed);
-                continue;
-            }
+            Err(_) => continue,
         }
     }
 
@@ -311,7 +305,7 @@ fn read_response(handle: *mut pg_sys::shm_mq_handle) -> Result<Vec<u8>, String> 
     }
 }
 
-/// Wait for a slot to reach Done or Error state, checking for worker crashes.
+/// Wait for a slot to reach a terminal state, checking for worker crashes.
 ///
 /// Uses PostgreSQL WaitLatch to sleep between polls. Aborts with an error
 /// if the worker transitions to Stopped during execution.
@@ -320,7 +314,7 @@ fn wait_for_completion(shmem: &PgTrexShmem, slot_idx: usize) -> Result<(), Strin
 
     loop {
         let state = slot.state.load(Ordering::Acquire);
-        if state == SLOT_DONE || state == SLOT_ERROR {
+        if state == SLOT_DONE || state == SLOT_ERROR || state == SLOT_CANCELLED {
             return Ok(());
         }
 

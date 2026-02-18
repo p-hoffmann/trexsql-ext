@@ -213,7 +213,6 @@ static void Cql2ElmTranslateFunction(duckdb_function_info info, duckdb_data_chun
 
         char* elm_json = cql2elm_run_with_large_stack(cql_text);
         if (elm_json) {
-            /* Check if result is an error object */
             if (strncmp(elm_json, "{\"error\":", 9) == 0) {
                 duckdb_scalar_function_set_error(info, elm_json);
                 duckdb_free(cql_text);
