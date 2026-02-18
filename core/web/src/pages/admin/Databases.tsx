@@ -324,7 +324,7 @@ export function Databases() {
                 <option value="mysql">MySQL</option>
                 <option value="mssql">MSSQL</option>
                 <option value="oracle">Oracle</option>
-                <option value="duckdb">DuckDB</option>
+                <option value="duckdb">trexsql</option>
               </select>
             </div>
 

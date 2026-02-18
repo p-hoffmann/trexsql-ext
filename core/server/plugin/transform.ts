@@ -40,9 +40,7 @@ function getPgPool(): InstanceType<typeof Pool> | null {
   return pgPool;
 }
 
-function escapeSql(s: string): string {
-  return s.replace(/'/g, "''");
-}
+import { escapeSql, escapeSqlIdentifier } from "../lib/sql.ts";
 
 function escapeCsvField(val: unknown): string {
   if (val === null || val === undefined) return "";
@@ -89,7 +87,7 @@ export function addTransformPlugin(
 
     try {
       const conn = new Trex.TrexDB("memory");
-      const tableFqn = `"${escapeSql(endpoint.destDb)}"."${escapeSql(endpoint.destSchema)}"."${escapeSql(endpoint.modelName)}"`;
+      const tableFqn = `"${escapeSqlIdentifier(endpoint.destDb)}"."${escapeSqlIdentifier(endpoint.destSchema)}"."${escapeSqlIdentifier(endpoint.modelName)}"`;
 
       if (format === "csv") {
         const result = await conn.execute(`SELECT * FROM ${tableFqn}`, []);

@@ -5,7 +5,7 @@ ARG TREXSQL_VERSION=v1.4.4-trex
 ARG CHDB_VERSION=v3.6.0
 
 RUN apt-get update && apt-get install -y curl unzip wget gcc libc6-dev && rm -rf /var/lib/apt/lists/*
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.85.1
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Download libtrexsql from GitHub release
@@ -65,14 +65,14 @@ RUN mkdir -p /usr/lib/trexsql/extensions && \
 
 # Download official trexsql extensions for offline use
 ENV DUCKDB_VERSION=1.4.4
-RUN mkdir -p /root/.duckdb/extensions/v${DUCKDB_VERSION}/linux_amd64 && \
-    cd /root/.duckdb/extensions/v${DUCKDB_VERSION}/linux_amd64 && \
+RUN mkdir -p /usr/share/trexsql/extensions/v${DUCKDB_VERSION}/linux_amd64 && \
+    cd /usr/share/trexsql/extensions/v${DUCKDB_VERSION}/linux_amd64 && \
     for lib in avro aws delta ducklake fts httpfs icu iceberg inet json mysql_scanner parquet postgres_scanner spatial sqlite sqlite_scanner vss; do \
-        curl -sfO http://extensions.duckdb.org/v${DUCKDB_VERSION}/linux_amd64/${lib}.duckdb_extension.gz && \
+        curl -sfO https://extensions.duckdb.org/v${DUCKDB_VERSION}/linux_amd64/${lib}.duckdb_extension.gz && \
         gzip -d ${lib}.duckdb_extension.gz; \
     done && \
     for lib in bigquery; do \
-        curl -sfO http://community-extensions.duckdb.org/v${DUCKDB_VERSION}/linux_amd64/${lib}.duckdb_extension.gz && \
+        curl -sfO https://community-extensions.duckdb.org/v${DUCKDB_VERSION}/linux_amd64/${lib}.duckdb_extension.gz && \
         gzip -d ${lib}.duckdb_extension.gz; \
     done
 
@@ -100,6 +100,8 @@ COPY docs/ ./docs/
 RUN cd docs && npm ci && npm run build
 
 ENV SCHEMA_DIR=/usr/src/core/schema
+ENV DUCKDB_EXTENSION_DIRECTORY=/usr/share/trexsql/extensions
 
 EXPOSE 8001
+USER node
 ENTRYPOINT ["trex"]

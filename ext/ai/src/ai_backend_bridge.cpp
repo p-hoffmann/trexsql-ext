@@ -71,9 +71,6 @@ llama_capi::GenerationParams parse_generation_params(const char* options_json) {
 
 
 static char* string_to_cstring(const std::string& str) {
-    if (str.empty()) {
-        return nullptr;
-    }
     char* result = static_cast<char*>(std::malloc(str.length() + 1));
     if (result) {
         std::strcpy(result, str.c_str());
@@ -420,13 +417,20 @@ char* cpp_llama_get_batch_result(const char* request_id) {
         std::string request_str = cstring_to_string(request_id);
         auto result = get_manager().GetBatchResult(request_str);
         
-        std::string json = "{";
-        json += "\"request_id\": \"" + result.request_id + "\",";
-        json += "\"success\": " + std::string(result.success ? "true" : "false") + ",";
-        json += "\"response\": \"" + result.response + "\",";
-        json += "\"error_message\": \"" + result.error_message + "\"";
-        json += "}";
-        
+        yyjson_mut_doc *res_doc = yyjson_mut_doc_new(nullptr);
+        yyjson_mut_val *res_root = yyjson_mut_obj(res_doc);
+        yyjson_mut_doc_set_root(res_doc, res_root);
+
+        yyjson_mut_obj_add_str(res_doc, res_root, "request_id", result.request_id.c_str());
+        yyjson_mut_obj_add_bool(res_doc, res_root, "success", result.success);
+        yyjson_mut_obj_add_str(res_doc, res_root, "response", result.response.c_str());
+        yyjson_mut_obj_add_str(res_doc, res_root, "error_message", result.error_message.c_str());
+
+        char *res_json = yyjson_mut_write(res_doc, 0, nullptr);
+        std::string json(res_json);
+        free(res_json);
+        yyjson_mut_doc_free(res_doc);
+
         return string_to_cstring(json);
     } catch (const std::exception& e) {
         return string_to_cstring(std::string("Error: ") + e.what());

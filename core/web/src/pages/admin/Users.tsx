@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, gql } from "urql";
 import { authClient } from "@/lib/auth-client";
@@ -120,7 +120,7 @@ export function Users() {
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [debounceTimer, setDebounceTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [cursorStack, setCursorStack] = useState<string[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -152,18 +152,21 @@ export function Users() {
   const users = queryData?.nodes ?? [];
   const pageInfo = queryData?.pageInfo;
 
+  useEffect(() => {
+    return () => { if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current); };
+  }, []);
+
   const handleSearchChange = useCallback(
     (value: string) => {
       setSearch(value);
       setCursor(null);
       setCursorStack([]);
-      if (debounceTimer) clearTimeout(debounceTimer);
-      const timer = setTimeout(() => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = setTimeout(() => {
         setDebouncedSearch(value);
       }, 300);
-      setDebounceTimer(timer);
     },
-    [debounceTimer]
+    []
   );
 
   function handleNextPage() {

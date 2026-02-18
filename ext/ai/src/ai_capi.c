@@ -3,16 +3,20 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdatomic.h>
 
-static bool extension_initialized = false;
+static atomic_bool extension_initialized = false;
 
 DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection, duckdb_extension_info info, struct duckdb_extension_access *access) {
-    if (extension_initialized) {
+    bool expected = false;
+    if (!atomic_compare_exchange_strong(&extension_initialized, &expected, true)) {
         return true;
     }
 
     if (!llama_initialize_backend()) {
         fprintf(stderr, "Failed to initialize AI backend\n");
+        atomic_store(&extension_initialized, false);
+        return false;
     }
 
     {
@@ -217,6 +221,5 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection, duckdb_extension_info 
         duckdb_destroy_scalar_function(&function);
     }
 
-    extension_initialized = true;
     return true;
 }

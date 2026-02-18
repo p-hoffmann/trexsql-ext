@@ -42,34 +42,38 @@ impl Drop for SharedConn {
 
 static SHARED_CONNECTION: OnceLock<Mutex<SharedConn>> = OnceLock::new();
 
+/// Execute SQL using the shared connection, acquiring the lock internally.
 fn execute_sql(sql: &str) -> Result<(), Box<dyn Error>> {
     let mutex = SHARED_CONNECTION
         .get()
         .ok_or("Migration extension not initialized")?;
     let guard = mutex.lock().map_err(|_| "Connection mutex poisoned")?;
     let conn = guard.0;
+    execute_sql_raw(conn, sql)
+}
 
-    unsafe {
-        let c_sql = CString::new(sql)?;
-        let mut result: ffi::duckdb_result = std::mem::zeroed();
-        let state = ffi::duckdb_query(conn, c_sql.as_ptr(), &mut result);
+/// Execute SQL on a raw connection handle without acquiring any lock.
+/// Caller must ensure exclusive access to the connection.
+unsafe fn execute_sql_raw(conn: ffi::duckdb_connection, sql: &str) -> Result<(), Box<dyn Error>> {
+    let c_sql = CString::new(sql)?;
+    let mut result: ffi::duckdb_result = std::mem::zeroed();
+    let state = ffi::duckdb_query(conn, c_sql.as_ptr(), &mut result);
 
-        let ok = if state != ffi::duckdb_state_DuckDBSuccess {
-            let err_ptr = ffi::duckdb_result_error(&mut result);
-            let err_msg = if err_ptr.is_null() {
-                format!("SQL execution failed: {}", sql)
-            } else {
-                let c_str = std::ffi::CStr::from_ptr(err_ptr);
-                format!("{}", c_str.to_string_lossy())
-            };
-            Err(err_msg)
+    let ok = if state != ffi::duckdb_state_DuckDBSuccess {
+        let err_ptr = ffi::duckdb_result_error(&mut result);
+        let err_msg = if err_ptr.is_null() {
+            format!("SQL execution failed: {}", sql)
         } else {
-            Ok(())
+            let c_str = std::ffi::CStr::from_ptr(err_ptr);
+            format!("{}", c_str.to_string_lossy())
         };
+        Err(err_msg)
+    } else {
+        Ok(())
+    };
 
-        ffi::duckdb_destroy_result(&mut result);
-        ok?;
-    }
+    ffi::duckdb_destroy_result(&mut result);
+    ok?;
 
     Ok(())
 }
@@ -301,54 +305,61 @@ fn insert_migration_record(migration: &MigrationFile) -> Result<(), Box<dyn Erro
         .ok_or("Migration extension not initialized")?;
     let guard = mutex.lock().map_err(|_| "Connection mutex poisoned")?;
     let conn = guard.0;
+    unsafe { insert_migration_record_raw(conn, migration) }
+}
 
-    unsafe {
-        let sql = CString::new(
-            "INSERT INTO refinery_schema_history (version, name, applied_on, checksum) \
-             VALUES ($1, $2, $3, $4);",
-        )?;
-        let mut stmt: ffi::duckdb_prepared_statement = std::ptr::null_mut();
-        let state = ffi::duckdb_prepare(conn, sql.as_ptr(), &mut stmt);
-        if state != ffi::duckdb_state_DuckDBSuccess {
-            let err = ffi::duckdb_prepare_error(stmt);
-            let msg = if err.is_null() {
-                "Failed to prepare insert statement".to_string()
-            } else {
-                std::ffi::CStr::from_ptr(err).to_string_lossy().to_string()
-            };
-            ffi::duckdb_destroy_prepare(&mut stmt);
-            return Err(msg.into());
-        }
-
-        ffi::duckdb_bind_int32(stmt, 1, migration.version);
-        let c_name = CString::new(migration.name.as_str())?;
-        ffi::duckdb_bind_varchar(stmt, 2, c_name.as_ptr());
-        let applied_on = Utc::now().to_rfc3339();
-        let c_applied_on = CString::new(applied_on.as_str())?;
-        ffi::duckdb_bind_varchar(stmt, 3, c_applied_on.as_ptr());
-        let checksum_str = migration.checksum.to_string();
-        let c_checksum = CString::new(checksum_str.as_str())?;
-        ffi::duckdb_bind_varchar(stmt, 4, c_checksum.as_ptr());
-
-        let mut result: ffi::duckdb_result = std::mem::zeroed();
-        let exec_state = ffi::duckdb_execute_prepared(stmt, &mut result);
-
-        let ok = if exec_state != ffi::duckdb_state_DuckDBSuccess {
-            let err_ptr = ffi::duckdb_result_error(&mut result);
-            let msg = if err_ptr.is_null() {
-                "Failed to insert migration record".to_string()
-            } else {
-                std::ffi::CStr::from_ptr(err_ptr).to_string_lossy().to_string()
-            };
-            Err(msg)
+/// Insert a migration record using a raw connection handle without acquiring any lock.
+/// Caller must ensure exclusive access to the connection.
+unsafe fn insert_migration_record_raw(
+    conn: ffi::duckdb_connection,
+    migration: &MigrationFile,
+) -> Result<(), Box<dyn Error>> {
+    let sql = CString::new(
+        "INSERT INTO refinery_schema_history (version, name, applied_on, checksum) \
+         VALUES ($1, $2, $3, $4);",
+    )?;
+    let mut stmt: ffi::duckdb_prepared_statement = std::ptr::null_mut();
+    let state = ffi::duckdb_prepare(conn, sql.as_ptr(), &mut stmt);
+    if state != ffi::duckdb_state_DuckDBSuccess {
+        let err = ffi::duckdb_prepare_error(stmt);
+        let msg = if err.is_null() {
+            "Failed to prepare insert statement".to_string()
         } else {
-            Ok(())
+            std::ffi::CStr::from_ptr(err).to_string_lossy().to_string()
         };
-
-        ffi::duckdb_destroy_result(&mut result);
         ffi::duckdb_destroy_prepare(&mut stmt);
-        ok?;
+        return Err(msg.into());
     }
+
+    ffi::duckdb_bind_int32(stmt, 1, migration.version);
+    let c_name = CString::new(migration.name.as_str())?;
+    ffi::duckdb_bind_varchar(stmt, 2, c_name.as_ptr());
+    let applied_on = Utc::now().to_rfc3339();
+    let c_applied_on = CString::new(applied_on.as_str())?;
+    ffi::duckdb_bind_varchar(stmt, 3, c_applied_on.as_ptr());
+    let checksum_str = migration.checksum.to_string();
+    let c_checksum = CString::new(checksum_str.as_str())?;
+    ffi::duckdb_bind_varchar(stmt, 4, c_checksum.as_ptr());
+
+    let mut result: ffi::duckdb_result = std::mem::zeroed();
+    let exec_state = ffi::duckdb_execute_prepared(stmt, &mut result);
+
+    let ok = if exec_state != ffi::duckdb_state_DuckDBSuccess {
+        let err_ptr = ffi::duckdb_result_error(&mut result);
+        let msg = if err_ptr.is_null() {
+            "Failed to insert migration record".to_string()
+        } else {
+            std::ffi::CStr::from_ptr(err_ptr).to_string_lossy().to_string()
+        };
+        Err(msg)
+    } else {
+        Ok(())
+    };
+
+    ffi::duckdb_destroy_result(&mut result);
+    ffi::duckdb_destroy_prepare(&mut stmt);
+    ok?;
+
     Ok(())
 }
 
@@ -407,24 +418,43 @@ fn execute_migrations(
         }
     }
 
+    // Hold the connection lock for each transaction to prevent interleaving
+    // from concurrent callers.
+    let mutex = SHARED_CONNECTION
+        .get()
+        .ok_or("Migration extension not initialized")?;
+
     for &idx in pending_indices {
         let migration = &discovered[idx];
 
-        execute_sql("BEGIN TRANSACTION;")?;
-        match execute_sql(&migration.sql) {
-            Ok(_) => match insert_migration_record(migration) {
-                Ok(_) => {
-                    execute_sql("COMMIT;")?;
-                    results.push(MigrationResult {
-                        version: migration.version,
-                        name: migration.name.clone(),
-                        status: "applied".to_string(),
-                    });
-                }
+        let guard = mutex.lock().map_err(|_| "Connection mutex poisoned")?;
+        let conn = guard.0;
+
+        unsafe {
+            execute_sql_raw(conn, "BEGIN TRANSACTION;")?;
+            match execute_sql_raw(conn, &migration.sql) {
+                Ok(_) => match insert_migration_record_raw(conn, migration) {
+                    Ok(_) => {
+                        execute_sql_raw(conn, "COMMIT;")?;
+                    }
+                    Err(e) => {
+                        let rollback_err = execute_sql_raw(conn, "ROLLBACK;").err();
+                        drop(guard);
+                        let mut msg = format!(
+                            "Migration V{}__{} failed to record: {}",
+                            migration.version, migration.name, e
+                        );
+                        if let Some(re) = rollback_err {
+                            msg.push_str(&format!("; rollback also failed: {}", re));
+                        }
+                        return Err(msg.into());
+                    }
+                },
                 Err(e) => {
-                    let rollback_err = execute_sql("ROLLBACK;").err();
+                    let rollback_err = execute_sql_raw(conn, "ROLLBACK;").err();
+                    drop(guard);
                     let mut msg = format!(
-                        "Migration V{}__{} failed to record: {}",
+                        "Migration V{}__{} failed: {}",
                         migration.version, migration.name, e
                     );
                     if let Some(re) = rollback_err {
@@ -432,19 +462,15 @@ fn execute_migrations(
                     }
                     return Err(msg.into());
                 }
-            },
-            Err(e) => {
-                let rollback_err = execute_sql("ROLLBACK;").err();
-                let mut msg = format!(
-                    "Migration V{}__{} failed: {}",
-                    migration.version, migration.name, e
-                );
-                if let Some(re) = rollback_err {
-                    msg.push_str(&format!("; rollback also failed: {}", re));
-                }
-                return Err(msg.into());
             }
         }
+
+        drop(guard);
+        results.push(MigrationResult {
+            version: migration.version,
+            name: migration.name.clone(),
+            status: "applied".to_string(),
+        });
     }
 
     results.sort_by_key(|r| r.version);
@@ -837,44 +863,83 @@ fn execute_migrations_in_schema(
         }
     }
 
-    for &idx in pending_indices {
-        let migration = &discovered[idx];
+    if !is_postgres {
+        // Hold the connection lock for each transaction to prevent interleaving
+        // from concurrent callers.
+        let mutex = SHARED_CONNECTION
+            .get()
+            .ok_or("Migration extension not initialized")?;
 
-        if !is_postgres {
-            execute_sql("BEGIN TRANSACTION;")?;
-        }
-        match execute_migration_sql(&migration.sql, database, is_postgres) {
-            Ok(_) => match insert_migration_record_in(migration, schema, database, is_postgres) {
-                Ok(_) => {
-                    if !is_postgres {
-                        execute_sql("COMMIT;")?;
+        for &idx in pending_indices {
+            let migration = &discovered[idx];
+            let guard = mutex.lock().map_err(|_| "Connection mutex poisoned")?;
+            let conn = guard.0;
+
+            unsafe {
+                execute_sql_raw(conn, "BEGIN TRANSACTION;")?;
+                match execute_sql_raw(conn, &migration.sql) {
+                    Ok(_) => match insert_migration_record_raw(conn, migration) {
+                        Ok(_) => {
+                            execute_sql_raw(conn, "COMMIT;")?;
+                        }
+                        Err(e) => {
+                            let _ = execute_sql_raw(conn, "ROLLBACK;");
+                            drop(guard);
+                            return Err(format!(
+                                "Migration V{}__{} failed to record: {}",
+                                migration.version, migration.name, e
+                            )
+                            .into());
+                        }
+                    },
+                    Err(e) => {
+                        let _ = execute_sql_raw(conn, "ROLLBACK;");
+                        drop(guard);
+                        return Err(format!(
+                            "Migration V{}__{} failed: {}",
+                            migration.version, migration.name, e
+                        )
+                        .into());
                     }
-                    results.push(MigrationResult {
-                        version: migration.version,
-                        name: migration.name.clone(),
-                        status: "applied".to_string(),
-                    });
                 }
-                Err(e) => {
-                    if !is_postgres {
-                        let _ = execute_sql("ROLLBACK;");
+            }
+
+            drop(guard);
+            results.push(MigrationResult {
+                version: migration.version,
+                name: migration.name.clone(),
+                status: "applied".to_string(),
+            });
+        }
+    } else {
+        // Postgres handles transactions internally via postgres_execute
+        for &idx in pending_indices {
+            let migration = &discovered[idx];
+            match execute_migration_sql(&migration.sql, database, is_postgres) {
+                Ok(_) => match insert_migration_record_in(migration, schema, database, is_postgres)
+                {
+                    Ok(_) => {
+                        results.push(MigrationResult {
+                            version: migration.version,
+                            name: migration.name.clone(),
+                            status: "applied".to_string(),
+                        });
                     }
+                    Err(e) => {
+                        return Err(format!(
+                            "Migration V{}__{} failed to record: {}",
+                            migration.version, migration.name, e
+                        )
+                        .into());
+                    }
+                },
+                Err(e) => {
                     return Err(format!(
-                        "Migration V{}__{} failed to record: {}",
+                        "Migration V{}__{} failed: {}",
                         migration.version, migration.name, e
                     )
                     .into());
                 }
-            },
-            Err(e) => {
-                if !is_postgres {
-                    let _ = execute_sql("ROLLBACK;");
-                }
-                return Err(format!(
-                    "Migration V{}__{} failed: {}",
-                    migration.version, migration.name, e
-                )
-                .into());
             }
         }
     }
@@ -1146,7 +1211,7 @@ unsafe fn migration_init_c_api_internal(
     access: *const ffi::duckdb_extension_access,
 ) -> Result<bool, Box<dyn Error>> {
     let have_api_struct =
-        ffi::duckdb_rs_extension_api_init(info, access, "v1.3.2").unwrap();
+        ffi::duckdb_rs_extension_api_init(info, access, "v1.3.2")?;
 
     if !have_api_struct {
         return Ok(false);
@@ -1169,20 +1234,21 @@ pub unsafe extern "C" fn migration_init_c_api(
 ) -> bool {
     let init_result = migration_init_c_api_internal(info, access);
 
-    if let Err(x) = init_result {
-        let error_c_string = std::ffi::CString::new(x.to_string());
-        match error_c_string {
-            Ok(e) => {
-                (*access).set_error.unwrap()(info, e.as_ptr());
+    match init_result {
+        Ok(val) => val,
+        Err(x) => {
+            let error_c_string = std::ffi::CString::new(x.to_string());
+            match error_c_string {
+                Ok(e) => {
+                    (*access).set_error.unwrap()(info, e.as_ptr());
+                }
+                Err(_) => {
+                    let error_msg =
+                        c"An error occurred but the extension failed to allocate an error string";
+                    (*access).set_error.unwrap()(info, error_msg.as_ptr());
+                }
             }
-            Err(_) => {
-                let error_msg =
-                    c"An error occurred but the extension failed to allocate an error string";
-                (*access).set_error.unwrap()(info, error_msg.as_ptr());
-            }
+            false
         }
-        return false;
     }
-
-    init_result.unwrap()
 }

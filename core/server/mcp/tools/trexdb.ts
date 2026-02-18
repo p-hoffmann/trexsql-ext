@@ -3,9 +3,7 @@ import { z } from "zod";
 
 declare const Trex: any;
 
-function escapeSql(s: string): string {
-  return s.replace(/'/g, "''");
-}
+import { escapeSql } from "../../lib/sql.ts";
 
 export function registerTrexdbTools(server: McpServer) {
   server.tool(

@@ -407,6 +407,7 @@ static void CirceJsonToSqlFunction(duckdb_function_info info, duckdb_data_chunk 
         char* sql_c = circe_run_with_large_stack(CIRCE_OP_BUILD_SQL, decoded, opts, NULL);
         if (sql_c) {
             set_string_in_vector(output, row, sql_c);
+            free(sql_c);
         } else {
             set_error_in_vector(output, row, result_validity);
         }
@@ -462,6 +463,7 @@ static void CirceSqlRenderFunction(duckdb_function_info info, duckdb_data_chunk 
         char* rendered_c = circe_run_with_large_stack(CIRCE_OP_SQL_RENDER, template_str, params_str, NULL);
         if (rendered_c) {
             set_string_in_vector(output, row, rendered_c);
+            free(rendered_c);
         } else {
             set_error_in_vector(output, row, result_validity);
         }
@@ -516,6 +518,7 @@ static void CirceSqlTranslateFunction(duckdb_function_info info, duckdb_data_chu
         char* translated_c = circe_run_with_large_stack(CIRCE_OP_SQL_TRANSLATE, sql_str, dialect_str, NULL);
         if (translated_c) {
             set_string_in_vector(output, row, translated_c);
+            free(translated_c);
         } else {
             set_error_in_vector(output, row, result_validity);
         }
@@ -575,6 +578,7 @@ static void CirceSqlRenderTranslateFunction(duckdb_function_info info, duckdb_da
         char* result_c = circe_run_with_large_stack(CIRCE_OP_SQL_RENDER_TRANSLATE, template_str, dialect_str, params_str);
         if (result_c) {
             set_string_in_vector(output, row, result_c);
+            free(result_c);
         } else {
             set_error_in_vector(output, row, result_validity);
         }
@@ -647,9 +651,11 @@ static void CirceGenerateAndTranslateFunction(duckdb_function_info info, duckdb_
             continue;
         }
 
-        char* translated_sql = circe_run_with_large_stack(CIRCE_OP_SQL_TRANSLATE, sql_c, "duckdb", NULL);
+        char* translated_sql = circe_run_with_large_stack(CIRCE_OP_SQL_TRANSLATE, sql_c, "trexsql", NULL);
+        free(sql_c);
         if (translated_sql) {
             set_string_in_vector(output, row, translated_sql);
+            free(translated_sql);
         } else {
             set_error_in_vector(output, row, result_validity);
         }
@@ -707,6 +713,7 @@ static void CirceCheckCohortFunction(duckdb_function_info info, duckdb_data_chun
         char* warnings_json = circe_run_with_large_stack(CIRCE_OP_CHECK_COHORT, decoded, NULL, NULL);
         if (warnings_json) {
             set_string_in_vector(output, row, warnings_json);
+            free(warnings_json);
         } else {
             set_error_in_vector(output, row, result_validity);
         }

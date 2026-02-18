@@ -1,6 +1,26 @@
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+
+const sanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [
+    ...(defaultSchema.tagNames || []),
+    "barchart", "linechart", "areachart", "piechart", "bigvalue", "datatable", "grid",
+  ],
+  attributes: {
+    ...defaultSchema.attributes,
+    "*": [...(defaultSchema.attributes?.["*"] || []), "className", "class"],
+    barchart: ["query", "x", "y", "title", "height"],
+    linechart: ["query", "x", "y", "title", "height"],
+    areachart: ["query", "x", "y", "title", "height"],
+    piechart: ["query", "name", "value", "title", "height"],
+    bigvalue: ["query", "title", "format"],
+    datatable: ["query", "title"],
+    grid: ["columns"],
+  },
+};
 import { QueryProvider } from "./charts/QueryProvider";
 import { BarChart } from "./charts/BarChart";
 import { LineChart } from "./charts/LineChart";
@@ -71,7 +91,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
       <div className="max-w-7xl mx-auto font-sans antialiased">
         <Markdown
           remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeRaw]}
+          rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
           components={components}
         >
           {content}

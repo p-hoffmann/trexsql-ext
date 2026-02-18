@@ -202,12 +202,14 @@ unsafe extern "C-unwind" fn end_custom_scan(node: *mut pg_sys::CustomScanState) 
     }
 }
 
-/// ReScanCustomScan callback: reset row cursor.
+/// ReScanCustomScan callback: discard previous results so the next
+/// ExecCustomScan re-executes the query with fresh parameters.
 #[pg_guard]
 unsafe extern "C-unwind" fn rescan_custom_scan(node: *mut pg_sys::CustomScanState) {
     let state_ptr = (*node).custom_ps as *mut PgTrexScanState;
     if !state_ptr.is_null() {
         let state = &mut *state_ptr;
+        state.rows.clear();
         state.current_row = 0;
         state.finished = false;
     }

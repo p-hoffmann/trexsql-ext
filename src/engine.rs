@@ -96,9 +96,9 @@ impl TrexDatabase {
 impl Drop for TrexDatabase {
     fn drop(&mut self) {
         // Drop the connection first (disconnect from db)
-        unsafe {
-            ManuallyDrop::drop(self.conn.get_mut().unwrap());
-        }
+        // Use into_inner() on poisoned mutex to still drop the connection
+        let conn = self.conn.get_mut().unwrap_or_else(|e| e.into_inner());
+        unsafe { ManuallyDrop::drop(conn); }
         // Then close the database
         if !self.raw_db.is_null() {
             unsafe {

@@ -369,6 +369,17 @@ typedef struct {
     bool finished;
 } llama_stream_generate_state;
 
+static void llama_stream_generate_state_destroy(void* ptr) {
+    llama_stream_generate_state* state = (llama_stream_generate_state*)ptr;
+    if (state) {
+        free(state->model);
+        free(state->prompt);
+        free(state->options_json);
+        free(state->session_id);
+        free(state);
+    }
+}
+
 void llama_stream_generate_bind(duckdb_bind_info info) {
     idx_t param_count = duckdb_bind_get_parameter_count(info);
 
@@ -413,7 +424,7 @@ void llama_stream_generate_bind(duckdb_bind_info info) {
         bind_state->options_json = strdup("{}");
     }
 
-    duckdb_bind_set_bind_data(info, bind_state, free);
+    duckdb_bind_set_bind_data(info, bind_state, llama_stream_generate_state_destroy);
     duckdb_bind_add_result_column(info, "token", duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR));
     duckdb_bind_add_result_column(info, "is_final", duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN));
 }
@@ -427,8 +438,8 @@ void llama_stream_generate_init(duckdb_init_info info) {
     state->session_id = NULL;
     state->session_started = false;
     state->finished = false;
-    
-    duckdb_init_set_init_data(info, state, free);
+
+    duckdb_init_set_init_data(info, state, llama_stream_generate_state_destroy);
 }
 
 void llama_stream_generate_function(duckdb_function_info info, duckdb_data_chunk output) {
@@ -540,6 +551,17 @@ typedef struct {
     bool finished;
 } llama_stream_chat_state;
 
+static void llama_stream_chat_state_destroy(void* ptr) {
+    llama_stream_chat_state* state = (llama_stream_chat_state*)ptr;
+    if (state) {
+        free(state->model);
+        free(state->messages_json);
+        free(state->options_json);
+        free(state->session_id);
+        free(state);
+    }
+}
+
 void llama_stream_chat_bind(duckdb_bind_info info) {
     idx_t param_count = duckdb_bind_get_parameter_count(info);
 
@@ -584,7 +606,7 @@ void llama_stream_chat_bind(duckdb_bind_info info) {
         bind_state->options_json = strdup("{}");
     }
 
-    duckdb_bind_set_bind_data(info, bind_state, free);
+    duckdb_bind_set_bind_data(info, bind_state, llama_stream_chat_state_destroy);
     duckdb_bind_add_result_column(info, "token", duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR));
     duckdb_bind_add_result_column(info, "is_final", duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN));
 }
@@ -598,8 +620,8 @@ void llama_stream_chat_init(duckdb_init_info info) {
     state->session_id = NULL;
     state->session_started = false;
     state->finished = false;
-    
-    duckdb_init_set_init_data(info, state, free);
+
+    duckdb_init_set_init_data(info, state, llama_stream_chat_state_destroy);
 }
 
 void llama_stream_chat_function(duckdb_function_info info, duckdb_data_chunk output) {

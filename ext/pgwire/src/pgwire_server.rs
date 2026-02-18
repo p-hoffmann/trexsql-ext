@@ -131,26 +131,30 @@ fn get_hana_credentials_if_available(
 
 fn wrap_query_for_hana(query: &str, hana_creds: &HanaCredentials) -> String {
     let escaped_query = query.replace("'", "''");
-    
+    let escaped_username = hana_creds.username.replace("'", "''");
+    let escaped_password = hana_creds.password.replace("'", "''");
+    let escaped_host = hana_creds.host.replace("'", "''");
+    let escaped_name = hana_creds.name.replace("'", "''");
+
     if query.to_uppercase().starts_with("SELECT") || query.to_uppercase().starts_with("WITH") {
         format!(
             "SELECT * FROM hana_scan('{}', 'hdbsql://{}:{}@{}:{}/{}')",
             escaped_query,
-            hana_creds.username,
-            hana_creds.password,
-            hana_creds.host,
+            escaped_username,
+            escaped_password,
+            escaped_host,
             hana_creds.port,
-            hana_creds.name
+            escaped_name
         )
     } else {
         format!(
             "SELECT hana_execute('{}', 'hdbsql://{}:{}@{}:{}/{}')",
             escaped_query,
-            hana_creds.username,
-            hana_creds.password,
-            hana_creds.host,
+            escaped_username,
+            escaped_password,
+            escaped_host,
             hana_creds.port,
-            hana_creds.name
+            escaped_name
         )
     }
 }
@@ -199,14 +203,14 @@ impl AuthSource for SimpleAuthSource {
 }
 
 #[derive(Clone)]
-pub struct DuckDBQueryHandler {
+pub struct TrexQueryHandler {
     executor: Arc<QueryExecutor>,
     server_host: String,
     server_port: u16,
     worker_id: usize,
 }
 
-impl DuckDBQueryHandler {
+impl TrexQueryHandler {
     pub fn new(executor: Arc<QueryExecutor>, host: String, port: u16, worker_id: usize) -> Self {
         Self {
             executor,
@@ -217,7 +221,7 @@ impl DuckDBQueryHandler {
     }
 }
 
-/// Convert DuckDB statement columns to pgwire field info (for describe operations)
+/// Convert trexsql statement columns to pgwire field info (for describe operations)
 fn row_desc_from_stmt(stmt: &duckdb::Statement, format: &Format) -> PgWireResult<Vec<FieldInfo>> {
     let columns = stmt.column_count();
     (0..columns)
@@ -272,7 +276,7 @@ fn arrow_type_to_pg_type(arrow_type: &duckdb::arrow::datatypes::DataType) -> Typ
 }
 
 #[async_trait]
-impl SimpleQueryHandler for DuckDBQueryHandler {
+impl SimpleQueryHandler for TrexQueryHandler {
     async fn do_query<C>(&self, _client: &mut C, query: &str) -> PgWireResult<Vec<Response>>
     where
         C: ClientInfo + Unpin + Send + Sync,
@@ -284,7 +288,7 @@ impl SimpleQueryHandler for DuckDBQueryHandler {
         if let Some(db) = login_info.database() {
             if let Some(db_credentials) = ServerRegistry::instance().get_db_credentials(&self.server_host, self.server_port) {
                 if matches!(check_database_action(db, &db_credentials), DatabaseAction::SetDatabase) {
-                    let use_rx = self.executor.submit_to(self.worker_id, format!("USE {}", db));
+                    let use_rx = self.executor.submit_to(self.worker_id, format!("USE \"{}\"", db.replace('"', "\"\"")));
                     if let Ok(QueryResult::Error(err)) = use_rx.await {
                         return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                             "ERROR".to_owned(),
@@ -369,7 +373,7 @@ impl SimpleQueryHandler for DuckDBQueryHandler {
 }
 
 #[async_trait]
-impl ExtendedQueryHandler for DuckDBQueryHandler {
+impl ExtendedQueryHandler for TrexQueryHandler {
     type Statement = String;
     type QueryParser = NoopQueryParser;
 
@@ -394,7 +398,7 @@ impl ExtendedQueryHandler for DuckDBQueryHandler {
         if let Some(db) = login_info.database() {
             if let Some(db_credentials) = ServerRegistry::instance().get_db_credentials(&self.server_host, self.server_port) {
                 if matches!(check_database_action(db, &db_credentials), DatabaseAction::SetDatabase) {
-                    let use_rx = self.executor.submit_to(self.worker_id, format!("USE {}", db));
+                    let use_rx = self.executor.submit_to(self.worker_id, format!("USE \"{}\"", db.replace('"', "\"\"")));
                     if let Ok(QueryResult::Error(err)) = use_rx.await {
                         return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                             "ERROR".to_owned(),
@@ -477,7 +481,7 @@ impl ExtendedQueryHandler for DuckDBQueryHandler {
                 if let Some(db_credentials) = ServerRegistry::instance().get_db_credentials(&server_host, server_port) {
                     match check_database_action(db, &db_credentials) {
                         DatabaseAction::SetDatabase => {
-                            let _ = conn.execute(&format!("USE {}", db), params![]);
+                            let _ = conn.execute(&format!("USE \"{}\"", db.replace('"', "\"\"")), params![]);
                         }
                         _ => {}
                     }
@@ -543,7 +547,7 @@ impl ExtendedQueryHandler for DuckDBQueryHandler {
                 if let Some(db_credentials) = ServerRegistry::instance().get_db_credentials(&server_host, server_port) {
                     match check_database_action(db, &db_credentials) {
                         DatabaseAction::SetDatabase => {
-                            let _ = conn.execute(&format!("USE {}", db), params![]);
+                            let _ = conn.execute(&format!("USE \"{}\"", db.replace('"', "\"\"")), params![]);
                         }
                         _ => {}
                     }
@@ -577,19 +581,19 @@ impl ExtendedQueryHandler for DuckDBQueryHandler {
     }
 }
 
-pub struct DuckDBPgWireServerFactory {
-    query_handler: Arc<DuckDBQueryHandler>,
+pub struct TrexPgWireServerFactory {
+    query_handler: Arc<TrexQueryHandler>,
 }
 
-impl DuckDBPgWireServerFactory {
+impl TrexPgWireServerFactory {
     pub fn new(executor: Arc<QueryExecutor>, host: String, port: u16, worker_id: usize) -> Self {
         Self {
-            query_handler: Arc::new(DuckDBQueryHandler::new(executor, host, port, worker_id)),
+            query_handler: Arc::new(TrexQueryHandler::new(executor, host, port, worker_id)),
         }
     }
 }
 
-impl PgWireServerHandlers for DuckDBPgWireServerFactory {
+impl PgWireServerHandlers for TrexPgWireServerFactory {
     fn simple_query_handler(&self) -> Arc<impl SimpleQueryHandler> {
         self.query_handler.clone()
     }
@@ -603,12 +607,12 @@ impl PgWireServerHandlers for DuckDBPgWireServerFactory {
     }
 }
 
-pub struct DuckDBPgWireServerWithAuth {
-    query_handler: Arc<DuckDBQueryHandler>,
+pub struct TrexPgWireServerWithAuth {
+    query_handler: Arc<TrexQueryHandler>,
     password: String,
 }
 
-impl DuckDBPgWireServerWithAuth {
+impl TrexPgWireServerWithAuth {
     pub fn new(
         executor: Arc<QueryExecutor>,
         password: String,
@@ -617,13 +621,13 @@ impl DuckDBPgWireServerWithAuth {
         worker_id: usize,
     ) -> Self {
         Self {
-            query_handler: Arc::new(DuckDBQueryHandler::new(executor, host, port, worker_id)),
+            query_handler: Arc::new(TrexQueryHandler::new(executor, host, port, worker_id)),
             password,
         }
     }
 }
 
-impl PgWireServerHandlers for DuckDBPgWireServerWithAuth {
+impl PgWireServerHandlers for TrexPgWireServerWithAuth {
     fn simple_query_handler(&self) -> Arc<impl SimpleQueryHandler> {
         self.query_handler.clone()
     }
@@ -688,7 +692,7 @@ pub fn start_pgwire_server_capi(
                                 match result {
                                     Ok((socket, _addr)) => {
                                         let worker_id = executor.next_worker_id();
-                                        let handlers = Arc::new(DuckDBPgWireServerWithAuth::new(executor.clone(), required_password.to_string(), server_host.clone(), server_port, worker_id));
+                                        let handlers = Arc::new(TrexPgWireServerWithAuth::new(executor.clone(), required_password.to_string(), server_host.clone(), server_port, worker_id));
                                         tokio::spawn(async move {
                                             let _ = process_socket(socket, None, handlers).await;
                                         });
@@ -699,6 +703,7 @@ pub fn start_pgwire_server_capi(
                         }
                     }
                 } else {
+                    eprintln!("WARNING: pgwire starting without authentication — all connections will have full access");
                     log_debug("Using no-auth mode");
 
                     loop {
@@ -712,7 +717,7 @@ pub fn start_pgwire_server_capi(
                                     Ok((socket, addr)) => {
                                         log_debug(&format!("New connection from {:?}", addr));
                                         let worker_id = executor.next_worker_id();
-                                        let handlers = Arc::new(DuckDBPgWireServerFactory::new(executor.clone(), server_host.clone(), server_port, worker_id));
+                                        let handlers = Arc::new(TrexPgWireServerFactory::new(executor.clone(), server_host.clone(), server_port, worker_id));
                                         tokio::spawn(async move {
                                             log_debug("Processing socket...");
                                             let result = process_socket(socket, None, handlers).await;

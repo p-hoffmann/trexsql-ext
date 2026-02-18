@@ -395,6 +395,7 @@ export function DatabaseDetail() {
   }
 
   async function handleDeleteCredential(credId: string) {
+    if (!window.confirm("Are you sure you want to delete this credential? This cannot be undone.")) return;
     try {
       const res = await deleteCredential({ id: credId });
 
@@ -494,7 +495,7 @@ export function DatabaseDetail() {
                       <option value="mysql">MySQL</option>
                       <option value="mssql">MSSQL</option>
                       <option value="oracle">Oracle</option>
-                      <option value="duckdb">DuckDB</option>
+                      <option value="duckdb">trexsql</option>
                     </select>
                   </div>
 

@@ -61,7 +61,7 @@ HttpDownloader::DownloadResult HttpDownloader::download_windows(const std::strin
                                      int port, bool is_https, const std::filesystem::path& output_path) {
     DownloadResult result;
     
-    HINTERNET hInternet = InternetOpenA("DuckDB-LLaMA/1.0", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+    HINTERNET hInternet = InternetOpenA("trexsql-ai/1.0", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
     if (!hInternet) {
         result.error_message = "Failed to initialize WinINet";
         return result;
@@ -183,7 +183,7 @@ HttpDownloader::DownloadResult HttpDownloader::download_unix(const std::string& 
     
     std::string request = "GET " + path + " HTTP/1.1\r\n";
     request += "Host: " + host + "\r\n";
-    request += "User-Agent: DuckDB-LLaMA/1.0\r\n";
+    request += "User-Agent: trexsql-ai/1.0\r\n";
     request += "Connection: close\r\n";
     request += "\r\n";
     

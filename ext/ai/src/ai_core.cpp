@@ -6,6 +6,7 @@
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#include <unordered_set>
 
 namespace llama_capi {
 
@@ -181,26 +182,30 @@ std::unique_ptr<ContextPoolEntry> ContextPool::CreateNewContext() {
 void ContextPool::CleanupExpiredContexts() {
     std::lock_guard<std::mutex> lock(pool_mutex_);
     auto now = std::chrono::steady_clock::now();
-    
-    
+
+    // Drain the queue, keeping track of which pointers remain available
+    std::unordered_set<ContextPoolEntry*> available_set;
     std::queue<ContextPoolEntry*> new_queue;
     while (!available_contexts_.empty()) {
         ContextPoolEntry* entry = available_contexts_.front();
         available_contexts_.pop();
-        
+
         if (now - entry->last_used < context_ttl_) {
             new_queue.push(entry);
-        } else {
-            
-            all_contexts_.erase(
-                std::remove_if(all_contexts_.begin(), all_contexts_.end(),
-                    [entry](const std::unique_ptr<ContextPoolEntry>& ptr) {
-                        return ptr.get() == entry;
-                    }),
-                all_contexts_.end());
+            available_set.insert(entry);
         }
     }
     available_contexts_ = std::move(new_queue);
+
+    // Only erase entries that are expired AND not still referenced in the queue
+    all_contexts_.erase(
+        std::remove_if(all_contexts_.begin(), all_contexts_.end(),
+            [&](const std::unique_ptr<ContextPoolEntry>& ptr) {
+                if (ptr->in_use) return false;
+                if (available_set.count(ptr.get())) return false;
+                return (now - ptr->last_used) >= context_ttl_;
+            }),
+        all_contexts_.end());
 }
 
 size_t ContextPool::GetPoolSize() const {
@@ -276,13 +281,10 @@ SimpleModelManager::~SimpleModelManager() {
         std::lock_guard<std::mutex> lock(models_mutex_);
         models_.clear();
     }
-    
+
     if (backend_initialized_) {
-        
-        if (models_.empty()) {
-            llama_backend_free();
-            backend_initialized_ = false;
-        }
+        llama_backend_free();
+        backend_initialized_ = false;
     }
 }
 
@@ -369,45 +371,45 @@ bool SimpleModelManager::LoadModel(const std::string& model_name, const ModelCon
 }
 
 bool SimpleModelManager::UnloadModel(const std::string& model_name) {
-    std::lock_guard<std::mutex> lock(models_mutex_);
-    auto it = models_.find(model_name);
-    if (it != models_.end()) {
-        auto& loaded_model = it->second;
-        
-        
-        while (loaded_model->reference_count > 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::unique_ptr<LoadedModel> model_to_unload;
+    {
+        std::lock_guard<std::mutex> lock(models_mutex_);
+        auto it = models_.find(model_name);
+        if (it == models_.end()) {
+            return false;
         }
-        
-        
-        if (loaded_model->context_pool) {
-            
-            size_t max_wait_ms = 5000; 
-            size_t wait_ms = 0;
-            while (wait_ms < max_wait_ms) {
-                size_t total_contexts = loaded_model->context_pool->GetPoolSize();
-                size_t available_contexts = loaded_model->context_pool->GetAvailableCount();
-                
-                if (total_contexts == available_contexts) {
-                    break; 
-                }
-                
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                wait_ms += 100;
-            }
-            
-            
-            loaded_model->context_pool.reset();
-        }
-        
-        
-        metrics_.memory_usage_bytes -= loaded_model->memory_usage_bytes;
-        
+        model_to_unload = std::move(it->second);
         models_.erase(it);
-        std::cout << "Unloaded model: " << model_name << std::endl;
-        return true;
     }
-    return false;
+
+    // Wait for outstanding references without holding models_mutex_
+    size_t max_wait_ms = 5000;
+    size_t wait_ms = 0;
+    while (model_to_unload->reference_count > 0 && wait_ms < max_wait_ms) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        wait_ms += 100;
+    }
+
+    if (model_to_unload->context_pool) {
+        wait_ms = 0;
+        while (wait_ms < max_wait_ms) {
+            size_t total_contexts = model_to_unload->context_pool->GetPoolSize();
+            size_t available_contexts = model_to_unload->context_pool->GetAvailableCount();
+
+            if (total_contexts == available_contexts) {
+                break;
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            wait_ms += 100;
+        }
+
+        model_to_unload->context_pool.reset();
+    }
+
+    metrics_.memory_usage_bytes -= model_to_unload->memory_usage_bytes;
+    std::cout << "Unloaded model: " << model_name << std::endl;
+    return true;
 }
 
 std::shared_ptr<LoadedModel> SimpleModelManager::GetModel(const std::string& model_name) {
@@ -426,10 +428,7 @@ std::shared_ptr<LoadedModel> SimpleModelManager::GetModel(const std::string& mod
     });
 }
 
-LoadedModel* SimpleModelManager::GetModelRaw(const std::string& model_name) {
-    auto shared_model = GetModel(model_name);
-    return shared_model.get(); 
-}
+// GetModelRaw removed — returned a dangling pointer from a local shared_ptr
 
 bool SimpleModelManager::IsModelLoaded(const std::string& model_name) const {
     std::lock_guard<std::mutex> lock(models_mutex_);
@@ -971,21 +970,24 @@ std::string llama_capi::SimpleModelManager::StartStreamingSession(const std::str
     std::string session_id = "stream_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     
     
-    auto session = std::make_unique<llama_capi::StreamingSession>(session_id, model_name, prompt, params);
+    auto session = std::make_shared<llama_capi::StreamingSession>(session_id, model_name, prompt, params);
     session->StartGeneration();
-    
+
     streaming_sessions_[session_id] = std::move(session);
     return session_id;
 }
 
 bool llama_capi::SimpleModelManager::GetNextStreamToken(const std::string& session_id, llama_capi::StreamToken& token) {
-    std::lock_guard<std::mutex> lock(streaming_mutex_);
-    
-    auto it = streaming_sessions_.find(session_id);
-    if (it != streaming_sessions_.end()) {
-        return it->second->GetNextToken(token);
+    std::shared_ptr<StreamingSession> session;
+    {
+        std::lock_guard<std::mutex> lock(streaming_mutex_);
+        auto it = streaming_sessions_.find(session_id);
+        if (it == streaming_sessions_.end()) return false;
+        session = it->second;  // copy shared_ptr, bumps refcount
     }
-    return false;
+    // Call outside the lock — GetNextToken blocks on a condition variable.
+    // The shared_ptr keeps the session alive even if CleanupExpiredSessions erases it.
+    return session->GetNextToken(token);
 }
 
 void llama_capi::SimpleModelManager::StopStreamingSession(const std::string& session_id) {

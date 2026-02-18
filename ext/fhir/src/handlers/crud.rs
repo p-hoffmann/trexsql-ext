@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::error::AppError;
 use crate::fhir::validation;
 use crate::query_executor::QueryResult;
-use crate::sql_safety::{validate_dataset_id, validate_fhir_id, validate_resource_type};
+use crate::sql_safety::{to_schema_name, validate_dataset_id, validate_fhir_id, validate_resource_type};
 use crate::state::AppState;
 
 pub async fn create_resource(
@@ -17,6 +17,7 @@ pub async fn create_resource(
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, AppError> {
     validate_dataset_id(&dataset_id)?;
+    validate_resource_type(&resource_type, &state.registry)?;
 
     let validation_result = validation::validate_resource(&body, &resource_type, &state.registry);
     if !validation_result.is_valid() {
@@ -27,7 +28,7 @@ pub async fn create_resource(
     }
 
     let id = uuid::Uuid::new_v4().to_string();
-    let schema_name = dataset_id.replace('-', "_");
+    let schema_name = to_schema_name(&dataset_id);
     let table_name = resource_type.to_lowercase();
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
@@ -47,7 +48,7 @@ pub async fn create_resource(
         .map_err(|e| AppError::Internal(format!("JSON serialize: {}", e)))?;
 
     let insert_sql = format!(
-        "INSERT INTO \"{schema}\".\"{table}\" (_id, _version_id, _last_updated, _is_deleted, _raw) \
+        "INSERT INTO {schema}.\"{table}\" (_id, _version_id, _last_updated, _is_deleted, _raw) \
          VALUES ($1, 1, CURRENT_TIMESTAMP, false, $2)",
         schema = schema_name,
         table = table_name,
@@ -68,9 +69,15 @@ pub async fn create_resource(
 
     let location = format!("/{}/{}/{}", dataset_id, resource_type, id);
     let mut headers = HeaderMap::new();
-    headers.insert("Location", location.parse().unwrap());
-    headers.insert("ETag", format!("W/\"1\"").parse().unwrap());
-    headers.insert("Content-Type", "application/fhir+json".parse().unwrap());
+    if let Ok(v) = location.parse() {
+        headers.insert("Location", v);
+    }
+    if let Ok(v) = "W/\"1\"".parse() {
+        headers.insert("ETag", v);
+    }
+    if let Ok(v) = "application/fhir+json".parse() {
+        headers.insert("Content-Type", v);
+    }
 
     Ok((StatusCode::CREATED, headers, Json(resource)))
 }
@@ -83,11 +90,11 @@ pub async fn read_resource(
     validate_resource_type(&resource_type, &state.registry)?;
     validate_fhir_id(&resource_id)?;
 
-    let schema_name = dataset_id.replace('-', "_");
+    let schema_name = to_schema_name(&dataset_id);
     let table_name = resource_type.to_lowercase();
 
     let sql = format!(
-        "SELECT _raw, _is_deleted::VARCHAR, _version_id::VARCHAR FROM \"{schema}\".\"{table}\" WHERE _id = '{id}'",
+        "SELECT _raw, _is_deleted::VARCHAR, _version_id::VARCHAR FROM {schema}.\"{table}\" WHERE _id = '{id}'",
         schema = schema_name,
         table = table_name,
         id = resource_id.replace('\'', "''")
@@ -124,8 +131,12 @@ pub async fn read_resource(
             let version_id = row.get(2).and_then(|v| v.as_str()).unwrap_or("1");
 
             let mut headers = HeaderMap::new();
-            headers.insert("ETag", format!("W/\"{}\"", version_id).parse().unwrap());
-            headers.insert("Content-Type", "application/fhir+json".parse().unwrap());
+            if let Ok(v) = format!("W/\"{}\"", version_id).parse() {
+                headers.insert("ETag", v);
+            }
+            if let Ok(v) = "application/fhir+json".parse() {
+                headers.insert("Content-Type", v);
+            }
 
             Ok((headers, Json(resource)))
         }
@@ -167,11 +178,11 @@ pub async fn update_resource(
         ));
     }
 
-    let schema_name = dataset_id.replace('-', "_");
+    let schema_name = to_schema_name(&dataset_id);
     let table_name = resource_type.to_lowercase();
 
     let check_sql = format!(
-        "SELECT _version_id::VARCHAR, _raw FROM \"{schema}\".\"{table}\" WHERE _id = '{id}'",
+        "SELECT _version_id::VARCHAR, _raw FROM {schema}.\"{table}\" WHERE _id = '{id}'",
         schema = schema_name,
         table = table_name,
         id = resource_id.replace('\'', "''")
@@ -249,7 +260,7 @@ pub async fn update_resource(
 
     if !is_new {
         let history_sql = format!(
-            "INSERT INTO \"{schema}\"._history (_id, _resource_type, _version_id, _last_updated, _raw, _is_deleted) \
+            "INSERT INTO {schema}._history (_id, _resource_type, _version_id, _last_updated, _raw, _is_deleted) \
              VALUES ($1, $2, {version}, CURRENT_TIMESTAMP, $3, false)",
             schema = schema_name,
             version = current_version,
@@ -263,7 +274,7 @@ pub async fn update_resource(
 
     let sql = if is_new {
         format!(
-            "INSERT INTO \"{schema}\".\"{table}\" (_id, _version_id, _last_updated, _is_deleted, _raw) \
+            "INSERT INTO {schema}.\"{table}\" (_id, _version_id, _last_updated, _is_deleted, _raw) \
              VALUES ($1, {version}, CURRENT_TIMESTAMP, false, $2)",
             schema = schema_name,
             table = table_name,
@@ -271,7 +282,7 @@ pub async fn update_resource(
         )
     } else {
         format!(
-            "UPDATE \"{schema}\".\"{table}\" SET _version_id = {version}, _last_updated = CURRENT_TIMESTAMP, \
+            "UPDATE {schema}.\"{table}\" SET _version_id = {version}, _last_updated = CURRENT_TIMESTAMP, \
              _is_deleted = false, _raw = $2 WHERE _id = $1",
             schema = schema_name,
             table = table_name,
@@ -293,8 +304,12 @@ pub async fn update_resource(
     };
 
     let mut resp_headers = HeaderMap::new();
-    resp_headers.insert("ETag", format!("W/\"{}\"", new_version).parse().unwrap());
-    resp_headers.insert("Content-Type", "application/fhir+json".parse().unwrap());
+    if let Ok(v) = format!("W/\"{}\"", new_version).parse() {
+        resp_headers.insert("ETag", v);
+    }
+    if let Ok(v) = "application/fhir+json".parse() {
+        resp_headers.insert("Content-Type", v);
+    }
 
     Ok((status, resp_headers, Json(resource)))
 }
@@ -307,11 +322,11 @@ pub async fn delete_resource(
     validate_resource_type(&resource_type, &state.registry)?;
     validate_fhir_id(&resource_id)?;
 
-    let schema_name = dataset_id.replace('-', "_");
+    let schema_name = to_schema_name(&dataset_id);
     let table_name = resource_type.to_lowercase();
 
     let check_sql = format!(
-        "SELECT _version_id::VARCHAR, _raw FROM \"{schema}\".\"{table}\" WHERE _id = '{id}' AND NOT _is_deleted",
+        "SELECT _version_id::VARCHAR, _raw FROM {schema}.\"{table}\" WHERE _id = '{id}' AND NOT _is_deleted",
         schema = schema_name,
         table = table_name,
         id = resource_id.replace('\'', "''")
@@ -360,7 +375,7 @@ pub async fn delete_resource(
     let new_version = current_version + 1;
 
     let history_sql = format!(
-        "INSERT INTO \"{schema}\"._history (_id, _resource_type, _version_id, _last_updated, _raw, _is_deleted) \
+        "INSERT INTO {schema}._history (_id, _resource_type, _version_id, _last_updated, _raw, _is_deleted) \
          VALUES ($1, $2, {version}, CURRENT_TIMESTAMP, $3, false)",
         schema = schema_name,
         version = current_version,
@@ -372,7 +387,7 @@ pub async fn delete_resource(
     ]).await;
 
     let delete_sql = format!(
-        "UPDATE \"{schema}\".\"{table}\" SET _is_deleted = true, _version_id = {version}, \
+        "UPDATE {schema}.\"{table}\" SET _is_deleted = true, _version_id = {version}, \
          _last_updated = CURRENT_TIMESTAMP WHERE _id = $1",
         schema = schema_name,
         table = table_name,

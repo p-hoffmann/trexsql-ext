@@ -3,9 +3,11 @@ import { Outlet, NavLink } from "react-router-dom";
 import { Separator } from "@/components/ui/separator";
 
 export function AdminLayout() {
-  const { data: session } = useSession();
+  const { data: session, isPending } = useSession();
 
-  if (session?.user && (session.user as any).role !== "admin") {
+  if (isPending) return null;
+
+  if (!session?.user || (session.user as any).role !== "admin") {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="text-center">

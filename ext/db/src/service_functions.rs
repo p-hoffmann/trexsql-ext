@@ -72,12 +72,12 @@ pub fn get_start_service_sql(extension: &str, config_json: &str) -> Result<Optio
 
     match extension {
         "flight" => {
-            let host = config["host"].as_str().unwrap_or("0.0.0.0");
+            let host = config["host"].as_str().unwrap_or("0.0.0.0").replace('\'', "''");
             let port = config["port"].as_u64().unwrap_or(8815);
             if config.get("cert_path").is_some() {
-                let cert = config["cert_path"].as_str().unwrap_or("");
-                let key = config["key_path"].as_str().unwrap_or("");
-                let ca = config["ca_cert_path"].as_str().unwrap_or("");
+                let cert = config["cert_path"].as_str().unwrap_or("").replace('\'', "''");
+                let key = config["key_path"].as_str().unwrap_or("").replace('\'', "''");
+                let ca = config["ca_cert_path"].as_str().unwrap_or("").replace('\'', "''");
                 Ok(Some(format!(
                     "SELECT start_flight_server_tls('{host}', {port}, '{cert}', '{key}', '{ca}')"
                 )))
@@ -88,10 +88,10 @@ pub fn get_start_service_sql(extension: &str, config_json: &str) -> Result<Optio
             }
         }
         "pgwire" => {
-            let host = config["host"].as_str().unwrap_or("127.0.0.1");
+            let host = config["host"].as_str().unwrap_or("127.0.0.1").replace('\'', "''");
             let port = config["port"].as_u64().unwrap_or(5432);
-            let password = config["password"].as_str().unwrap_or("");
-            let db_creds = config["db_credentials"].as_str().unwrap_or("");
+            let password = config["password"].as_str().unwrap_or("").replace('\'', "''");
+            let db_creds = config["db_credentials"].as_str().unwrap_or("").replace('\'', "''");
             Ok(Some(format!(
                 "SELECT start_pgwire_server('{host}', {port}, '{password}', '{db_creds}')"
             )))
@@ -104,7 +104,8 @@ pub fn get_start_service_sql(extension: &str, config_json: &str) -> Result<Optio
         }
         "chdb" => {
             if let Some(path) = config.get("data_path").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
-                Ok(Some(format!("SELECT chdb_start_database('{path}')")))
+                let escaped_path = path.replace('\'', "''");
+                Ok(Some(format!("SELECT chdb_start_database('{escaped_path}')")))
             } else {
                 Ok(Some("SELECT chdb_start_database()".to_string()))
             }
@@ -132,18 +133,19 @@ pub fn get_start_service_sql(extension: &str, config_json: &str) -> Result<Optio
             )))
         }
         "distributed-scheduler" => {
-            let host = config["host"].as_str().unwrap_or("0.0.0.0");
+            let host = config["host"].as_str().unwrap_or("0.0.0.0").replace('\'', "''");
             let port = config["port"].as_u64().unwrap_or(50050);
             Ok(Some(format!(
                 "SELECT swarm_start_distributed_scheduler('{host}', {port})"
             )))
         }
         "distributed-executor" => {
-            let host = config["host"].as_str().unwrap_or("0.0.0.0");
+            let host = config["host"].as_str().unwrap_or("0.0.0.0").replace('\'', "''");
             let port = config["port"].as_u64().unwrap_or(50051);
             let scheduler = config["scheduler_url"]
                 .as_str()
-                .unwrap_or("http://localhost:50050");
+                .unwrap_or("http://localhost:50050")
+                .replace('\'', "''");
             Ok(Some(format!(
                 "SELECT swarm_start_distributed_executor('{host}', {port}, '{scheduler}')"
             )))

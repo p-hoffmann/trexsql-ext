@@ -6,10 +6,11 @@ interface GridProps {
 }
 
 export function Grid({ cols = "3", children }: GridProps) {
+  const safeCols = /^\d{1,2}$/.test(cols) ? cols : "3";
   return (
     <div
       className="grid gap-4"
-      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+      style={{ gridTemplateColumns: `repeat(${safeCols}, minmax(0, 1fr))` }}
     >
       {children}
     </div>

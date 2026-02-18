@@ -37,17 +37,17 @@ pub type RuntimeProducer =
     Arc<dyn Fn(&SessionConfig) -> DFResult<Arc<RuntimeEnv>> + Send + Sync>;
 
 /// Executes federated SQL fragments against the local trexsql connection.
-struct DuckDBSQLExecutor {
+struct TrexSQLExecutor {
     context: String,
 }
 
-impl DuckDBSQLExecutor {
+impl TrexSQLExecutor {
     fn new(context: impl Into<String>) -> Self {
         Self { context: context.into() }
     }
 
     /// Query local trexsql and return Arrow batches (no IPC — same arrow crate).
-    fn query_duckdb(&self, sql: &str) -> Result<(SchemaRef, Vec<arrow::array::RecordBatch>), String> {
+    fn query_trexsql(&self, sql: &str) -> Result<(SchemaRef, Vec<arrow::array::RecordBatch>), String> {
         let conn_arc = crate::get_shared_connection()
             .ok_or("Shared trexsql connection not available")?;
         let conn = conn_arc.lock().map_err(|e| format!("Lock failed: {e}"))?;
@@ -66,7 +66,7 @@ impl DuckDBSQLExecutor {
 }
 
 #[async_trait::async_trait]
-impl SQLExecutor for DuckDBSQLExecutor {
+impl SQLExecutor for TrexSQLExecutor {
     fn name(&self) -> &str { "trexsql" }
 
     fn compute_context(&self) -> Option<String> { Some(self.context.clone()) }
@@ -77,7 +77,7 @@ impl SQLExecutor for DuckDBSQLExecutor {
 
     fn execute(&self, sql: &str, schema: SchemaRef) -> DFResult<SendableRecordBatchStream> {
         SwarmLogger::debug("distributed", &format!("Federation pushdown: {sql}"));
-        let (_schema, batches) = self.query_duckdb(sql)
+        let (_schema, batches) = self.query_trexsql(sql)
             .map_err(|e| wrap_executor_error("execute", e))?;
         let batch_stream = stream::iter(batches.into_iter().map(Ok));
         Ok(Box::pin(RecordBatchStreamAdapter::new(schema, batch_stream)))
@@ -89,9 +89,9 @@ impl SQLExecutor for DuckDBSQLExecutor {
 
     async fn get_table_schema(&self, table_name: &str) -> DFResult<SchemaRef> {
         let escaped = crate::catalog::escape_identifier(table_name);
-        // Use LIMIT 1 (not LIMIT 0) because DuckDB's query_arrow may return
+        // Use LIMIT 1 (not LIMIT 0) because trexsql's query_arrow may return
         // 0 batches for LIMIT 0, losing schema information.
-        let (schema, _) = self.query_duckdb(&format!("SELECT * FROM \"{}\" LIMIT 1", escaped))
+        let (schema, _) = self.query_trexsql(&format!("SELECT * FROM \"{}\" LIMIT 1", escaped))
             .map_err(|e| wrap_executor_error("get_table_schema", e))?;
         Ok(schema)
     }
@@ -173,7 +173,7 @@ impl SQLExecutor for FlightSQLExecutor {
 
     async fn get_table_schema(&self, table_name: &str) -> DFResult<SchemaRef> {
         let escaped = catalog::escape_identifier(table_name);
-        // Use LIMIT 1 (not LIMIT 0) for consistency with DuckDBSQLExecutor.
+        // Use LIMIT 1 (not LIMIT 0) for consistency with TrexSQLExecutor.
         // LIMIT 0 may produce 0 batches on the remote trexsql node, and while
         // the Flight protocol sends schema in the first message, LIMIT 1 is
         // more robust across different server implementations.
@@ -188,7 +188,7 @@ impl SQLExecutor for FlightSQLExecutor {
 
 /// Create a DataFusion session with local trexsql tables registered for federation pushdown.
 pub async fn create_duckdb_session() -> Result<SessionContext, String> {
-    let executor = Arc::new(DuckDBSQLExecutor::new("local-trexsql"));
+    let executor = Arc::new(TrexSQLExecutor::new("local-trexsql"));
     let provider = Arc::new(SQLFederationProvider::new(executor));
 
     let table_names = catalog::list_tables().unwrap_or_default();
@@ -349,7 +349,7 @@ pub async fn create_distributed_session_with_classifications(
     let mut schema_children: Vec<Arc<dyn SchemaProvider>> = Vec::new();
 
     if !local_tables.is_empty() {
-        let local_executor = Arc::new(DuckDBSQLExecutor::new("local-trexsql"));
+        let local_executor = Arc::new(TrexSQLExecutor::new("local-trexsql"));
         let local_provider = Arc::new(SQLFederationProvider::new(local_executor));
         let local_schema = Arc::new(
             SQLSchemaProvider::new_with_tables(local_provider, local_tables.clone())
