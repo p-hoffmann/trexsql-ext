@@ -1,5 +1,3 @@
-//! Type definitions and data structures for the ChDB extension
-
 use duckdb::core::LogicalTypeId;
 use std::error::Error;
 use std::fmt;

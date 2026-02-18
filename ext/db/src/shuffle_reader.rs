@@ -111,7 +111,6 @@ impl ExecutionPlan for ShuffleReaderExec {
             ),
         );
 
-        // Spawn the wait as a tokio task.
         let join_handle = self.runtime_handle.spawn(async move {
             let batches =
                 shuffle_registry::wait_for_partition(&shuffle_id, partition_id, expected_sources)

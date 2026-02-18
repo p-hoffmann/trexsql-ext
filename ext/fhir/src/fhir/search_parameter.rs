@@ -255,12 +255,9 @@ fn find_array_segments(
             result.push(i);
         }
 
-        // Determine the next set of elements to search in
         if !elem.children.is_empty() {
-            // BackboneElement with inline children
             current_elements = &elem.children;
         } else if let Some(type_name) = elem.type_codes.first() {
-            // Complex type — look it up in the type registry
             if let Some(type_def) = definitions.get_type(type_name) {
                 current_elements = &type_def.elements;
             } else {

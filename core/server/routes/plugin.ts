@@ -65,7 +65,6 @@ export function addPluginRoutes(app: Express) {
       const pluginList: any[] = [];
       const seen = new Set<string>();
 
-      // Add all on-disk plugins
       for (const [name, diskInfo] of diskPlugins) {
         seen.add(name);
         const activeEntry = activePlugins.get(name);
@@ -103,7 +102,6 @@ export function addPluginRoutes(app: Express) {
         return;
       }
 
-      // Enrich with registry info if configured
       const registryUrl = Deno.env.get("PLUGINS_INFORMATION_URL");
       if (registryUrl) {
         try {
@@ -135,7 +133,6 @@ export function addPluginRoutes(app: Express) {
             });
           }
 
-          // Merge registry info into plugin list
           for (const plugin of pluginList) {
             const regInfo = registryMap.get(plugin.name);
             if (regInfo) {
@@ -144,7 +141,6 @@ export function addPluginRoutes(app: Express) {
             }
           }
 
-          // Add registry-only plugins
           for (const [pkgname, regInfo] of registryMap) {
             if (!seen.has(pkgname) && !activePlugins.has(pkgname)) {
               pluginList.push({

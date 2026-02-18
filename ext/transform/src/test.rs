@@ -63,7 +63,6 @@ fn run_tests(path: &str, schema: &str, source_schema: Option<&str>) -> Result<Ve
         }
     }
 
-    // Run YAML column tests (not_null, unique)
     for model in &project.models {
         for col_test in &model.column_tests {
             for test_type in &col_test.tests {

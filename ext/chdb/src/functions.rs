@@ -1,4 +1,3 @@
-//! Core ChDB database functions and utilities
 
 use crate::types::{ChdbError, GLOBAL_SESSION};
 use crate::safe_query_result::safe_execute_query;

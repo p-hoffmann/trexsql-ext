@@ -18,7 +18,6 @@ use types::PgTrexShmem;
 
 static PG_TREX_SHMEM: pgrx::PgLwLock<PgTrexShmem> = unsafe { pgrx::PgLwLock::new(c"pg_trex_shmem") };
 
-/// Save previous planner hook so we can chain to it.
 static mut PREV_PLANNER_HOOK: pg_sys::planner_hook_type = None;
 
 #[pg_guard]
@@ -142,12 +141,10 @@ fn pg_trex_status() -> pgrx::iter::TableIterator<
     ))
 }
 
-/// Get a reference to the shared memory lock for use by other modules.
 pub fn get_shmem() -> &'static pgrx::PgLwLock<PgTrexShmem> {
     &PG_TREX_SHMEM
 }
 
-/// Get the previous planner hook for chaining.
 pub fn get_prev_planner_hook() -> pg_sys::planner_hook_type {
     unsafe { PREV_PLANNER_HOOK }
 }

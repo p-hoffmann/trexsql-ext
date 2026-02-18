@@ -480,7 +480,6 @@ impl NpmRegistry {
       return Ok(results);
     }
 
-    // Try to read a package.json from a directory and add to results
     let try_read_package =
       |dir_path: &Path, results: &mut Vec<ListResponse>| {
         let package_json_path = dir_path.join("package.json");
@@ -518,7 +517,6 @@ impl NpmRegistry {
 
         if let Ok(dir_name) = entry.file_name().into_string() {
           if dir_name.starts_with('@') {
-            // Scoped package directory — recurse one level
             if let Ok(scoped_entries) = fs::read_dir(&entry_path) {
               for scoped_entry in scoped_entries.flatten() {
                 let scoped_path = scoped_entry.path();
@@ -528,7 +526,6 @@ impl NpmRegistry {
               }
             }
           } else {
-            // Flat layout: {dir}/{name}/package.json
             try_read_package(&entry_path, &mut results);
           }
         }
@@ -570,7 +567,6 @@ impl NpmRegistry {
 
     match std::fs::remove_dir_all(&package_dir) {
       Ok(_) => {
-        // Clean up empty scope directory if applicable
         if let Some(parent) = package_dir.parent() {
           if parent != std::path::Path::new(install_dir) {
             if let Ok(mut entries) = std::fs::read_dir(parent) {
@@ -620,17 +616,14 @@ impl NpmRegistry {
     let mut results = Vec::new();
 
     for pkg_name in &packages {
-      // Build the full package spec with version
       let package_spec = if pkg_name.contains('@')
         && pkg_name.rfind('@').unwrap_or(0) > 0
       {
-        // Already has a version specifier like `name@1.0.0`
         pkg_name.clone()
       } else {
         format!("{}@{}", pkg_name, api_version)
       };
 
-      // Determine the package name (without version) for directory checking
       let name_part = if let Some(pos) = package_spec.rfind('@') {
         if pos == 0 {
           &package_spec

@@ -1,5 +1,3 @@
-//! Scalar function implementations for ChDB extension
-
 use crate::functions::{start_chdb_database_scalar, stop_chdb_database_scalar, execute_dml_database_scalar};
 use duckdb::{
     vscalar::{VScalar, ScalarFunctionSignature},

@@ -62,7 +62,6 @@ fn mask_kv_password(conn_str: &str) -> String {
 }
 
 fn mask_uri_password(conn_str: &str) -> String {
-    // postgresql://user:password@host:port/dbname?params
     let scheme_end = conn_str.find("://").unwrap_or(0) + 3;
     let authority = &conn_str[scheme_end..];
 

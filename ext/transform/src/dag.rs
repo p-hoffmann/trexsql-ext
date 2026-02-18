@@ -1,23 +1,18 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 
-/// Build a DAG and return nodes in topological order using Kahn's algorithm.
-/// Returns the ordered list of node names.
 pub fn topological_sort(
     nodes: &[String],
     edges: &HashMap<String, HashSet<String>>,
 ) -> Result<Vec<String>, Box<dyn Error>> {
     let node_set: HashSet<&String> = nodes.iter().collect();
 
-    // Compute in-degree for each node
     let mut in_degree: HashMap<&String, usize> = HashMap::new();
     for node in nodes {
         in_degree.insert(node, 0);
     }
 
-    // Build adjacency list (dependency -> dependent)
-    // edges maps: node -> set of nodes it depends on
-    // We need: node -> set of nodes that depend on it (forward edges)
+    // Invert edges: dependency -> list of dependents
     let mut forward: HashMap<&String, Vec<&String>> = HashMap::new();
     for node in nodes {
         forward.insert(node, Vec::new());
@@ -35,7 +30,6 @@ pub fn topological_sort(
         }
     }
 
-    // Kahn's algorithm
     let mut queue: VecDeque<&String> = VecDeque::new();
     for (node, &degree) in &in_degree {
         if degree == 0 {
@@ -43,7 +37,6 @@ pub fn topological_sort(
         }
     }
 
-    // Sort the initial queue for deterministic output
     let mut sorted_queue: Vec<&String> = queue.drain(..).collect();
     sorted_queue.sort();
     queue.extend(sorted_queue);
@@ -77,13 +70,11 @@ pub fn topological_sort(
     Ok(result)
 }
 
-/// Given a set of changed nodes and the dependency edges, return all transitive dependents.
 pub fn transitive_dependents(
     changed: &HashSet<String>,
     all_nodes: &[String],
     edges: &HashMap<String, HashSet<String>>,
 ) -> HashSet<String> {
-    // Build reverse map: dependency -> set of dependents
     let mut reverse: HashMap<&String, Vec<&String>> = HashMap::new();
     for node in all_nodes {
         reverse.insert(node, Vec::new());

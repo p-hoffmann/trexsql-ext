@@ -159,7 +159,6 @@ export function Services() {
     reexecuteEtl({ requestPolicy: "network-only" });
   }
 
-  // Auto-poll every 10s
   useEffect(() => {
     const interval = setInterval(refetchAll, 10000);
     return () => clearInterval(interval);

@@ -121,13 +121,11 @@ export function RoleDetail() {
 
   const role: RoleData | null = result.data?.roleByRowId || null;
 
-  // Edit state
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // Dialog state
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 

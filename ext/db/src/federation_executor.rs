@@ -89,7 +89,7 @@ impl SQLExecutor for DuckDBSQLExecutor {
 
     async fn get_table_schema(&self, table_name: &str) -> DFResult<SchemaRef> {
         let escaped = crate::catalog::escape_identifier(table_name);
-        // Use LIMIT 1 (not LIMIT 0) because DuckDB's query_arrow may return
+        // Use LIMIT 1 (not LIMIT 0) because trexsql's query_arrow may return
         // 0 batches for LIMIT 0, losing schema information.
         let (schema, _) = self.query_duckdb(&format!("SELECT * FROM \"{}\" LIMIT 1", escaped))
             .map_err(|e| wrap_executor_error("get_table_schema", e))?;

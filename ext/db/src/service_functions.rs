@@ -381,8 +381,8 @@ impl VScalar for SwarmStartServiceScalar {
     fn signatures() -> Vec<ScalarFunctionSignature> {
         vec![ScalarFunctionSignature::exact(
             vec![
-                LogicalTypeId::Varchar.into(), // extension
-                LogicalTypeId::Varchar.into(), // config JSON
+                LogicalTypeId::Varchar.into(),
+                LogicalTypeId::Varchar.into(),
             ],
             LogicalTypeId::Varchar.into(),
         )]
@@ -453,7 +453,7 @@ impl VScalar for SwarmStopServiceScalar {
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
         vec![ScalarFunctionSignature::exact(
-            vec![LogicalTypeId::Varchar.into()], // extension
+            vec![LogicalTypeId::Varchar.into()],
             LogicalTypeId::Varchar.into(),
         )]
     }
@@ -527,7 +527,7 @@ impl VScalar for SwarmLoadScalar {
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
         vec![ScalarFunctionSignature::exact(
-            vec![LogicalTypeId::Varchar.into()], // extension name
+            vec![LogicalTypeId::Varchar.into()],
             LogicalTypeId::Varchar.into(),
         )]
     }
@@ -575,8 +575,8 @@ impl VScalar for SwarmSetKeyScalar {
     fn signatures() -> Vec<ScalarFunctionSignature> {
         vec![ScalarFunctionSignature::exact(
             vec![
-                LogicalTypeId::Varchar.into(), // key
-                LogicalTypeId::Varchar.into(), // value
+                LogicalTypeId::Varchar.into(),
+                LogicalTypeId::Varchar.into(),
             ],
             LogicalTypeId::Varchar.into(),
         )]
@@ -616,7 +616,7 @@ impl VScalar for SwarmDeleteKeyScalar {
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
         vec![ScalarFunctionSignature::exact(
-            vec![LogicalTypeId::Varchar.into()], // key
+            vec![LogicalTypeId::Varchar.into()],
             LogicalTypeId::Varchar.into(),
         )]
     }
@@ -696,9 +696,9 @@ impl VScalar for SwarmRegisterServiceScalar {
     fn signatures() -> Vec<ScalarFunctionSignature> {
         vec![ScalarFunctionSignature::exact(
             vec![
-                LogicalTypeId::Varchar.into(), // service name
-                LogicalTypeId::Varchar.into(), // host
-                LogicalTypeId::Integer.into(), // port
+                LogicalTypeId::Varchar.into(),
+                LogicalTypeId::Varchar.into(),
+                LogicalTypeId::Integer.into(),
             ],
             LogicalTypeId::Varchar.into(),
         )]

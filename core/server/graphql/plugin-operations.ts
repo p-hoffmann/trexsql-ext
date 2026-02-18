@@ -334,7 +334,6 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
             });
           }
 
-          // Enrich with registry info if configured
           const registryUrl = Deno.env.get("PLUGINS_INFORMATION_URL");
           if (registryUrl) {
             try {
@@ -553,7 +552,6 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
             const conn = new Trex.TrexDB("memory");
             const summaries: any[] = [];
 
-            // Include core schema if SCHEMA_DIR is configured
             const schemaDir = Deno.env.get("SCHEMA_DIR");
             if (schemaDir) {
               try {
@@ -587,7 +585,6 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
               }
             }
 
-            // Include plugin migrations
             const plugins = getMigrationPlugins();
             for (const plugin of plugins) {
               try {
@@ -903,11 +900,9 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
             const dir = Deno.env.get("PLUGINS_PATH") || "./plugins";
             const conn = new Trex.TrexDB("memory");
 
-            // Delete first
             const delSql = `SELECT delete_results FROM trex_plugin_delete('${escapeSql(packageName)}', '${escapeSql(dir)}')`;
             await conn.execute(delSql, []);
 
-            // Reinstall
             const spec = version ? `${packageName}@${escapeSql(version)}` : packageName;
             const installSql = `SELECT install_results FROM trex_plugin_install('${escapeSql(spec)}', '${escapeSql(dir)}')`;
             const result = await conn.execute(installSql, []);
@@ -1041,7 +1036,6 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
             try {
               await conn.execute(`SELECT trex_db_stop_service('${escapeSql(extension)}')`, []);
             } catch {}
-            // Start with provided config
             const sql = `SELECT trex_db_start_service('${escapeSql(extension)}', '${escapeSql(config)}')`;
             const result = await conn.execute(sql, []);
             const rows = result?.rows || result || [];
@@ -1059,7 +1053,6 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
             const conn = new Trex.TrexDB("memory");
             const allResults: any[] = [];
 
-            // Determine targets
             type MigrationTarget = { name: string; path: string; schema: string; database: string };
             const targets: MigrationTarget[] = [];
 
@@ -1156,7 +1149,6 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
             }
             const cred = credResult.rows[0];
 
-            // Build libpq connection string
             const parts: string[] = [
               `host='${escapeSql(db.host)}'`,
               `port='${escapeSql(String(db.port))}'`,
@@ -1175,7 +1167,6 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
 
             const connStr = parts.join(" ");
 
-            // Build SQL call
             let sql: string;
             if (args.batchSize != null || args.batchTimeoutMs != null || args.retryDelayMs != null || args.retryMaxAttempts != null) {
               const batchSize = args.batchSize ?? 1000;

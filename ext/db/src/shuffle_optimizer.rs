@@ -194,7 +194,6 @@ impl ShuffleInsertionRule {
             plan
         };
 
-        // Check if this is a HashJoinExec.
         let is_hash_shuffle = plan
             .as_any()
             .downcast_ref::<HashJoinExec>()
@@ -250,7 +249,6 @@ impl ShuffleInsertionRule {
             .map(|(_, r)| format!("{}", r))
             .collect();
 
-        // Collect participating node endpoints.
         let left_tables = extract_table_names_from_plan(&left);
         let right_tables = extract_table_names_from_plan(&right);
         let mut all_endpoints: Vec<String> = Vec::new();
@@ -286,7 +284,6 @@ impl ShuffleInsertionRule {
             })
             .collect();
 
-        // Determine local partition ID.
         let local_partition_id = self
             .catalog_stats
             .local_endpoint
@@ -294,7 +291,6 @@ impl ShuffleInsertionRule {
             .and_then(|local_ep| all_endpoints.iter().position(|ep| ep == local_ep))
             .unwrap_or(0);
 
-        // Left side descriptor/writer.
         let left_desc = ShuffleDescriptor {
             shuffle_id: format!("{}-left", shuffle_id),
             join_keys: left_key_names.clone(),
@@ -315,7 +311,6 @@ impl ShuffleInsertionRule {
             self.catalog_stats.runtime_handle.clone(),
         ));
 
-        // Right side descriptor/writer.
         let right_desc = ShuffleDescriptor {
             shuffle_id: format!("{}-right", shuffle_id),
             join_keys: right_key_names.clone(),
@@ -400,7 +395,6 @@ fn collect_table_names(plan: &Arc<dyn ExecutionPlan>, names: &mut Vec<String>) {
         }
     }
 
-    // Recurse into children.
     for child in plan.children() {
         collect_table_names(child, names);
     }

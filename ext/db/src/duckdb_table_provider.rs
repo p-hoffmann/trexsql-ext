@@ -81,7 +81,7 @@ fn parse_decimal(upper: &str) -> DataType {
     DataType::Decimal128(precision, scale)
 }
 
-/// DuckDB may return notnull as BooleanArray or StringArray depending on mode.
+/// trexsql may return notnull as BooleanArray or StringArray depending on mode.
 fn notnull_value(col: &dyn Array, row: usize) -> bool {
     if let Some(arr) = col.as_any().downcast_ref::<arrow::array::BooleanArray>() {
         return arr.value(row);
