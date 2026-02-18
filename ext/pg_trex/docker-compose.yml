@@ -1,6 +1,8 @@
 services:
   postgres:
-    build: .
+    build:
+      context: ../..
+      dockerfile: ext/pg_trex/Dockerfile
     ports:
       - "45432:5432"
     environment:

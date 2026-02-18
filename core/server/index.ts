@@ -231,14 +231,27 @@ try {
   console.error("Plugin system failed to initialize:", err);
 }
 
-// Run core schema migrations (SCHEMA_DIR) before plugin migrations
+// Run core schema migrations (SCHEMA_DIR) directly against PostgreSQL
 try {
   const schemaDir = Deno.env.get("SCHEMA_DIR");
-  if (schemaDir) {
-    // deno-lint-ignore no-explicit-any
-    const conn = new (globalThis as any).Trex.TrexDB("memory");
-    await conn.execute(`SELECT * FROM trex_migration_run_schema('${schemaDir}', 'trex', '_config')`, []);
-    console.log("Core schema migrations applied");
+  const databaseUrlForMigration = Deno.env.get("DATABASE_URL");
+  if (schemaDir && databaseUrlForMigration) {
+    const { Pool: PgPool } = await import("pg");
+    const { readdirSync, readFileSync } = await import("node:fs");
+    const migrationPool = new PgPool({ connectionString: databaseUrlForMigration });
+    try {
+      const files = readdirSync(schemaDir)
+        .filter((f: string) => f.endsWith(".sql"))
+        .sort();
+      for (const file of files) {
+        const sql = readFileSync(join(schemaDir, file), "utf-8");
+        await migrationPool.query(sql);
+        console.log(`Schema migration applied: ${file}`);
+      }
+      console.log("Core schema migrations applied");
+    } finally {
+      await migrationPool.end();
+    }
   }
 } catch (err) {
   console.error("Core schema migration failed:", err);
@@ -527,7 +540,9 @@ try {
 
 // Static file serving for production frontend build
 try {
-  const webDistPath = join(Deno.cwd(), "core", "web", "dist");
+  const schemaDir = Deno.env.get("SCHEMA_DIR");
+  const coreRoot = schemaDir ? join(schemaDir, "..") : join(Deno.cwd(), "core");
+  const webDistPath = join(coreRoot, "web", "dist");
   await Deno.stat(webDistPath);
   const serveStatic = (await import("express")).default.static;
   app.use(BASE_PATH, serveStatic(webDistPath));

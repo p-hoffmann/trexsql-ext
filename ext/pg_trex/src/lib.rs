@@ -8,7 +8,11 @@ mod catalog;
 mod custom_scan;
 mod guc;
 mod ipc;
+mod pg_attach;
+mod pg_scan;
+mod pg_state;
 mod planner;
+mod spi_bridge;
 mod types;
 mod worker;
 
@@ -35,6 +39,7 @@ pub extern "C-unwind" fn _PG_init() {
         .set_function("pg_trex_worker_main")
         .set_library("pg_trex")
         .enable_shmem_access(None)
+        .enable_spi_access()
         .set_restart_time(Some(Duration::from_secs(10)))
         .set_start_time(BgWorkerStartTime::RecoveryFinished)
         .load();

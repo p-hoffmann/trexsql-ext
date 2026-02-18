@@ -28,6 +28,12 @@ pub static SWARM_EXTENSION_PATH: GucSetting<Option<CString>> =
 pub static FLIGHT_EXTENSION_PATH: GucSetting<Option<CString>> =
     GucSetting::<Option<CString>>::new(Some(c""));
 
+pub static EXTENSION_DIR: GucSetting<Option<CString>> =
+    GucSetting::<Option<CString>>::new(Some(c""));
+
+pub static DATABASE: GucSetting<Option<CString>> =
+    GucSetting::<Option<CString>>::new(Some(c""));
+
 /// Get a string GUC value as an owned String, with a fallback default.
 pub fn get_str(setting: &GucSetting<Option<CString>>, default: &str) -> String {
     setting
@@ -127,6 +133,24 @@ pub fn register_gucs() {
         c"Path to flight.trex extension file",
         c"If empty, flight extension is not loaded",
         &FLIGHT_EXTENSION_PATH,
+        GucContext::Postmaster,
+        GucFlags::default(),
+    );
+
+    GucRegistry::define_string_guc(
+        c"pg_trex.extension_dir",
+        c"Directory containing trexsql extension files",
+        c"If set, all .trex files in this directory are loaded at startup",
+        &EXTENSION_DIR,
+        GucContext::Postmaster,
+        GucFlags::default(),
+    );
+
+    GucRegistry::define_string_guc(
+        c"pg_trex.database",
+        c"PostgreSQL database for SPI connections",
+        c"Database the background worker connects to for pg_scan SPI queries. Falls back to POSTGRES_DB env var, then 'postgres'.",
+        &DATABASE,
         GucContext::Postmaster,
         GucFlags::default(),
     );

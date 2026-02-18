@@ -8,6 +8,10 @@
 use crate::catalog;
 use crate::guc;
 use crate::ipc;
+use crate::pg_attach;
+use crate::pg_scan;
+use crate::pg_state;
+use crate::spi_bridge;
 use crate::types::*;
 
 use arrow::datatypes::Schema;
@@ -163,8 +167,54 @@ fn validate_extension_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Open an in-memory trexsql (DuckDB) instance and load the swarm and flight
-/// extensions from GUC-configured paths.
+/// Load all .trex and .duckdb_extension files from a directory.
+fn load_extensions_from_dir(conn: &Connection, dir: &str) -> (u32, u32) {
+    let mut loaded = 0u32;
+    let mut failed = 0u32;
+
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            pgrx::warning!("pg_trex: could not read extension_dir {}: {}", dir, e);
+            return (0, 0);
+        }
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let ext = path.extension().and_then(|e| e.to_str());
+        if ext != Some("trex") && ext != Some("duckdb_extension") {
+            continue;
+        }
+
+        let path_str = path.display().to_string();
+        if let Err(e) = validate_extension_path(&path_str) {
+            pgrx::warning!("pg_trex: skipping {}: {}", path_str, e);
+            failed += 1;
+            continue;
+        }
+
+        pgrx::log!("pg_trex: loading extension {}", path_str);
+        match conn.execute_batch(&format!("LOAD '{}'", path_str)) {
+            Ok(_) => {
+                pgrx::log!("pg_trex: loaded {}", path_str);
+                loaded += 1;
+            }
+            Err(e) => {
+                pgrx::warning!("pg_trex: failed to load {}: {}", path_str, e);
+                failed += 1;
+            }
+        }
+    }
+
+    (loaded, failed)
+}
+
+/// Open an in-memory trexsql (DuckDB) instance and load extensions.
+///
+/// When pg_trex.extension_dir is set, all .trex files from that directory are
+/// loaded (mirroring the trex binary's behavior). Otherwise, falls back to
+/// loading individual extensions from swarm_extension_path / flight_extension_path.
 fn init_trexsql_engine() -> Result<Connection, String> {
     pgrx::log!("pg_trex: initializing trexsql engine");
 
@@ -174,28 +224,38 @@ fn init_trexsql_engine() -> Result<Connection, String> {
     let conn = Connection::open_in_memory_with_flags(config)
         .map_err(|e| format!("open_in_memory: {e}"))?;
 
-    // Load swarm extension if path is configured
-    let swarm_path = guc::get_str(&guc::SWARM_EXTENSION_PATH, "");
-    if !swarm_path.is_empty() {
-        validate_extension_path(&swarm_path)?;
-        pgrx::log!("pg_trex: loading swarm extension from {}", swarm_path);
-        conn.execute_batch(&format!("LOAD '{}'", swarm_path))
-            .map_err(|e| format!("LOAD swarm ({}): {}", swarm_path, e))?;
-        pgrx::log!("pg_trex: swarm extension loaded successfully");
+    let extension_dir = guc::get_str(&guc::EXTENSION_DIR, "");
+    if !extension_dir.is_empty() {
+        // Bulk-load all extensions from directory (like the trex binary)
+        pgrx::log!("pg_trex: loading extensions from {}", extension_dir);
+        let (loaded, failed) = load_extensions_from_dir(&conn, &extension_dir);
+        pgrx::log!(
+            "pg_trex: loaded {} extensions ({} failed) from {}",
+            loaded, failed, extension_dir
+        );
     } else {
-        pgrx::log!("pg_trex: swarm_extension_path not configured, skipping swarm");
-    }
+        // Legacy per-path loading
+        let swarm_path = guc::get_str(&guc::SWARM_EXTENSION_PATH, "");
+        if !swarm_path.is_empty() {
+            validate_extension_path(&swarm_path)?;
+            pgrx::log!("pg_trex: loading swarm extension from {}", swarm_path);
+            conn.execute_batch(&format!("LOAD '{}'", swarm_path))
+                .map_err(|e| format!("LOAD swarm ({}): {}", swarm_path, e))?;
+            pgrx::log!("pg_trex: swarm extension loaded successfully");
+        } else {
+            pgrx::log!("pg_trex: swarm_extension_path not configured, skipping swarm");
+        }
 
-    // Load flight extension if path is configured
-    let flight_path = guc::get_str(&guc::FLIGHT_EXTENSION_PATH, "");
-    if !flight_path.is_empty() {
-        validate_extension_path(&flight_path)?;
-        pgrx::log!("pg_trex: loading flight extension from {}", flight_path);
-        conn.execute_batch(&format!("LOAD '{}'", flight_path))
-            .map_err(|e| format!("LOAD flight ({}): {}", flight_path, e))?;
-        pgrx::log!("pg_trex: flight extension loaded successfully");
-    } else {
-        pgrx::log!("pg_trex: flight_extension_path not configured, skipping flight");
+        let flight_path = guc::get_str(&guc::FLIGHT_EXTENSION_PATH, "");
+        if !flight_path.is_empty() {
+            validate_extension_path(&flight_path)?;
+            pgrx::log!("pg_trex: loading flight extension from {}", flight_path);
+            conn.execute_batch(&format!("LOAD '{}'", flight_path))
+                .map_err(|e| format!("LOAD flight ({}): {}", flight_path, e))?;
+            pgrx::log!("pg_trex: flight extension loaded successfully");
+        } else {
+            pgrx::log!("pg_trex: flight_extension_path not configured, skipping flight");
+        }
     }
 
     pgrx::log!("pg_trex: trexsql engine initialized");
@@ -678,6 +738,24 @@ pub fn worker_main(shmem: &pgrx::PgLwLock<PgTrexShmem>) {
     // Unblock signals so we can receive SIGHUP and SIGTERM
     BackgroundWorker::attach_signal_handlers(SignalWakeFlags::SIGHUP | SignalWakeFlags::SIGTERM);
 
+    // Connect to PostgreSQL so SPI is available on this thread
+    let database = guc::get_str(&guc::DATABASE, "");
+    let db_name = if database.is_empty() {
+        std::env::var("POSTGRES_DB").unwrap_or_else(|_| "postgres".to_string())
+    } else {
+        database
+    };
+    pgrx::log!("pg_trex: connecting to database '{}' for SPI", db_name);
+    let db_cstr = std::ffi::CString::new(db_name)
+        .expect("pg_trex: invalid database name");
+    unsafe {
+        pg_sys::BackgroundWorkerInitializeConnection(
+            db_cstr.as_ptr(),
+            std::ptr::null(),
+            0,
+        );
+    }
+
     // Store the worker latch pointer in shared memory so backends can wake us
     {
         let exclusive = shmem.exclusive();
@@ -698,8 +776,41 @@ pub fn worker_main(shmem: &pgrx::PgLwLock<PgTrexShmem>) {
         }
     };
 
-    // Start the swarm gossip cluster
-    if let Err(e) = start_swarm(&conn) {
+    // Initialize SPI bridge channels before creating the thread pool so worker
+    // threads can submit pg_scan requests from the start.
+    spi_bridge::init();
+
+    // Register table functions on the connection before cloning into the pool
+    conn.register_table_function::<pg_scan::PgScanVTab>("pg_scan")
+        .map_err(|e| format!("register pg_scan: {e}"))
+        .unwrap_or_else(|e| {
+            pgrx::warning!("pg_trex: {}", e);
+        });
+
+    pg_state::init_ddl_connection(&conn)
+        .unwrap_or_else(|e| pgrx::warning!("pg_trex: DDL connection init: {}", e));
+
+    conn.register_table_function::<pg_attach::PgAttachVTab>("pg_attach")
+        .map_err(|e| format!("register pg_attach: {e}"))
+        .unwrap_or_else(|e| {
+            pgrx::warning!("pg_trex: {}", e);
+        });
+    conn.register_table_function::<pg_attach::PgDetachVTab>("pg_detach")
+        .map_err(|e| format!("register pg_detach: {e}"))
+        .unwrap_or_else(|e| {
+            pgrx::warning!("pg_trex: {}", e);
+        });
+    conn.register_table_function::<pg_attach::PgTablesVTab>("pg_tables")
+        .map_err(|e| format!("register pg_tables: {e}"))
+        .unwrap_or_else(|e| {
+            pgrx::warning!("pg_trex: {}", e);
+        });
+
+    // When SWARM_CONFIG is set, the db extension's init already started gossip
+    // and orchestrated services (including trexas). Skip the GUC-based startup.
+    if std::env::var("SWARM_CONFIG").is_ok() {
+        pgrx::log!("pg_trex: SWARM_CONFIG detected, skipping GUC-based swarm start");
+    } else if let Err(e) = start_swarm(&conn) {
         // Swarm failure is not fatal -- the engine can still serve local queries
         pgrx::warning!("pg_trex: trex_db_start failed (non-fatal): {}", e);
     }
@@ -776,6 +887,9 @@ pub fn worker_main(shmem: &pgrx::PgLwLock<PgTrexShmem>) {
         // Collect completed responses: write results to shm_mq
         collect_responses(shmem, &pool, &mut pending_queries);
 
+        // Process any pending SPI requests from pg_scan calls
+        spi_bridge::process_pending();
+
         // Periodic catalog refresh
         let refresh_interval =
             Duration::from_secs(cached_gucs.catalog_refresh_secs.max(1) as u64);
@@ -822,8 +936,15 @@ pub fn worker_main(shmem: &pgrx::PgLwLock<PgTrexShmem>) {
     pgrx::log!("pg_trex: shutting down thread pool");
     drop(pool);
 
-    // Stop swarm if it was running
-    stop_swarm(&conn);
+    // Stop swarm — either via GUC path or SWARM_CONFIG path
+    if std::env::var("SWARM_CONFIG").is_ok() {
+        pgrx::log!("pg_trex: stopping SWARM_CONFIG-managed services");
+        if let Err(e) = conn.execute_batch("SELECT trex_db_stop()") {
+            pgrx::warning!("pg_trex: trex_db_stop failed: {}", e);
+        }
+    } else {
+        stop_swarm(&conn);
+    }
 
     // Mark worker as stopped
     {
