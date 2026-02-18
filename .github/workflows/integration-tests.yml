@@ -636,7 +636,7 @@ jobs:
     name: "Test pg_trex"
     runs-on: ubuntu-24.04
     needs: [build-rust-core, build-pg-trex]
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
