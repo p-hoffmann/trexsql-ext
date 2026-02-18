@@ -1,0 +1,34 @@
+.git/
+.github/
+.claude/
+.specify/
+.gitmodules
+node_modules/
+**/node_modules/
+**/build/
+integration-tests/
+specs/
+
+# Exclude all extension target/src/test dirs
+ext/ai/
+ext/atlas/
+ext/bao/
+ext/chdb/
+ext/cql2elm/
+ext/db/
+ext/etl/
+ext/extension-ci-tools/
+ext/fhir/
+ext/flight/
+ext/hana/
+ext/llama/
+ext/migration/
+ext/pgt/
+ext/pgwire/
+ext/swarm/
+ext/tpm/
+
+# pg_trex: exclude build artifacts and tests
+ext/pg_trex/target/
+ext/pg_trex/test/
+ext/pg_trex/Makefile

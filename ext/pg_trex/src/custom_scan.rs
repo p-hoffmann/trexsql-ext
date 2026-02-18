@@ -58,7 +58,7 @@ pub fn get_custom_scan_methods() -> *const pg_sys::CustomScanMethods {
 /// CreateCustomScanState callback: allocate CustomScanState node.
 #[pg_guard]
 unsafe extern "C-unwind" fn create_custom_scan_state(
-    cscan: *mut pg_sys::CustomScan,
+    _cscan: *mut pg_sys::CustomScan,
 ) -> *mut pg_sys::Node {
     let css = pg_sys::palloc0(std::mem::size_of::<pg_sys::CustomScanState>()) as *mut pg_sys::CustomScanState;
     (*css).ss.ps.type_ = pg_sys::NodeTag::T_CustomScanState;
@@ -71,8 +71,8 @@ unsafe extern "C-unwind" fn create_custom_scan_state(
 #[pg_guard]
 unsafe extern "C-unwind" fn begin_custom_scan(
     node: *mut pg_sys::CustomScanState,
-    estate: *mut pg_sys::EState,
-    eflags: std::os::raw::c_int,
+    _estate: *mut pg_sys::EState,
+    _eflags: std::os::raw::c_int,
 ) {
     let cscan = (*node).ss.ps.plan as *mut pg_sys::CustomScan;
     let private_list = (*cscan).custom_private;
@@ -219,7 +219,7 @@ unsafe extern "C-unwind" fn rescan_custom_scan(node: *mut pg_sys::CustomScanStat
 #[pg_guard]
 unsafe extern "C-unwind" fn explain_custom_scan(
     node: *mut pg_sys::CustomScanState,
-    ancestors: *mut pg_sys::List,
+    _ancestors: *mut pg_sys::List,
     es: *mut pg_sys::ExplainState,
 ) {
     let state_ptr = (*node).custom_ps as *mut PgTrexScanState;

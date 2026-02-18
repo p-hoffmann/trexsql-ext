@@ -26,7 +26,7 @@ services:
     ports:
       - 8001:8001
     volumes:
-      - ./core:/usr/src/core
+      - ./core/server:/usr/src/core/server
       - ./functions:/usr/src/functions
       - ./plugins-dev:/usr/src/plugins-dev
       - ./docs:/usr/src/docs

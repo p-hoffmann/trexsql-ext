@@ -254,6 +254,7 @@ try {
   console.error("Core schema migration failed:", err);
 }
 
+
 // Run plugin migrations after plugin discovery
 try {
   const { runAllPluginMigrations } = await import("./plugin/migration.ts");
@@ -558,7 +559,9 @@ try {
 } catch { /* shinylive assets not present — skip */ }
 
 try {
-  const webDistPath = join(Deno.cwd(), "core", "web", "dist");
+  const schemaDir = Deno.env.get("SCHEMA_DIR");
+  const coreRoot = schemaDir ? join(schemaDir, "..") : join(Deno.cwd(), "core");
+  const webDistPath = join(coreRoot, "web", "dist");
   await Deno.stat(webDistPath);
   const serveStatic = (await import("express")).default.static;
   app.use(BASE_PATH, serveStatic(webDistPath));

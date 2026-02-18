@@ -22,10 +22,10 @@ pub static POOL_SIZE: GucSetting<i32> = GucSetting::<i32>::new(4);
 
 pub static CATALOG_REFRESH_SECS: GucSetting<i32> = GucSetting::<i32>::new(30);
 
-pub static SWARM_EXTENSION_PATH: GucSetting<Option<CString>> =
+pub static EXTENSION_DIR: GucSetting<Option<CString>> =
     GucSetting::<Option<CString>>::new(Some(c""));
 
-pub static FLIGHT_EXTENSION_PATH: GucSetting<Option<CString>> =
+pub static DATABASE: GucSetting<Option<CString>> =
     GucSetting::<Option<CString>>::new(Some(c""));
 
 /// Get a string GUC value as an owned String, with a fallback default.
@@ -105,7 +105,7 @@ pub fn register_gucs() {
     GucRegistry::define_int_guc(
         c"pg_trex.catalog_refresh_secs",
         c"Catalog refresh interval in seconds",
-        c"How often the worker refreshes the distributed catalog from swarm",
+        c"How often the worker refreshes the distributed catalog from the cluster",
         &CATALOG_REFRESH_SECS,
         1,
         3600,
@@ -114,19 +114,19 @@ pub fn register_gucs() {
     );
 
     GucRegistry::define_string_guc(
-        c"pg_trex.swarm_extension_path",
-        c"Path to swarm.trex extension file",
-        c"If empty, swarm extension is not loaded",
-        &SWARM_EXTENSION_PATH,
+        c"pg_trex.extension_dir",
+        c"Directory containing trexsql extension files",
+        c"If set, all .trex files in this directory are loaded at startup",
+        &EXTENSION_DIR,
         GucContext::Postmaster,
         GucFlags::default(),
     );
 
     GucRegistry::define_string_guc(
-        c"pg_trex.flight_extension_path",
-        c"Path to flight.trex extension file",
-        c"If empty, flight extension is not loaded",
-        &FLIGHT_EXTENSION_PATH,
+        c"pg_trex.database",
+        c"PostgreSQL database for SPI connections",
+        c"Database the background worker connects to for pg_scan SPI queries. Falls back to POSTGRES_DB env var, then 'postgres'.",
+        &DATABASE,
         GucContext::Postmaster,
         GucFlags::default(),
     );
