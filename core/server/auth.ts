@@ -54,7 +54,7 @@ function getBaseConfig() {
     },
 
     session: {
-      expiresIn: 7 * 24 * 60 * 60, // 7 days
+      expiresIn: 7 * 24 * 60 * 60,
     },
 
     user: {
@@ -148,7 +148,6 @@ function buildEnvFallback(): Record<string, { clientId: string; clientSecret: st
 async function loadProvidersFromDB(): Promise<Record<string, { clientId: string; clientSecret: string }> | null> {
   const client = await pool.connect();
   try {
-    // Check if the table exists
     const tableCheck = await client.query(
       `SELECT 1 FROM information_schema.tables WHERE table_schema = 'trex' AND table_name = 'sso_provider' LIMIT 1`
     );
@@ -184,7 +183,6 @@ function createAuthInstance(socialProviders: Record<string, { clientId: string; 
   });
 }
 
-// Initialize with env vars
 let _authInstance = createAuthInstance(buildEnvFallback());
 
 // Proxy so consumers always get the latest instance

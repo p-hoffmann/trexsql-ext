@@ -569,7 +569,6 @@ impl VTab for TpmListVTab {
   }
 }
 
-// tpm_seed: reads PLUGINS_SEED env var, installs/updates packages
 #[repr(C)]
 struct TpmSeedBindData {
   install_dir: String,
@@ -649,7 +648,6 @@ impl VTab for TpmSeedVTab {
   }
 }
 
-// tpm_delete: removes a package directory from disk
 #[repr(C)]
 struct TpmDeleteBindData {
   package_name: String,
@@ -754,7 +752,6 @@ pub unsafe fn extension_entrypoint(
   con
     .register_table_function::<TpmInstallVTab>("trex_plugin_install")
     .expect("Failed to register trex_plugin_install table function");
-  // Deprecated alias for external consumers
   con
     .register_table_function::<TpmInstallVTab>("tpm_install")
     .expect("Failed to register tpm_install alias");

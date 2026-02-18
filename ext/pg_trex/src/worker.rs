@@ -174,7 +174,6 @@ fn init_trexsql_engine() -> Result<Connection, String> {
     let conn = Connection::open_in_memory_with_flags(config)
         .map_err(|e| format!("open_in_memory: {e}"))?;
 
-    // Load swarm extension if path is configured
     let swarm_path = guc::get_str(&guc::SWARM_EXTENSION_PATH, "");
     if !swarm_path.is_empty() {
         validate_extension_path(&swarm_path)?;
@@ -186,7 +185,6 @@ fn init_trexsql_engine() -> Result<Connection, String> {
         pgrx::log!("pg_trex: swarm_extension_path not configured, skipping swarm");
     }
 
-    // Load flight extension if path is configured
     let flight_path = guc::get_str(&guc::FLIGHT_EXTENSION_PATH, "");
     if !flight_path.is_empty() {
         validate_extension_path(&flight_path)?;

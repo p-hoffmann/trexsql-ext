@@ -59,13 +59,11 @@ export function TrexDB() {
     ? allSchemas.filter((s) => s.databaseName === selectedDatabase)
     : allSchemas;
 
-  // Count schemas per database
   const schemaCountByDb = new Map<string, number>();
   for (const s of allSchemas) {
     schemaCountByDb.set(s.databaseName, (schemaCountByDb.get(s.databaseName) || 0) + 1);
   }
 
-  // Count tables per database.schema
   const tableCountBySchema = new Map<string, number>();
   for (const t of allTables) {
     const key = `${t.databaseName}.${t.schemaName}`;

@@ -103,13 +103,11 @@ export function Logs() {
           headIdRef.current = newEntries[0].id;
         }
       } catch {
-        // Auto-refresh failure is non-critical
       }
     }, 5000);
     return () => clearInterval(interval);
   }, [levelFilter]);
 
-  // Reset when filter changes
   useEffect(() => {
     headIdRef.current = null;
     refetch();

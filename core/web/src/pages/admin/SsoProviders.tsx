@@ -124,7 +124,6 @@ export function SsoProviders() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<SsoProviderRow | null>(null);
 
-  // Form state
   const [formProviderId, setFormProviderId] = useState("");
   const [formDisplayName, setFormDisplayName] = useState("");
   const [formClientId, setFormClientId] = useState("");

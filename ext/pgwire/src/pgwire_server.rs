@@ -283,7 +283,6 @@ impl SimpleQueryHandler for TrexQueryHandler {
     {
         log_debug(&format!("SimpleQuery: {}", query));
 
-        // Set database context on the pinned worker connection
         let login_info = LoginInfo::from_client_info(_client);
         if let Some(db) = login_info.database() {
             if let Some(db_credentials) = ServerRegistry::instance().get_db_credentials(&self.server_host, self.server_port) {
@@ -300,7 +299,6 @@ impl SimpleQueryHandler for TrexQueryHandler {
             }
         }
 
-        // Split multi-statement queries
         let queries: Vec<&str> = query
             .split(';')
             .map(|s| s.trim())
@@ -321,7 +319,6 @@ impl SimpleQueryHandler for TrexQueryHandler {
                 .replace("SELECT c.oid,c.*,t.relname as tabrelname,rt.relnamespace as refnamespace,d.description, null as consrc_copy",
                 "SELECT c.oid,t.relname  as tabrelname,rt.relnamespace as refnamespace,d.description, null as consrc_copy");
 
-            // Submit query to pinned worker and await result
             log_debug(&format!("Submitting to worker {}: {}", self.worker_id, sql));
             let result_rx = self.executor.submit_to(self.worker_id, sql.clone());
 
@@ -333,7 +330,6 @@ impl SimpleQueryHandler for TrexQueryHandler {
                 )))
             })?;
 
-            // Convert QueryResult to pgwire Response
             match query_result {
                 QueryResult::Select { schema, batches } => {
                     log_debug(&format!("Got SELECT result: {} batches", batches.len()));
@@ -393,7 +389,6 @@ impl ExtendedQueryHandler for TrexQueryHandler {
         let query = portal.statement.statement.clone();
         log_debug(&format!("ExtendedQuery: {}", query));
 
-        // Set database context on the pinned worker connection
         let login_info = LoginInfo::from_client_info(_client);
         if let Some(db) = login_info.database() {
             if let Some(db_credentials) = ServerRegistry::instance().get_db_credentials(&self.server_host, self.server_port) {
@@ -410,7 +405,6 @@ impl ExtendedQueryHandler for TrexQueryHandler {
             }
         }
 
-        // Submit query to pinned worker
         let result_rx = self.executor.submit_to(self.worker_id, query);
 
         let query_result = result_rx.await.map_err(|_| {
@@ -675,8 +669,6 @@ pub fn start_pgwire_server_capi(
                 let listener = TcpListener::bind(format!("{}:{}", server_host, server_port)).await?;
                 log_debug(&format!("Bound to {}:{}", server_host, server_port));
 
-                // Get the query executor created during extension init.
-                // The executor has multiple worker threads with their own connection clones.
                 let executor = get_query_executor().ok_or_else(|| {
                     log_debug("No query executor available");
                     std::io::Error::new(std::io::ErrorKind::Other, "No query executor available")

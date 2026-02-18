@@ -1,5 +1,3 @@
-//! Virtual Table (VTab) implementations for ChDB extension
-
 use crate::types::{ChdbScanBindData, ChdbScanInitData, ChdbError, GLOBAL_SESSION};
 use crate::functions::{determine_schema, parse_csv_result};
 use crate::safe_query_result::safe_execute_query;

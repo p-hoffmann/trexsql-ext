@@ -3,7 +3,6 @@ use crate::config::TransformationConfig;
 use crate::error::TransformationResult;
 use sqlparser::ast::{DataType, Expr, Query, SelectItem, SetExpr, Statement};
 
-/// Transformer for PostgreSQL statements to HANA equivalents
 pub struct StatementTransformer {
     config: TransformationConfig,
 }

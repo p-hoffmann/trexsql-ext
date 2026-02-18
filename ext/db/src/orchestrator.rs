@@ -173,7 +173,6 @@ pub fn start_distributed_for_roles(
                 }
             }
             "executor" => {
-                // Executor nodes serve queries via Flight — warn if not configured.
                 let has_flight = crate::config::ClusterConfig::from_env()
                     .ok()
                     .and_then(|cfg| {

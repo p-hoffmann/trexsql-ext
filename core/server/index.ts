@@ -187,7 +187,6 @@ app.post(`${BASE_PATH}/api/api-keys`, express.json(), async (req, res) => {
   }
 });
 
-// List current admin user's API keys
 app.get(`${BASE_PATH}/api/api-keys`, async (req, res) => {
   try {
     const session = await auth.api.getSession({ headers: req.headers as any });
@@ -207,7 +206,6 @@ app.get(`${BASE_PATH}/api/api-keys`, async (req, res) => {
   }
 });
 
-// Revoke an API key (soft-delete via revokedAt)
 app.delete(`${BASE_PATH}/api/api-keys/:id`, async (req, res) => {
   try {
     const session = await auth.api.getSession({ headers: req.headers as any });
@@ -231,10 +229,8 @@ app.delete(`${BASE_PATH}/api/api-keys/:id`, async (req, res) => {
   }
 });
 
-// Auth context middleware for PostGraphile
 app.use(authContext);
 
-// Plugin system: discover and register plugins
 try {
   await Plugins.initPlugins(app);
   addPluginRoutes(app);
@@ -274,7 +270,6 @@ try {
   console.error("Role auto-creation failed:", err);
 }
 
-// PostGraphile
 const databaseUrl = Deno.env.get("DATABASE_URL");
 if (databaseUrl) {
   try {
@@ -290,7 +285,6 @@ if (databaseUrl) {
   console.warn("DATABASE_URL not set — PostGraphile disabled");
 }
 
-// Internal endpoints
 app.get(`${BASE_PATH}/_internal/health`, (_req, res) => {
   res.status(STATUS_CODE.OK).json({ message: "ok" });
 });
@@ -451,7 +445,6 @@ app.use(`${FUNCTIONS_BASE_PATH}/:service_name`, async (req, res, next) => {
     servicePath = `./functions/${serviceName}`;
   }
 
-  // Check if function directory exists before trying to create a worker
   try {
     await Deno.stat(servicePath);
   } catch {
@@ -484,7 +477,6 @@ app.use(`${FUNCTIONS_BASE_PATH}/:service_name`, async (req, res, next) => {
     });
   };
 
-  // Build a web-standard Request from the Express req
   const host = req.get("host") || "localhost";
   const protocol = req.protocol || "http";
   const webUrl = `${protocol}://${host}${req.originalUrl}`;
@@ -543,7 +535,6 @@ app.use(`${FUNCTIONS_BASE_PATH}/:service_name`, async (req, res, next) => {
   }
 });
 
-// Serve Docusaurus docs at /trex/docs
 try {
   const docsDistPath = join(Deno.cwd(), "docs", "build");
   await Deno.stat(docsDistPath);
@@ -566,7 +557,6 @@ try {
   console.log("Serving Shinylive assets from shinylive/");
 } catch { /* shinylive assets not present — skip */ }
 
-// Static file serving for production frontend build
 try {
   const webDistPath = join(Deno.cwd(), "core", "web", "dist");
   await Deno.stat(webDistPath);
@@ -583,12 +573,10 @@ try {
   console.warn("Static file serving disabled:", e);
 }
 
-// Redirect root to BASE_PATH
 app.get("/", (_req, res) => {
   res.redirect(`${BASE_PATH}/`);
 });
 
-// Load SSO providers from DB (falls back to env vars if table doesn't exist)
 await initAuthFromDB();
 
 // Bootstrap initial API key from env var (for Docker/CI)
@@ -596,11 +584,9 @@ const initialKeyName = Deno.env.get("TREX_INITIAL_API_KEY_NAME");
 if (initialKeyName) {
   try {
     const { pool } = await import("./auth.ts");
-    // Check if any API keys exist
     const existing = await pool.query("SELECT 1 FROM trex.api_key LIMIT 1");
     if (existing.rows.length === 0) {
       const { generateApiKey } = await import("./mcp/auth.ts");
-      // Use the seed admin user
       const adminResult = await pool.query(
         `SELECT id FROM trex."user" WHERE role = 'admin' ORDER BY "createdAt" ASC LIMIT 1`
       );

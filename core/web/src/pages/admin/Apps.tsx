@@ -103,7 +103,6 @@ export function Apps() {
     null
   );
 
-  // Register form state
   const [formName, setFormName] = useState("");
   const [formRedirectUris, setFormRedirectUris] = useState("");
   const [formType, setFormType] = useState<"confidential" | "public">(

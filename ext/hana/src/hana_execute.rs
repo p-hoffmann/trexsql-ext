@@ -39,8 +39,7 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
         }
         match c {
             '-' if chars.peek() == Some(&'-') => {
-                // Line comment: skip to end of line
-                chars.next(); // consume second '-'
+                chars.next();
                 for c2 in chars.by_ref() {
                     if c2 == '\n' {
                         current_statement.push('\n');
@@ -49,8 +48,7 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
                 }
             }
             '/' if chars.peek() == Some(&'*') => {
-                // Block comment: skip to */
-                chars.next(); // consume '*'
+                chars.next();
                 let mut depth = 1u32;
                 while depth > 0 {
                     match chars.next() {
@@ -146,7 +144,6 @@ impl VScalar for HanaExecuteScalar {
 }
 
 fn execute_hana_statement(connection_string: &str, sql_statement: &str) -> Result<usize, Box<dyn Error>> {
-    // Use catch_unwind to prevent panics from crashing the runtime
     let connection = match panic::catch_unwind(AssertUnwindSafe(|| {
         HanaConnection::new(connection_string.to_string())
     })) {

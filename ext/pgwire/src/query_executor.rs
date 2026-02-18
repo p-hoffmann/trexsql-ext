@@ -1,4 +1,4 @@
-//! Thread pool executor for parallel DuckDB query execution.
+//! Thread pool executor for parallel trexsql query execution.
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use duckdb::arrow::record_batch::RecordBatch;
@@ -37,9 +37,7 @@ pub struct QueryExecutor {
 
 impl Drop for QueryExecutor {
     fn drop(&mut self) {
-        // Drop senders to signal workers to exit
         self.senders.clear();
-        // Wait for workers to finish
         for worker in &mut self.workers {
             if let Some(handle) = worker.handle.take() {
                 let _ = handle.join();
@@ -82,7 +80,6 @@ impl QueryExecutor {
         })
     }
 
-    /// Returns next worker index via round-robin.
     pub fn next_worker_id(&self) -> usize {
         self.next_worker.fetch_add(1, Ordering::Relaxed) % self.senders.len()
     }
@@ -105,7 +102,6 @@ impl QueryExecutor {
         response_rx
     }
 
-    /// Sends request via round-robin worker selection.
     pub fn submit(&self, query: String) -> tokio::sync::oneshot::Receiver<QueryResult> {
         let worker_id = self.next_worker_id();
         self.submit_to(worker_id, query)

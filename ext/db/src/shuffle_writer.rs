@@ -124,10 +124,8 @@ impl ExecutionPlan for ShuffleWriterExec {
         let runtime_handle = self.runtime_handle.clone();
         let out_schema = schema.clone();
 
-        // Spawn the shuffle work as a tokio task to avoid blocking.
         let join_handle = runtime_handle.spawn(async move {
             let mut input_stream = input_stream;
-            // Accumulate batches per partition.
             let mut partition_buffers: Vec<Vec<arrow::array::RecordBatch>> =
                 vec![Vec::new(); num_partitions];
 
@@ -148,7 +146,6 @@ impl ExecutionPlan for ShuffleWriterExec {
                 }
             }
 
-            // Send remote partitions via Flight DoExchange.
             for (pid, batches) in partition_buffers.iter().enumerate() {
                 if pid == local_partition_id {
                     continue; // Local partition handled below.
@@ -174,7 +171,6 @@ impl ExecutionPlan for ShuffleWriterExec {
                 }
             }
 
-            // Store local partition in the registry.
             let local_batches = std::mem::take(&mut partition_buffers[local_partition_id]);
             let local_rows: usize = local_batches.iter().map(|b| b.num_rows()).sum();
             shuffle_registry::submit_partition(
@@ -194,7 +190,6 @@ impl ExecutionPlan for ShuffleWriterExec {
             Ok::<Vec<arrow::array::RecordBatch>, String>(local_batches)
         });
 
-        // Yield the local partition's batches as the output stream.
         let result_stream = futures::stream::once(async move {
             let batches = join_handle
                 .await

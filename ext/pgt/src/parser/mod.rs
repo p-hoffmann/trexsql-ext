@@ -2,13 +2,11 @@ use crate::error::{TransformationError, TransformationResult};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 
-/// PostgreSQL SQL parser wrapper
 pub struct PostgreSqlParser {
     dialect: PostgreSqlDialect,
 }
 
 impl PostgreSqlParser {
-    /// Create a new PostgreSQL parser
     pub fn new() -> Self {
         Self {
             dialect: PostgreSqlDialect {},
@@ -23,13 +21,11 @@ impl PostgreSqlParser {
         })
     }
 
-    /// Validate PostgreSQL SQL syntax without full parsing
     pub fn validate_syntax(&self, sql: &str) -> TransformationResult<()> {
         self.parse(sql)?;
         Ok(())
     }
 
-    /// Parse a single statement
     pub fn parse_statement(&self, sql: &str) -> TransformationResult<sqlparser::ast::Statement> {
         let statements = self.parse(sql)?;
 

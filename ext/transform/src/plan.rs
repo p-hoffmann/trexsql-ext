@@ -84,7 +84,6 @@ impl VTab for PlanVTab {
         let project = load_project(&path)?;
         let compiled = compile_project(&project)?;
 
-        // Ensure schema and state table exist for querying
         let _ = execute_sql(&format!(
             "CREATE SCHEMA IF NOT EXISTS \"{}\"",
             escape_sql_ident(&schema)
@@ -93,7 +92,6 @@ impl VTab for PlanVTab {
 
         let existing_state = query_state(&schema).unwrap_or_default();
 
-        // Build edges for dependency tracking
         let known_names: HashSet<String> = project
             .models
             .iter()
@@ -112,7 +110,6 @@ impl VTab for PlanVTab {
             }
         }
 
-        // Find directly changed models (exclude ephemeral — they're never in state)
         let mut directly_changed: HashSet<String> = HashSet::new();
         for model in &project.models {
             if model.materialization == Materialization::Ephemeral {
@@ -132,11 +129,9 @@ impl VTab for PlanVTab {
             }
         }
 
-        // Get all transitive dependents
         let all_nodes: Vec<String> = project.models.iter().map(|m| m.name.clone()).collect();
         let affected = transitive_dependents(&directly_changed, &all_nodes, &edges);
 
-        // Find models that exist in state but not in project (to be dropped)
         let project_names: HashSet<String> = project
             .models
             .iter()
@@ -146,9 +141,7 @@ impl VTab for PlanVTab {
 
         let mut results = Vec::new();
 
-        // Process in compiled order
         for cr in &compiled {
-            // Skip seeds and ephemeral models in plan output
             if cr.materialized == "seed" || cr.materialized == "ephemeral" {
                 continue;
             }
@@ -184,7 +177,6 @@ impl VTab for PlanVTab {
             }
         }
 
-        // Check for dropped models
         for (name, state) in &existing_state {
             if !project_names.contains(name) && state.materialized != "seed" {
                 results.push(PlanResult {

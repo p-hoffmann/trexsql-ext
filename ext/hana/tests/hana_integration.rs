@@ -1,5 +1,3 @@
-// Integration tests for HANA extension with real HANA database connection
-// Import from the current crate
 use hana_scan::{
     validate_hana_connection, parse_hana_url, HanaConnection
 };
@@ -10,15 +8,14 @@ mod common;
 fn test_hana_connection_basic() {
     common::setup();
     let config = common::HanaTestConfig::new();
-    
+
     if config.should_skip {
         println!("Skipping test_hana_connection_basic: {}", config.skip_reason);
         return;
     }
 
-    // Test basic connection validation
     let result = validate_hana_connection(&config.connection_url);
-    
+
     match result {
         Ok(_) => {
             println!("✓ HANA connection validation passed");
@@ -39,15 +36,14 @@ fn test_hana_connection_basic() {
 fn test_hana_url_parsing() {
     common::setup();
     let config = common::HanaTestConfig::new();
-    
+
     if config.should_skip {
         println!("Skipping test_hana_url_parsing: {}", config.skip_reason);
         return;
     }
 
-    // Test URL parsing with the test connection string
     let result = parse_hana_url(&config.connection_url);
-    
+
     match result {
         Ok((user, _password, host, port, database)) => {
             println!("✓ HANA URL parsing successful:");
@@ -55,8 +51,7 @@ fn test_hana_url_parsing() {
             println!("  Host: {}", host);
             println!("  Port: {}", port);
             println!("  Database: {}", database);
-            
-            // Validate parsed components
+
             assert!(!user.is_empty(), "User should not be empty");
             assert!(!host.is_empty(), "Host should not be empty");
             assert!(port > 0, "Port should be positive");
@@ -72,28 +67,26 @@ fn test_hana_url_parsing() {
 fn test_hana_simple_query() {
     common::setup();
     let config = common::HanaTestConfig::new();
-    
+
     if config.should_skip {
         println!("Skipping test_hana_simple_query: {}", config.skip_reason);
         return;
     }
 
-    // Test simple query execution
     let query = "SELECT 'Hello HANA' AS greeting FROM DUMMY";
-    
+
     let connection_result = HanaConnection::new(config.connection_url.clone());
-    
+
     match connection_result {
         Ok(connection) => {
             println!("✓ HANA connection established");
-            
+
             let query_result = connection.query(query);
-            
+
             match query_result {
                 Ok(result_set) => {
                     println!("✓ Query executed successfully");
-                    
-                    // Count the results
+
                     let mut count = 0;
                     for row_result in result_set {
                         match row_result {
@@ -106,7 +99,7 @@ fn test_hana_simple_query() {
                             }
                         }
                     }
-                    
+
                     println!("  Total rows: {}", count);
                     assert!(count > 0, "Should get at least one result from DUMMY table");
                 }
@@ -131,28 +124,26 @@ fn test_hana_simple_query() {
 fn test_hana_system_tables_query() {
     common::setup();
     let config = common::HanaTestConfig::new();
-    
+
     if config.should_skip {
         println!("Skipping test_hana_system_tables_query: {}", config.skip_reason);
         return;
     }
 
-    // Test querying system tables
     let query = "SELECT SCHEMA_NAME, TABLE_NAME FROM SYS.TABLES WHERE SCHEMA_NAME = 'SYS' AND TABLE_NAME = 'DUMMY'";
-    
+
     let connection_result = HanaConnection::new(config.connection_url.clone());
-    
+
     match connection_result {
         Ok(connection) => {
             println!("✓ HANA connection established for system tables test");
-            
+
             let query_result = connection.query(query);
-            
+
             match query_result {
                 Ok(result_set) => {
                     println!("✓ System tables query executed successfully");
-                    
-                    // Count results
+
                     let mut count = 0;
                     for row_result in result_set {
                         match row_result {
@@ -165,7 +156,7 @@ fn test_hana_system_tables_query() {
                             }
                         }
                     }
-                    
+
                     println!("  Total system table rows: {}", count);
                     assert!(count > 0, "Should find SYS.DUMMY table");
                 }
@@ -196,8 +187,7 @@ fn test_hana_multi_column_with_datetime_functions() {
         return;
     }
 
-    // Regression test: queries containing NOW()/CURRENT_TIMESTAMP must still
-    // return all columns, not just a single "result" column.
+    // Regression: queries with NOW()/CURRENT_TIMESTAMP must return all columns
     let query = "SELECT 'Alice' AS name, 42 AS age, CURRENT_TIMESTAMP AS ts FROM DUMMY";
 
     let connection_result = HanaConnection::new(config.connection_url.clone());
@@ -250,7 +240,6 @@ fn test_hana_multi_column_values() {
         return;
     }
 
-    // Verify that multi-column queries return correct values for each column
     let query = "SELECT 'hello' AS col_a, 123 AS col_b, 'world' AS col_c FROM DUMMY";
 
     let connection_result = HanaConnection::new(config.connection_url.clone());
@@ -302,30 +291,28 @@ fn test_hana_multi_column_values() {
 fn test_hana_error_handling() {
     common::setup();
     let config = common::HanaTestConfig::new();
-    
+
     if config.should_skip {
         println!("Skipping test_hana_error_handling: {}", config.skip_reason);
         return;
     }
 
-    // Test error handling with invalid query
     let invalid_query = "SELECT * FROM non_existent_table_12345";
-    
+
     let connection_result = HanaConnection::new(config.connection_url.clone());
-    
+
     match connection_result {
         Ok(connection) => {
             println!("✓ HANA connection established for error handling test");
-            
+
             let query_result = connection.query(invalid_query);
-            
+
             match query_result {
                 Ok(_result_set) => {
                     panic!("Expected query to fail, but it succeeded");
                 }
                 Err(e) => {
                     println!("✓ Error handling working correctly: {}", e);
-                    // This is the expected outcome - the query should fail
                     assert!(!e.to_string().is_empty(), "Error message should not be empty");
                 }
             }

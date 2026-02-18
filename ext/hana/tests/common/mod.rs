@@ -1,8 +1,5 @@
-// Common utilities for HANA integration tests
-
 use std::env;
 
-/// HANA connection configuration for tests
 pub struct HanaTestConfig {
     pub connection_url: String,
     pub should_skip: bool,
@@ -30,19 +27,12 @@ impl HanaTestConfig {
     }
 }
 
-/// Setup function for HANA integration tests
 pub fn setup() {
-    // Initialize logging for tests only once
     let _ = env_logger::try_init();
     println!("Setting up HANA integration tests");
 }
 
-/// Check if HANA database is available at the given URL.
-/// This is used to conditionally run integration tests.
 #[allow(dead_code)]
 pub fn is_hana_available(url: &str) -> bool {
-    // Try to parse the URL and check basic connectivity
-    // This is a simplified check - in a real scenario you might want to
-    // actually attempt a connection
     !url.is_empty() && (url.starts_with("hdbsql://") || url.starts_with("hdbsqls://"))
 }

@@ -9,7 +9,7 @@
 //! - **SAP HANA** - Full PostgreSQL to HANA transformation support
 //!
 //! Future planned dialects:
-//! - DuckDB
+//! - trexsql
 //! - ClickHouse
 //! - Snowflake
 //!
@@ -54,9 +54,6 @@ pub use error::{
     TransformationResult, TransformationWarning,
 };
 pub use dialects::hana::TransformationMetadata;
-
-// Re-export the main types for easy library usage
-// Re-exports for convenience - removed to avoid duplication with struct definitions below
 
 use log::{debug, info};
 use sqlparser::dialect::PostgreSqlDialect;

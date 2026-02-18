@@ -1322,7 +1322,6 @@ impl VTab for DbPartitionsTable {
             return Ok(());
         }
 
-        // Flatten: one row per partition assignment.
         let mut rows: Vec<(String, String, String, usize, String, String)> = Vec::new();
         for (table_name, meta) in &all_metadata {
             let (strategy_str, column_str) = match &meta.strategy {
