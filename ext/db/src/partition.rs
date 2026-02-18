@@ -298,7 +298,6 @@ pub fn range_partition_batches(
         let col = batch.column(col_idx);
         let num_rows = batch.num_rows();
 
-        // Assign rows to partitions by range bounds
         let mut partition_indices: Vec<Vec<u32>> = vec![Vec::new(); num_partitions];
 
         for row in 0..num_rows {
@@ -331,7 +330,6 @@ pub fn range_partition_batches(
                 }
             }
 
-            // Catch-all: last partition
             if !assigned {
                 partition_indices[num_partitions - 1].push(row as u32);
             }
@@ -522,7 +520,6 @@ pub fn swarm_partition_table_impl(
         })
     })?;
 
-    // Drop local table only if coordinator is not a target
     let local_ep = get_local_flight_endpoint();
     let coordinator_is_target = local_ep.as_ref().map_or(false, |ep| {
         assignments.iter().any(|a| a.flight_endpoint == *ep)
@@ -632,7 +629,6 @@ pub fn swarm_repartition_table_impl(
         ),
     );
 
-    // 3. Drop old shards; abort if any drop fails
     with_runtime(|rt| {
         rt.block_on(async {
             let mut drop_failures: Vec<String> = Vec::new();
@@ -850,7 +846,7 @@ async fn distribute_partitions(
         )
         .await
         {
-            // Rollback: drop tables on all nodes where we created them
+            // rollback
             for rollback_ep in &created_on {
                 let drop_sql = format!(
                     "DROP TABLE IF EXISTS \"{}\"",

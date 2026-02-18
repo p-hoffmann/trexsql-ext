@@ -95,6 +95,6 @@ impl DialectTransformationEngine for DuckDbTransformationEngine {
     }
 
     fn name(&self) -> &'static str {
-        "DuckDB"
+        "trexsql"
     }
 }

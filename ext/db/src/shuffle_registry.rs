@@ -43,7 +43,6 @@ fn registry() -> &'static Mutex<HashMap<String, ShuffleState>> {
 pub fn register_shuffle(shuffle_id: &str, expected_sources: usize) {
     let mut map = registry().lock().expect("shuffle registry lock poisoned");
 
-    // Opportunistic cleanup of stale entries from failed queries.
     cleanup_stale_entries(&mut map);
 
     if map.contains_key(shuffle_id) {
@@ -180,7 +179,6 @@ pub async fn wait_for_partition(
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 
-    // Take the partition data.
     let mut map = registry().lock().expect("shuffle registry lock poisoned");
     if let Some(state) = map.get_mut(shuffle_id) {
         Ok(state.partitions.remove(&partition_id).unwrap_or_default())

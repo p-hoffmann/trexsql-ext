@@ -72,7 +72,6 @@ fn insert_expansion_entry<'a>(
     match executor.submit(sql).await {
         QueryResult::Error(e) => Err(format!("Failed to insert expansion entry: {}", e)),
         _ => {
-            // Recursively process nested contains
             let mut total = 1;
             if let Some(children) = entry.get("contains").and_then(|c| c.as_array()) {
                 for child in children {

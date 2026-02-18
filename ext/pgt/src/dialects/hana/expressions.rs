@@ -5,7 +5,6 @@ use sqlparser::ast::{
     BinaryOperator, CastKind, Delete, Expr, Function, Ident, Statement, UnaryOperator,
 };
 
-/// Transformer for PostgreSQL expressions to HANA equivalents
 pub struct ExpressionTransformer {
     config: TransformationConfig,
 }
@@ -22,7 +21,6 @@ impl ExpressionTransformer {
 
         match expr {
             Expr::BinaryOp { left, op, right } => {
-                // Transform left and right operands
                 if self.transform_expression(left)? {
                     changed = true;
                 }

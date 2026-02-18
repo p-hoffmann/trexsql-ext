@@ -4,7 +4,6 @@ use crate::error::TransformationResult;
 use sqlparser::ast::{Expr, Function, Ident, ObjectName, Statement};
 use std::collections::HashMap;
 
-/// Transformer for PostgreSQL functions to HANA equivalents
 pub struct FunctionTransformer {
     simple_mappings: HashMap<String, String>,
     preserve_case: bool,
@@ -14,7 +13,6 @@ impl FunctionTransformer {
     pub fn new(config: &TransformationConfig) -> Self {
         let mut simple_mappings = config.functions.custom_mappings.clone();
 
-        // Add default function mappings
         for (pg_func, hana_func) in get_default_function_mappings() {
             simple_mappings.entry(pg_func).or_insert(hana_func);
         }
@@ -51,7 +49,6 @@ impl FunctionTransformer {
                 }
             }
             Expr::Subquery(query) => {
-                // Transform functions in subqueries
                 if self.transform_query_functions(&mut query.body)? {
                     changed = true;
                 }
@@ -159,7 +156,6 @@ impl FunctionTransformer {
         Ok(false)
     }
 
-    /// Transform functions in query expressions
     fn transform_query_functions(
         &self,
         query: &mut sqlparser::ast::SetExpr,
@@ -168,7 +164,6 @@ impl FunctionTransformer {
 
         match query {
             sqlparser::ast::SetExpr::Select(select) => {
-                // Transform functions in SELECT items
                 for item in &mut select.projection {
                     if let sqlparser::ast::SelectItem::UnnamedExpr(expr) = item {
                         if self.transform_expression(expr)? {
@@ -181,14 +176,12 @@ impl FunctionTransformer {
                     }
                 }
 
-                // Transform functions in WHERE clause
                 if let Some(ref mut where_clause) = select.selection {
                     if self.transform_expression(where_clause)? {
                         changed = true;
                     }
                 }
 
-                // Transform functions in GROUP BY
                 if let sqlparser::ast::GroupByExpr::Expressions(expressions, _) =
                     &mut select.group_by
                 {
@@ -199,7 +192,6 @@ impl FunctionTransformer {
                     }
                 }
 
-                // Transform functions in HAVING clause
                 if let Some(ref mut having) = select.having {
                     if self.transform_expression(having)? {
                         changed = true;
@@ -263,14 +255,12 @@ impl Transformer for FunctionTransformer {
                 assignments,
                 ..
             } => {
-                // Transform functions in SET clauses
                 for assignment in assignments {
                     if self.transform_expression(&mut assignment.value)? {
                         changed = true;
                     }
                 }
 
-                // Transform functions in WHERE clause
                 if let Some(ref mut where_clause) = selection {
                     if self.transform_expression(where_clause)? {
                         changed = true;

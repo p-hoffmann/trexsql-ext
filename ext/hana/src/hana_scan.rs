@@ -305,7 +305,6 @@ pub struct HanaScanBindData {
 impl Clone for HanaScanBindData {
     fn clone(&self) -> Self {
         let cloned_types = self.column_types.iter().map(|t| {
-            // All types produced by map_hana_type and bind registration
             match t {
                 LogicalTypeId::Boolean => LogicalTypeId::Boolean,
                 LogicalTypeId::Tinyint => LogicalTypeId::Tinyint,
@@ -348,7 +347,7 @@ pub struct HanaScanInitData {
 fn map_hana_type(hana_type: hdbconnect::TypeId) -> LogicalTypeId {
     match hana_type {
         hdbconnect::TypeId::BOOLEAN => LogicalTypeId::Boolean,
-        hdbconnect::TypeId::TINYINT => LogicalTypeId::Smallint, // HANA TINYINT is u8 (0-255), doesn't fit DuckDB i8
+        hdbconnect::TypeId::TINYINT => LogicalTypeId::Smallint, // HANA TINYINT is u8 (0-255), doesn't fit trexsql i8
         hdbconnect::TypeId::SMALLINT => LogicalTypeId::Smallint,
         hdbconnect::TypeId::INT => LogicalTypeId::Integer,
         hdbconnect::TypeId::BIGINT => LogicalTypeId::Bigint,
@@ -360,7 +359,7 @@ fn map_hana_type(hana_type: hdbconnect::TypeId) -> LogicalTypeId {
         hdbconnect::TypeId::STRING | hdbconnect::TypeId::NSTRING |
         hdbconnect::TypeId::SHORTTEXT | hdbconnect::TypeId::ALPHANUM => LogicalTypeId::Varchar,
         hdbconnect::TypeId::BINARY | hdbconnect::TypeId::VARBINARY => LogicalTypeId::Blob,
-        // Datetime types are serialised as VARCHAR strings because DuckDB's
+        // Datetime types are serialised as VARCHAR strings because trexsql's
         // flat_vector.insert() only works on string-typed vectors.
         hdbconnect::TypeId::DAYDATE => LogicalTypeId::Varchar,
         hdbconnect::TypeId::SECONDTIME => LogicalTypeId::Varchar,
@@ -461,7 +460,6 @@ pub fn validate_hana_connection(url: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Safe wrapper around HanaConnection::new that catches panics
 pub fn safe_hana_connect(url: String) -> Result<HanaConnection, Box<dyn Error>> {
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         HanaConnection::new(url)
@@ -938,7 +936,6 @@ mod tests {
     }
     #[test]
     fn test_map_hana_type_dates() {
-        // Datetime types map to Varchar (serialised as strings)
         assert_eq!(map_hana_type(hdbconnect::TypeId::DAYDATE), LogicalTypeId::Varchar);
         assert_eq!(map_hana_type(hdbconnect::TypeId::SECONDTIME), LogicalTypeId::Varchar);
         assert_eq!(map_hana_type(hdbconnect::TypeId::LONGDATE), LogicalTypeId::Varchar);

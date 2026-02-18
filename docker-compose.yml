@@ -28,6 +28,7 @@ services:
     volumes:
       - ./core/server:/usr/src/core/server
       - ./functions:/usr/src/functions
+      - ./plugins-dev:/usr/src/plugins-dev
       - ./docs:/usr/src/docs
     depends_on:
       postgres:

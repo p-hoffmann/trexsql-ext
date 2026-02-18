@@ -95,7 +95,6 @@ export function Logs() {
         return;
       }
 
-      // Find new entries (ids greater than current head)
       const newEntries = fresh.filter((r) => BigInt(r.id) > BigInt(currentHeadId));
       if (newEntries.length > 0) {
         setAllRows((prev) => [...newEntries, ...prev]);
@@ -105,7 +104,6 @@ export function Logs() {
     return () => clearInterval(interval);
   }, [levelFilter]);
 
-  // Reset when filter changes
   useEffect(() => {
     headIdRef.current = null;
     refetch();

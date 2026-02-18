@@ -21,7 +21,7 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-// ── Shared Connection (raw FFI, following migration pattern) ─────────────────
+// ── Shared Connection ────────────────────────────────────────────────────────
 
 struct SharedConn(ffi::duckdb_connection);
 

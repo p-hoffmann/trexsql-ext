@@ -177,7 +177,6 @@ export function DatabaseDetail() {
 
   const db: DatabaseDetail | null = result.data?.databaseById || null;
 
-  // Edit state
   const [editing, setEditing] = useState(false);
   const [editHost, setEditHost] = useState("");
   const [editPort, setEditPort] = useState("");
@@ -187,14 +186,12 @@ export function DatabaseDetail() {
   const [editVocabSchemas, setEditVocabSchemas] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // Dialog state
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [addCredOpen, setAddCredOpen] = useState(false);
   const [credSubmitting, setCredSubmitting] = useState(false);
   const [testing, setTesting] = useState(false);
 
-  // Credential form
   const [credUsername, setCredUsername] = useState("");
   const [credPassword, setCredPassword] = useState("");
   const [credUserScope, setCredUserScope] = useState("");

@@ -9,6 +9,7 @@ import { scanPluginDirectory } from "./utils.ts";
 interface ActivePluginEntry {
   name: string;
   version: string;
+  source: "dev" | "npm";
   registeredAt: Date;
 }
 
@@ -19,7 +20,8 @@ export class Plugins {
     app: Express,
     dir: string,
     pkg: any,
-    fullName: string
+    fullName: string,
+    source: "dev" | "npm"
   ) {
     try {
       if (!pkg.trex) {
@@ -43,7 +45,7 @@ export class Plugins {
             addMigrationPlugin(value, dir, fullName);
             break;
           case "transform":
-            addTransformPlugin(app, value, dir, shortName);
+            addTransformPlugin(app, value, dir, fullName);
             break;
           default:
             console.log(`Unknown plugin type: ${key}`);
@@ -52,6 +54,7 @@ export class Plugins {
       Plugins.activeRegistry.set(fullName, {
         name: fullName,
         version: pkg.version,
+        source,
         registeredAt: new Date(),
       });
     } catch (e) {
@@ -62,32 +65,33 @@ export class Plugins {
   private static async scanAndRegister(
     app: Express,
     dir: string,
-    versionSuffix?: string
+    source: "dev" | "npm"
   ) {
     const scanned = await scanPluginDirectory(dir);
     for (const { shortName, dir: pluginDir, pkg } of scanned) {
-      if (versionSuffix) {
-        pkg.version = pkg.version + versionSuffix;
+      const existing = Plugins.activeRegistry.get(shortName);
+      if (existing) {
+        console.log(
+          `Skipping duplicate plugin ${shortName} from ${source} — already registered from ${existing.source}`
+        );
+        continue;
       }
       console.log(
-        `Found plugin ${shortName} (v${pkg.version}) in ${pluginDir}`
+        `Found plugin ${shortName} (v${pkg.version}) [${source}] in ${pluginDir}`
       );
-      Plugins.addPlugin(app, pluginDir, pkg, shortName);
-      console.log(`Registered plugin ${shortName}`);
+      Plugins.addPlugin(app, pluginDir, pkg, shortName, source);
+      console.log(`Registered plugin ${shortName} [${source}]`);
     }
   }
 
   static async initPlugins(app: Express) {
+    const devPath = Deno.env.get("PLUGINS_DEV_PATH") || "./plugins-dev";
     const pluginsPath = Deno.env.get("PLUGINS_PATH") || "./plugins";
     console.log("Scanning and registering plugins");
 
-    await Plugins.scanAndRegister(app, pluginsPath);
-
-    // Scan dev plugins directory in development mode
-    if (Deno.env.get("NODE_ENV") === "development") {
-      const devPath = Deno.env.get("PLUGINS_DEV_PATH") || "./plugins-dev";
-      await Plugins.scanAndRegister(app, devPath, "-dev");
-    }
+    // Dev plugins have highest priority — scanned first
+    await Plugins.scanAndRegister(app, devPath, "dev");
+    await Plugins.scanAndRegister(app, pluginsPath, "npm");
 
     console.log(
       `Plugin registration complete: ${Plugins.activeRegistry.size} plugins active`

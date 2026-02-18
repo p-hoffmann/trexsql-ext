@@ -24,7 +24,6 @@ pub fn ensure_state_table(schema: &str) -> Result<(), Box<dyn Error>> {
             deployed_at VARCHAR NOT NULL\
         );"
     ))?;
-    // Migrate: add columns for incremental strategy tracking
     execute_sql(&format!(
         "ALTER TABLE \"{esc}\".\"_transform_state\" ADD COLUMN IF NOT EXISTS incremental_strategy VARCHAR"
     ))?;

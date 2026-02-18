@@ -210,7 +210,7 @@ fn load_extensions_from_dir(conn: &Connection, dir: &str) -> (u32, u32) {
     (loaded, failed)
 }
 
-/// Open an in-memory trexsql (DuckDB) instance and load extensions.
+/// Open an in-memory trexsql instance and load extensions.
 ///
 /// When pg_trex.extension_dir is set, all .trex files from that directory are
 /// loaded (mirroring the trex binary's behavior). Otherwise, falls back to
@@ -226,7 +226,6 @@ fn init_trexsql_engine() -> Result<Connection, String> {
 
     let extension_dir = guc::get_str(&guc::EXTENSION_DIR, "");
     if !extension_dir.is_empty() {
-        // Bulk-load all extensions from directory (like the trex binary)
         pgrx::log!("pg_trex: loading extensions from {}", extension_dir);
         let (loaded, failed) = load_extensions_from_dir(&conn, &extension_dir);
         pgrx::log!(

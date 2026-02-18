@@ -8,7 +8,7 @@ pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
     let conn_arc = match crate::get_shared_connection() {
         Some(c) => c,
         None => {
-            SwarmLogger::error("orchestrator", "Shared DuckDB connection is not available");
+            SwarmLogger::error("orchestrator", "Shared trexsql connection is not available");
             return extensions
                 .iter()
                 .map(|ext| format!("{}: error — no shared connection", ext.name))
@@ -173,7 +173,6 @@ pub fn start_distributed_for_roles(
                 }
             }
             "executor" => {
-                // Executor nodes serve queries via Flight — warn if not configured.
                 let has_flight = crate::config::ClusterConfig::from_env()
                     .ok()
                     .and_then(|cfg| {

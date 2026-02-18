@@ -10,7 +10,6 @@ use crate::rules::TransformationRules;
 use sqlparser::ast::Statement;
 use std::time::Duration;
 
-/// Result of a complete transformation operation
 pub struct DetailedTransformationResult {
     pub sql: Option<String>,
     pub errors: Vec<TransformationError>,
@@ -18,7 +17,6 @@ pub struct DetailedTransformationResult {
     pub metadata: TransformationMetadata,
 }
 
-/// Metadata about the transformation process
 #[derive(Debug, Clone)]
 pub struct TransformationMetadata {
     pub input_statements: usize,
@@ -27,29 +25,21 @@ pub struct TransformationMetadata {
     pub transformation_time: Duration,
 }
 
-/// Trait for transforming SQL statements
 pub trait Transformer {
-    /// Get the name of this transformer
     fn name(&self) -> &'static str;
-
-    /// Transform a statement, returning true if any changes were made
     fn transform(&self, stmt: &mut Statement) -> TransformationResult<bool>;
-
-    /// Check if this transformer supports the given statement type
     fn supports_statement_type(&self, stmt: &Statement) -> bool;
 
-    /// Get the execution priority (lower numbers execute first)
+    /// Lower numbers execute first
     fn priority(&self) -> u8 {
         100
     }
 
-    /// Collect any warnings during transformation
     fn collect_warnings(&self) -> Vec<TransformationWarning> {
         Vec::new()
     }
 }
 
-/// Main transformation engine that orchestrates all transformers
 pub struct TransformationEngine {
     transformers: Vec<Box<dyn Transformer>>,
     config: TransformationConfig,
@@ -57,7 +47,6 @@ pub struct TransformationEngine {
 }
 
 impl TransformationEngine {
-    /// Create a new transformation engine with the given configuration
     pub fn new(config: &TransformationConfig) -> Self {
         let mut transformers: Vec<Box<dyn Transformer>> = vec![
             Box::new(data_types::DataTypeTransformer::new(config)),
@@ -66,7 +55,6 @@ impl TransformationEngine {
             Box::new(expressions::ExpressionTransformer::new(config)),
         ];
 
-        // Sort transformers by priority
         transformers.sort_by_key(|t| t.priority());
 
         Self {
@@ -76,7 +64,6 @@ impl TransformationEngine {
         }
     }
 
-    /// Transform a single statement
     pub fn transform_statement(&self, mut stmt: Statement) -> TransformationResult<Statement> {
         let mut warnings = Vec::new();
         let mut any_changes = false;
@@ -90,7 +77,6 @@ impl TransformationEngine {
                         }
                     }
                     Err(e) => {
-                        // Log the error but continue with other transformers
                         log::warn!("Transformer '{}' failed: {}", transformer.name(), e);
                         warnings.push(TransformationWarning::high(&format!(
                             "Transformer '{}' failed: {}",
@@ -109,7 +95,6 @@ impl TransformationEngine {
         Ok(stmt)
     }
 
-    /// Transform multiple statements with rules engine validation
     pub fn transform_statements(
         &self,
         statements: &[Statement],

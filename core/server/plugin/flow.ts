@@ -1,6 +1,5 @@
 import { waitfor } from "./utils.ts";
 
-// Tracked registered flows metadata
 export const REGISTERED_FLOWS: Array<{
   name: string;
   entrypoint: string;
@@ -143,9 +142,7 @@ export async function addPlugin(value: any) {
       customImageRepo = JSON.parse(
         Deno.env.get("PLUGINS_FLOW_CUSTOM_REPO_IMAGE_CONFIG") || "{}"
       );
-    } catch (_) {
-      // ignore parse errors
-    }
+    } catch (_) {}
 
     if (!value.flows) return;
 
