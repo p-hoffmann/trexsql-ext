@@ -647,7 +647,7 @@ static void CirceGenerateAndTranslateFunction(duckdb_function_info info, duckdb_
             continue;
         }
 
-        char* translated_sql = circe_run_with_large_stack(CIRCE_OP_SQL_TRANSLATE, sql_c, "trexsql", NULL);
+        char* translated_sql = circe_run_with_large_stack(CIRCE_OP_SQL_TRANSLATE, sql_c, "duckdb", NULL);
         if (translated_sql) {
             set_string_in_vector(output, row, translated_sql);
         } else {
