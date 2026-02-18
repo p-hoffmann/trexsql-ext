@@ -215,12 +215,10 @@ static void Cql2ElmTranslateFunction(duckdb_function_info info, duckdb_data_chun
         if (elm_json) {
             if (strncmp(elm_json, "{\"error\":", 9) == 0) {
                 duckdb_scalar_function_set_error(info, elm_json);
-                free(elm_json);
                 duckdb_free(cql_text);
                 return;
             }
             set_string_in_vector(output, row, elm_json);
-            free(elm_json);
         } else {
             duckdb_scalar_function_set_error(info, "cql_to_elm: translation returned NULL");
             duckdb_free(cql_text);

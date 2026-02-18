@@ -49,7 +49,7 @@ fn execute_sql(sql: &str) -> Result<(), Box<dyn Error>> {
         .ok_or("Migration extension not initialized")?;
     let guard = mutex.lock().map_err(|_| "Connection mutex poisoned")?;
     let conn = guard.0;
-    execute_sql_raw(conn, sql)
+    unsafe { execute_sql_raw(conn, sql) }
 }
 
 /// Execute SQL on a raw connection handle without acquiring any lock.

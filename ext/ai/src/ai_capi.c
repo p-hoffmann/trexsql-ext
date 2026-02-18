@@ -15,8 +15,6 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection, duckdb_extension_info 
 
     if (!llama_initialize_backend()) {
         fprintf(stderr, "Failed to initialize AI backend\n");
-        atomic_store(&extension_initialized, false);
-        return false;
     }
 
     {
