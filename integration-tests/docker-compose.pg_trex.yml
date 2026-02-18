@@ -1,7 +1,8 @@
 services:
   pg-trex:
     build:
-      context: ../ext/pg_trex
+      context: ..
+      dockerfile: ext/pg_trex/Dockerfile
     container_name: trex-pg-trex
     ports:
       - "45432:5432"

@@ -652,12 +652,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-db
-          path: ext/pg_trex/extensions/
+          path: extensions/
 
       - name: List pg_trex build context
         run: |
           ls -la ext/pg_trex/target/debug/libpg_trex.so
-          ls -la ext/pg_trex/extensions/
+          ls -la extensions/
 
       - name: Start pg_trex container
         run: docker compose -f integration-tests/docker-compose.pg_trex.yml up -d --build

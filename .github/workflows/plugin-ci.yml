@@ -340,15 +340,14 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: ext-*
-          path: ext/pg_trex/extensions/
+          path: extensions/
           merge-multiple: true
 
       - name: List extensions
-        run: ls -la ext/pg_trex/extensions/
+        run: ls -la extensions/
 
       - name: Build pg_trex Docker image
-        run: docker build -t pg-trex-test .
-        working-directory: ext/pg_trex
+        run: docker build -t pg-trex-test -f ext/pg_trex/Dockerfile .
 
       - name: Smoke test
         run: |
