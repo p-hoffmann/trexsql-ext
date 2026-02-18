@@ -230,6 +230,8 @@ jobs:
           - PKGPATH: ./ext/tpm
           - PKGPATH: ./ext/migration
           - PKGPATH: ./ext/db
+            SWAP: true
+            CARGO_BUILD_JOBS: 2
           - PKGPATH: ./ext/etl
           - PKGPATH: ./ext/fhir
           - PKGPATH: ./ext/transform
@@ -259,12 +261,22 @@ jobs:
           CI: true
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Add swap space
+        if: matrix.SWAP == true
+        run: |
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+
       - name: Build
         run: |
           cd ${{ matrix.PKGPATH }}
           make configure
           make release
           mv build/release/extension/*/*.trex . 2>/dev/null || true
+        env:
+          CARGO_BUILD_JOBS: ${{ matrix.CARGO_BUILD_JOBS || '' }}
 
       - name: Extract extension name
         id: extname
