@@ -5,6 +5,6 @@ node_modules
 /specs
 /extensions/*.trex
 /extensions/*.duckdb_extension
-docs/build/
-docs/.docusaurus/
+core/docs/build/
+core/docs/.docusaurus/
 shinylive/
