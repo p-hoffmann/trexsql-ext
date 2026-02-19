@@ -1,13 +1,20 @@
 import { useEffect } from "react";
-import { useQuery } from "urql";
+import { useQuery, useMutation } from "urql";
+import { toast } from "sonner";
 import { DataTable, type Column } from "@/components/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { RefreshCwIcon } from "lucide-react";
+import { RefreshCwIcon, PlayIcon } from "lucide-react";
 
 const TREX_EXTENSIONS_QUERY = `
   query TrexExtensions {
     trexExtensions { extensionName loaded installed extensionVersion description installPath }
+  }
+`;
+
+const LOAD_EXTENSION_MUTATION = `
+  mutation LoadExtension($extensionName: String!) {
+    loadExtension(extensionName: $extensionName) { success message error }
   }
 `;
 
@@ -22,6 +29,7 @@ interface ExtensionRow {
 
 export function Extensions() {
   const [extResult, reexecuteExts] = useQuery({ query: TREX_EXTENSIONS_QUERY });
+  const [, loadExtension] = useMutation(LOAD_EXTENSION_MUTATION);
   const allExtensions: ExtensionRow[] = extResult.data?.trexExtensions || [];
   const extensions = allExtensions.filter((e) => e.installed || e.loaded);
 
@@ -33,6 +41,25 @@ export function Extensions() {
     const interval = setInterval(refetch, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  async function handleLoad(extensionName: string) {
+    try {
+      const res = await loadExtension({ extensionName });
+      if (res.error) {
+        toast.error(res.error.message);
+        return;
+      }
+      const data = res.data?.loadExtension;
+      if (!data?.success) {
+        toast.error(data?.error || "Failed to load extension");
+        return;
+      }
+      toast.success(data.message || `Loaded ${extensionName}`);
+      refetch();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to load extension");
+    }
+  }
 
   const loadedCount = extensions.filter((e) => e.loaded).length;
 
@@ -59,6 +86,19 @@ export function Extensions() {
       header: "Description",
       cell: (row) => (
         <span className="text-sm text-muted-foreground">{row.description || "-"}</span>
+      ),
+    },
+    {
+      header: "Actions",
+      cell: (row) => (
+        <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+          {row.installed && !row.loaded && (
+            <Button variant="outline" size="sm" onClick={() => handleLoad(row.extensionName)}>
+              <PlayIcon className="h-3 w-3 mr-1" />
+              Load
+            </Button>
+          )}
+        </div>
       ),
     },
   ];

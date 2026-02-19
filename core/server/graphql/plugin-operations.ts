@@ -291,6 +291,7 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
         transformRun(pluginName: String!, destDb: String!, destSchema: String!, sourceDb: String!, sourceSchema: String!): [TransformRunResult!]!
         transformSeed(pluginName: String!, destDb: String!, destSchema: String!): [TransformSeedResult!]!
         transformTest(pluginName: String!, destDb: String!, destSchema: String!, sourceDb: String!, sourceSchema: String!): [TransformTestResult!]!
+        loadExtension(extensionName: String!): ServiceActionResult!
       }
     `,
     resolvers: {
@@ -1294,6 +1295,19 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
           } catch (err: any) {
             console.error("transformTest error:", err);
             throw new Error(err.message || "Test failed");
+          }
+        },
+
+        async loadExtension(_parent: any, args: { extensionName: string }, context: any) {
+          assertAdmin(context);
+          const { extensionName } = args;
+          try {
+            const conn = new Trex.TrexDB("memory");
+            await conn.execute(`LOAD '${escapeSql(extensionName)}'`, []);
+            return { success: true, message: `Extension '${extensionName}' loaded`, error: null };
+          } catch (err: any) {
+            console.error("loadExtension error:", err);
+            return { success: false, message: null, error: err.message || String(err) };
           }
         },
       },
