@@ -29,7 +29,7 @@ services:
       - ./core/server:/usr/src/core/server
       - ./functions:/usr/src/functions
       - ./plugins-dev:/usr/src/plugins-dev
-      - ./docs:/usr/src/docs
+      - ./core/docs:/usr/src/core/docs
     depends_on:
       postgres:
         condition: service_healthy

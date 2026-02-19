@@ -96,8 +96,8 @@ COPY core/ ./core/
 COPY functions/ ./functions/
 
 # Build documentation site
-COPY docs/ ./docs/
-RUN cd docs && npm ci && npm run build
+COPY core/docs/ ./core/docs/
+RUN cd core/docs && npm ci && npm run build
 
 ENV SCHEMA_DIR=/usr/src/core/schema
 ENV DUCKDB_EXTENSION_DIRECTORY=/usr/share/trexsql/extensions
