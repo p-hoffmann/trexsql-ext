@@ -98,7 +98,7 @@ COPY extensions/ /usr/lib/trexsql/extensions/
 FROM node:20-trixie-slim AS docs-builder
 
 WORKDIR /usr/src/docs
-COPY docs/ .
+COPY core/docs/ .
 RUN npm ci && npm run build
 
 # ── Stage 5: Runtime (postgres:17 + everything) ───────────────────────────
