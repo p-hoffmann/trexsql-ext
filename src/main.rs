@@ -35,6 +35,9 @@ fn main() {
     let conn = Connection::open_with_flags(&db_path, config)
         .expect("Failed to open database");
 
+    conn.execute_batch("SET autoinstall_known_extensions=true; SET autoload_known_extensions=true;")
+        .expect("Failed to enable autoinstall/autoload");
+
     let mut loaded = 0u32;
     let mut failures = 0u32;
     let ext_path = Path::new(&ext_dir);

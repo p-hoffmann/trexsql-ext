@@ -220,6 +220,9 @@ fn init_trexsql_engine() -> Result<Connection, String> {
     let conn = Connection::open_in_memory_with_flags(config)
         .map_err(|e| format!("open_in_memory: {e}"))?;
 
+    conn.execute_batch("SET autoinstall_known_extensions=true; SET autoload_known_extensions=true;")
+        .map_err(|e| format!("set autoinstall/autoload: {e}"))?;
+
     let extension_dir = guc::get_str(&guc::EXTENSION_DIR, "");
     if !extension_dir.is_empty() {
         pgrx::log!("pg_trex: loading extensions from {}", extension_dir);
