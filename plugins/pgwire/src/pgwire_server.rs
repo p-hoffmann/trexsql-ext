@@ -41,13 +41,25 @@ fn log_debug(_msg: &str) {
 
 const SCRAM_ITERATIONS: usize = 4096;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HanaCredentials {
     pub host: String,
     pub port: u16,
     pub name: String,
     pub username: String,
     pub password: String,
+}
+
+impl std::fmt::Debug for HanaCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HanaCredentials")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("name", &self.name)
+            .field("username", &self.username)
+            .field("password", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -180,9 +192,16 @@ pub fn random_salt() -> Vec<u8> {
     Vec::from(rand::random::<[u8; 10]>())
 }
 
-#[derive(Debug)]
 pub struct SimpleAuthSource {
     required_password: String,
+}
+
+impl std::fmt::Debug for SimpleAuthSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SimpleAuthSource")
+            .field("required_password", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl SimpleAuthSource {
