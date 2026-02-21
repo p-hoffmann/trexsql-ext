@@ -55,7 +55,7 @@ ENV TREXSQL_LIB_DIR=/opt/trexsql
 ENV TREXSQL_INCLUDE_DIR=/opt/trexsql
 
 WORKDIR /usr/src/pg_trex
-COPY ext/pg_trex/Cargo.toml ext/pg_trex/Cargo.lock ./
+COPY plugins/pg_trex/Cargo.toml plugins/pg_trex/Cargo.lock ./
 RUN . /root/.cargo/env && \
     mkdir -p src/bin && echo '#[allow(warnings)] fn main(){}' > src/bin/pgrx_embed_pg_trex.rs && \
     echo '' > src/lib.rs && \
@@ -63,7 +63,7 @@ RUN . /root/.cargo/env && \
     rm -rf src target/release/libpg_trex* target/release/deps/pg_trex* \
       target/release/.fingerprint/pg_trex-*
 
-COPY ext/pg_trex/src/ ./src/
+COPY plugins/pg_trex/src/ ./src/
 RUN . /root/.cargo/env && cargo build --release
 
 # ── Stage 3: Collect npm extensions + official DuckDB extensions ──────────
@@ -135,8 +135,8 @@ COPY --from=trex-builder /usr/src/trexsql/target/release/trex /usr/bin/
 
 # ── pg_trex extension ──
 COPY --from=pg-trex-builder /usr/src/pg_trex/target/release/libpg_trex.so /usr/lib/postgresql/17/lib/pg_trex.so
-COPY ext/pg_trex/pg_trex.control /usr/share/postgresql/17/extension/
-COPY ext/pg_trex/sql/pg_trex--0.1.0.sql /usr/share/postgresql/17/extension/
+COPY plugins/pg_trex/pg_trex.control /usr/share/postgresql/17/extension/
+COPY plugins/pg_trex/sql/pg_trex--0.1.0.sql /usr/share/postgresql/17/extension/
 
 # ── trexsql extensions (npm + CI override) ──
 COPY --from=npm-deps /usr/lib/trexsql/extensions/ /usr/lib/trexsql/extensions/
