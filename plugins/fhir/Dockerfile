@@ -5,7 +5,7 @@ WORKDIR /build
 
 # Copy workspace Cargo files
 COPY Cargo.toml Cargo.lock ./
-COPY ext/fhir/ ext/fhir/
+COPY plugins/fhir/ plugins/fhir/
 COPY src/ src/
 
 # Build the extension in release mode
@@ -25,10 +25,10 @@ WORKDIR /app
 COPY --from=builder /build/target/release/libfhir.so /app/fhir.trex
 
 # Copy FHIR R4 data files (embedded at compile time, but useful for reference)
-COPY ext/fhir/data/ /app/data/
+COPY plugins/fhir/data/ /app/data/
 
 # Startup script
-COPY ext/fhir/docker-entrypoint.sh /app/docker-entrypoint.sh
+COPY plugins/fhir/docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
 EXPOSE 8080

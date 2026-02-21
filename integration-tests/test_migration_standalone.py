@@ -9,9 +9,9 @@ import pytest
 
 from conftest import REPO_ROOT
 
-MIGRATIONS_DIR = os.path.join(REPO_ROOT, "ext", "migration", "test", "sql", "migrations")
-MIGRATIONS_TAMPERED_DIR = os.path.join(REPO_ROOT, "ext", "migration", "test", "sql", "migrations_tampered")
-MIGRATIONS_BAD_SQL_DIR = os.path.join(REPO_ROOT, "ext", "migration", "test", "sql", "migrations_bad_sql")
+MIGRATIONS_DIR = os.path.join(REPO_ROOT, "plugins", "migration", "test", "sql", "migrations")
+MIGRATIONS_TAMPERED_DIR = os.path.join(REPO_ROOT, "plugins", "migration", "test", "sql", "migrations_tampered")
+MIGRATIONS_BAD_SQL_DIR = os.path.join(REPO_ROOT, "plugins", "migration", "test", "sql", "migrations_bad_sql")
 
 
 def _node(node_factory):

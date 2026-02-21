@@ -37,18 +37,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ext/db/target
-          key: rust-core-${{ runner.os }}-${{ hashFiles('ext/db/Cargo.lock') }}
+            plugins/db/target
+          key: rust-core-${{ runner.os }}-${{ hashFiles('plugins/db/Cargo.lock') }}
           restore-keys: rust-core-${{ runner.os }}-
 
       - name: Build db
         run: make configure && make debug
-        working-directory: ext/db
+        working-directory: plugins/db
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-db
-          path: ext/db/build/debug/extension/db/db.trex
+          path: plugins/db/build/debug/extension/db/db.trex
           retention-days: 1
 
   build-pg-trex:
@@ -82,8 +82,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ~/.pgrx
-            ext/pg_trex/target
-          key: rust-pg-trex-${{ runner.os }}-${{ hashFiles('ext/pg_trex/Cargo.lock') }}
+            plugins/pg_trex/target
+          key: rust-pg-trex-${{ runner.os }}-${{ hashFiles('plugins/pg_trex/Cargo.lock') }}
           restore-keys: rust-pg-trex-${{ runner.os }}-
 
       - name: Install cargo-pgrx and init
@@ -93,12 +93,12 @@ jobs:
 
       - name: Build pg_trex
         run: LIBRARY_PATH=/tmp/trexsql cargo build
-        working-directory: ext/pg_trex
+        working-directory: plugins/pg_trex
 
       - uses: actions/upload-artifact@v4
         with:
           name: pg-trex-build
-          path: ext/pg_trex/target/debug/libpg_trex.so
+          path: plugins/pg_trex/target/debug/libpg_trex.so
           retention-days: 1
 
   build-pgwire:
@@ -117,18 +117,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ext/pgwire/target
-          key: rust-pgwire-${{ runner.os }}-${{ hashFiles('ext/pgwire/Cargo.lock') }}
+            plugins/pgwire/target
+          key: rust-pgwire-${{ runner.os }}-${{ hashFiles('plugins/pgwire/Cargo.lock') }}
           restore-keys: rust-pgwire-${{ runner.os }}-
 
       - name: Build pgwire
         run: make configure && make debug
-        working-directory: ext/pgwire
+        working-directory: plugins/pgwire
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-pgwire
-          path: ext/pgwire/build/debug/extension/pgwire/pgwire.trex
+          path: plugins/pgwire/build/debug/extension/pgwire/pgwire.trex
           retention-days: 1
 
   build-chdb:
@@ -144,25 +144,25 @@ jobs:
 
       - name: Install chdb native library
         run: sudo apt-get update && sudo apt-get install -y libc6-dev clang && sudo bash ./install_chdb.sh
-        working-directory: ext/chdb
+        working-directory: plugins/chdb
 
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ext/chdb/target
-          key: rust-chdb-${{ runner.os }}-${{ hashFiles('ext/chdb/Cargo.lock') }}
+            plugins/chdb/target
+          key: rust-chdb-${{ runner.os }}-${{ hashFiles('plugins/chdb/Cargo.lock') }}
           restore-keys: rust-chdb-${{ runner.os }}-
 
       - name: Build chdb
         run: make configure && make debug
-        working-directory: ext/chdb
+        working-directory: plugins/chdb
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-chdb
-          path: ext/chdb/build/debug/extension/chdb/chdb.trex
+          path: plugins/chdb/build/debug/extension/chdb/chdb.trex
           retention-days: 1
 
   build-hana:
@@ -181,18 +181,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ext/hana/target
-          key: rust-hana-${{ runner.os }}-${{ hashFiles('ext/hana/Cargo.lock') }}
+            plugins/hana/target
+          key: rust-hana-${{ runner.os }}-${{ hashFiles('plugins/hana/Cargo.lock') }}
           restore-keys: rust-hana-${{ runner.os }}-
 
       - name: Build hana
         run: make configure && make debug
-        working-directory: ext/hana
+        working-directory: plugins/hana
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-hana
-          path: ext/hana/build/debug/extension/hana_scan/hana_scan.trex
+          path: plugins/hana/build/debug/extension/hana_scan/hana_scan.trex
           retention-days: 1
 
   build-tpm:
@@ -211,18 +211,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ext/tpm/target
-          key: rust-tpm-${{ runner.os }}-${{ hashFiles('ext/tpm/Cargo.lock') }}
+            plugins/tpm/target
+          key: rust-tpm-${{ runner.os }}-${{ hashFiles('plugins/tpm/Cargo.lock') }}
           restore-keys: rust-tpm-${{ runner.os }}-
 
       - name: Build tpm
         run: make configure && make debug
-        working-directory: ext/tpm
+        working-directory: plugins/tpm
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-tpm
-          path: ext/tpm/build/debug/extension/tpm/tpm.trex
+          path: plugins/tpm/build/debug/extension/tpm/tpm.trex
           retention-days: 1
 
   build-atlas:
@@ -246,19 +246,19 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: |
-            ext/atlas/build
-            ext/atlas/circe-be/target
-          key: circe-${{ runner.os }}-${{ hashFiles('ext/atlas/CMakeLists.txt', 'ext/atlas/extension_config.cmake', 'ext/atlas/circe-be/pom.xml', 'ext/atlas/graalvm-config/**') }}
+            plugins/atlas/build
+            plugins/atlas/circe-be/target
+          key: circe-${{ runner.os }}-${{ hashFiles('plugins/atlas/CMakeLists.txt', 'plugins/atlas/extension_config.cmake', 'plugins/atlas/circe-be/pom.xml', 'plugins/atlas/graalvm-config/**') }}
           restore-keys: circe-${{ runner.os }}-
 
       - name: Build atlas
         run: make configure && make release
-        working-directory: ext/atlas
+        working-directory: plugins/atlas
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-atlas
-          path: ext/atlas/build/release/extension/circe/circe.trex
+          path: plugins/atlas/build/release/extension/circe/circe.trex
           retention-days: 1
 
   build-ai:
@@ -275,18 +275,18 @@ jobs:
 
       - uses: actions/cache@v4
         with:
-          path: ext/ai/build
-          key: ai-cmake-${{ runner.os }}-${{ hashFiles('ext/ai/CMakeLists.txt', 'ext/ai/llama.cpp/CMakeLists.txt') }}
+          path: plugins/ai/build
+          key: ai-cmake-${{ runner.os }}-${{ hashFiles('plugins/ai/CMakeLists.txt', 'plugins/ai/llama.cpp/CMakeLists.txt') }}
           restore-keys: ai-cmake-${{ runner.os }}-
 
       - name: Build ai
         run: make configure && make debug
-        working-directory: ext/ai
+        working-directory: plugins/ai
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-ai
-          path: ext/ai/build/debug/extension/ai/ai.trex
+          path: plugins/ai/build/debug/extension/ai/ai.trex
           retention-days: 1
 
   build-etl:
@@ -304,18 +304,18 @@ jobs:
         with:
           path: |
             ~/.cargo/registry
-            ext/etl/target
-          key: rust-etl-${{ runner.os }}-${{ hashFiles('ext/etl/Cargo.lock') }}
+            plugins/etl/target
+          key: rust-etl-${{ runner.os }}-${{ hashFiles('plugins/etl/Cargo.lock') }}
           restore-keys: rust-etl-${{ runner.os }}-
 
       - name: Build etl
         run: make configure && make debug
-        working-directory: ext/etl
+        working-directory: plugins/etl
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-etl
-          path: ext/etl/build/debug/extension/etl/etl.trex
+          path: plugins/etl/build/debug/extension/etl/etl.trex
           retention-days: 1
     
   build-migration:
@@ -334,18 +334,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ext/migration/target
-          key: rust-migration-${{ runner.os }}-${{ hashFiles('ext/migration/Cargo.lock') }}
+            plugins/migration/target
+          key: rust-migration-${{ runner.os }}-${{ hashFiles('plugins/migration/Cargo.lock') }}
           restore-keys: rust-migration-${{ runner.os }}-
 
       - name: Build migration
         run: make configure && make debug
-        working-directory: ext/migration
+        working-directory: plugins/migration
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-migration
-          path: ext/migration/build/debug/extension/migration/migration.trex
+          path: plugins/migration/build/debug/extension/migration/migration.trex
           retention-days: 1
 
   # ===========================================================================
@@ -366,7 +366,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-db
-          path: ext/db/build/debug/extension/db/
+          path: plugins/db/build/debug/extension/db/
 
       - name: Setup test environment
         run: make configure
@@ -398,12 +398,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-db
-          path: ext/db/build/debug/extension/db/
+          path: plugins/db/build/debug/extension/db/
 
       - uses: actions/download-artifact@v4
         with:
           name: ext-pgwire
-          path: ext/pgwire/build/debug/extension/pgwire/
+          path: plugins/pgwire/build/debug/extension/pgwire/
 
       - name: Setup test environment
         run: make configure
@@ -431,7 +431,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-atlas
-          path: ext/atlas/build/release/extension/circe/
+          path: plugins/atlas/build/release/extension/circe/
 
       - name: Setup test environment
         run: make configure
@@ -455,7 +455,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-ai
-          path: ext/ai/build/debug/extension/ai/
+          path: plugins/ai/build/debug/extension/ai/
 
       - name: Setup test environment
         run: make configure
@@ -478,17 +478,17 @@ jobs:
 
       - name: Install chdb native library
         run: sudo bash ./install_chdb.sh
-        working-directory: ext/chdb
+        working-directory: plugins/chdb
 
       - uses: actions/download-artifact@v4
         with:
           name: ext-db
-          path: ext/db/build/debug/extension/db/
+          path: plugins/db/build/debug/extension/db/
 
       - uses: actions/download-artifact@v4
         with:
           name: ext-chdb
-          path: ext/chdb/build/debug/extension/chdb/
+          path: plugins/chdb/build/debug/extension/chdb/
 
       - name: Setup test environment
         run: make configure
@@ -516,7 +516,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-tpm
-          path: ext/tpm/build/debug/extension/tpm/
+          path: plugins/tpm/build/debug/extension/tpm/
 
       - name: Setup test environment
         run: make configure
@@ -540,12 +540,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-etl
-          path: ext/etl/build/debug/extension/etl/
+          path: plugins/etl/build/debug/extension/etl/
 
       - uses: actions/download-artifact@v4
         with:
           name: ext-db
-          path: ext/db/build/debug/extension/db/
+          path: plugins/db/build/debug/extension/db/
 
       - name: Setup test environment
         run: make configure
@@ -573,7 +573,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-migration
-          path: ext/migration/build/debug/extension/migration/
+          path: plugins/migration/build/debug/extension/migration/
 
       - name: Setup test environment
         run: make configure
@@ -601,7 +601,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-hana
-          path: ext/hana/build/debug/extension/hana_scan/
+          path: plugins/hana/build/debug/extension/hana_scan/
 
       - name: Setup test environment
         run: make configure
@@ -647,7 +647,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: pg-trex-build
-          path: ext/pg_trex/target/debug/
+          path: plugins/pg_trex/target/debug/
 
       - uses: actions/download-artifact@v4
         with:
@@ -656,7 +656,7 @@ jobs:
 
       - name: List pg_trex build context
         run: |
-          ls -la ext/pg_trex/target/debug/libpg_trex.so
+          ls -la plugins/pg_trex/target/debug/libpg_trex.so
           ls -la extensions/
 
       - name: Start pg_trex container
