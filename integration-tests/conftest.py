@@ -22,7 +22,7 @@ ETL_EXT_TREX = f"{REPO_ROOT}/plugins/etl/build/debug/extension/etl/etl.trex"
 MIGRATION_EXT_TREX = f"{REPO_ROOT}/plugins/migration/build/debug/extension/migration/migration.trex"
 CQL2ELM_EXT_TREX = f"{REPO_ROOT}/plugins/cql2elm/build/release/extension/cql2elm/cql2elm.trex"
 FHIR_EXT_TREX = f"{REPO_ROOT}/plugins/fhir/build/debug/extension/fhir/fhir.trex"
-TREXAS_EXT_TREX = f"{REPO_ROOT}/ext/runtime/build/debug/extension/trexas/trexas.trex"
+TREXAS_EXT_TREX = f"{REPO_ROOT}/plugins/runtime/build/debug/extension/trexas/trexas.trex"
 
 # trexsql Python API requires .duckdb_extension suffix for LOAD.
 DB_EXT = f"{REPO_ROOT}/plugins/db/build/debug/extension/db/db.duckdb_extension"
@@ -36,7 +36,7 @@ ETL_EXT = f"{REPO_ROOT}/plugins/etl/build/debug/extension/etl/etl.duckdb_extensi
 MIGRATION_EXT = f"{REPO_ROOT}/plugins/migration/build/debug/extension/migration/migration.duckdb_extension"
 CQL2ELM_EXT = f"{REPO_ROOT}/plugins/cql2elm/build/release/extension/cql2elm/cql2elm.duckdb_extension"
 FHIR_EXT = f"{REPO_ROOT}/plugins/fhir/build/debug/extension/fhir/fhir.duckdb_extension"
-TREXAS_EXT = f"{REPO_ROOT}/ext/runtime/build/debug/extension/trexas/trexas.duckdb_extension"
+TREXAS_EXT = f"{REPO_ROOT}/plugins/runtime/build/debug/extension/trexas/trexas.duckdb_extension"
 
 for src, dst in [
     (DB_EXT_TREX, DB_EXT),
