@@ -9,11 +9,11 @@ TPM_EXT=$(REPO_ROOT)/plugins/tpm/build/debug/extension/tpm/tpm.trex
 ETL_EXT=$(REPO_ROOT)/plugins/etl/build/debug/extension/etl/etl.trex
 MIGRATION_EXT=$(REPO_ROOT)/plugins/migration/build/debug/extension/migration/migration.trex
 FHIR_EXT=$(REPO_ROOT)/plugins/fhir/build/debug/extension/fhir/fhir.trex
-TREXAS_EXT=$(REPO_ROOT)/trex/ext/trexas/build/debug/extension/trexas/trexas.trex
+TREXAS_EXT=$(REPO_ROOT)/ext/runtime/build/debug/extension/trexas/trexas.trex
 PYTHON_BIN?=python3
 VENV=./venv
 
-.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-db test-atlas test-ai test-chdb test-chdb-db test-hana test-tpm test-etl test-etl-db test-fhir test-pg-trex test-trexas test-trexas-swarm check-extensions check-pgwire check-atlas check-ai check-chdb check-hana check-tpm check-etl check-fhir check-migration check-db check-trexas hana-up hana-down hana-clean pg-trex-up pg-trex-down clean
+.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-db test-atlas test-ai test-chdb test-chdb-db test-hana test-tpm test-etl test-etl-db test-fhir test-trexas test-trexas-swarm test-pg-trex check-extensions check-pgwire check-atlas check-ai check-chdb check-hana check-tpm check-etl check-fhir check-migration check-trexas check-db hana-up hana-down hana-clean pg-trex-up pg-trex-down clean
 
 configure:
 	$(PYTHON_BIN) -m venv $(VENV)
@@ -112,6 +112,15 @@ test-tpm: check-tpm
 test-hana: check-hana
 	$(VENV)/bin/pytest -v test_hana_standalone.py
 
+check-trexas:
+	@test -f $(TREXAS_EXT) || (echo "Build trexas first: cd ../ext/runtime && make configure && make debug" && exit 1)
+
+test-trexas: check-trexas
+	$(VENV)/bin/pytest -v test_trexas_standalone.py
+
+test-trexas-swarm: check-extensions check-trexas
+	$(VENV)/bin/pytest -v test_trexas_swarm.py
+
 check-etl:
 	@test -f $(ETL_EXT) || (echo "Build etl first: cd ../plugins/etl && make configure && make debug" && exit 1)
 
@@ -150,15 +159,6 @@ check-fhir:
 
 test-fhir: check-fhir
 	$(VENV)/bin/pytest -v test_fhir_standalone.py
-
-check-trexas:
-	@test -f $(TREXAS_EXT) || (echo "Build trexas first: cd ../trex/ext/trexas && make configure && make debug" && exit 1)
-
-test-trexas: check-trexas
-	$(VENV)/bin/pytest -v test_trexas_standalone.py
-
-test-trexas-swarm: check-extensions check-trexas
-	$(VENV)/bin/pytest -v test_trexas_swarm.py
 
 clean:
 	rm -rf venv __pycache__ .pytest_cache

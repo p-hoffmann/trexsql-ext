@@ -12,8 +12,8 @@ from conftest import REPO_ROOT, wait_for
 
 
 # Paths to trexas service entry points inside the trex submodule.
-MAIN_SERVICE_PATH = f"{REPO_ROOT}/trex/ext/trexas/main/index.ts"
-EVENT_WORKER_PATH = f"{REPO_ROOT}/trex/ext/trexas/event-worker/index.ts"
+MAIN_SERVICE_PATH = f"{REPO_ROOT}/ext/runtime/main/index.ts"
+EVENT_WORKER_PATH = f"{REPO_ROOT}/ext/runtime/event-worker/index.ts"
 
 
 def test_load_trexas(node_factory):
@@ -47,7 +47,7 @@ def test_trexas_server_lifecycle(node_factory):
 
     # Stop server
     server_id = servers[0][0]
-    result = node.execute(f"SELECT trex_stop_server({server_id})")
+    result = node.execute(f"SELECT trex_stop_server('{server_id}')")
     assert len(result) == 1
 
     # Verify server is gone

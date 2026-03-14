@@ -1,4 +1,4 @@
 {
-  "workspace": ["./core"],
-  "nodeModulesDir": "manual"
+  "workspace": ["./core", "./ext/runtime"],
+  "nodeModulesDir": "auto"
 }
