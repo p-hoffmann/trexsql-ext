@@ -1,11 +1,11 @@
 [submodule "extension-ci-tools"]
-	path = extension-ci-tools
+	path = plugins/extension-ci-tools
 	url = https://github.com/p-hoffmann/extension-ci-tools.git
-[submodule "circe/circe-be"]
-	path = circe/circe-be
+[submodule "atlas/circe-be"]
+	path = plugins/atlas/circe-be
 	url = https://github.com/p-hoffmann/circe-be.git
-[submodule "llama/llama.cpp"]
-	path = llama/llama.cpp
+[submodule "ai/llama.cpp"]
+	path = plugins/ai/llama.cpp
 	url = https://github.com/ggml-org/llama.cpp.git
 [submodule "trex"]
 	path = trex

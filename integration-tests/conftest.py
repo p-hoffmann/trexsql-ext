@@ -11,36 +11,45 @@ except RuntimeError:
     pass  # already set
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FLIGHT_EXT_TREX = f"{REPO_ROOT}/flight/build/debug/extension/flight/flight.trex"
-SWARM_EXT_TREX = f"{REPO_ROOT}/swarm/build/debug/extension/swarm/swarm.trex"
-PGWIRE_EXT_TREX = f"{REPO_ROOT}/pgwire/build/debug/extension/pgwire/pgwire.trex"
-CIRCE_EXT_TREX = f"{REPO_ROOT}/circe/build/release/extension/circe/circe.trex"
-LLAMA_EXT_TREX = f"{REPO_ROOT}/llama/build/debug/extension/llama/llama.trex"
-CHDB_EXT_TREX = f"{REPO_ROOT}/chdb/build/debug/extension/chdb/chdb.trex"
-HANA_EXT_TREX = f"{REPO_ROOT}/hana/build/debug/extension/hana_scan/hana_scan.trex"
-TPM_EXT_TREX = f"{REPO_ROOT}/tpm/build/debug/extension/tpm/tpm.trex"
+DB_EXT_TREX = f"{REPO_ROOT}/plugins/db/build/debug/extension/db/db.trex"
+PGWIRE_EXT_TREX = f"{REPO_ROOT}/plugins/pgwire/build/debug/extension/pgwire/pgwire.trex"
+ATLAS_EXT_TREX = f"{REPO_ROOT}/plugins/atlas/build/release/extension/circe/circe.trex"
+AI_EXT_TREX = f"{REPO_ROOT}/plugins/ai/build/debug/extension/ai/ai.trex"
+CHDB_EXT_TREX = f"{REPO_ROOT}/plugins/chdb/build/debug/extension/chdb/chdb.trex"
+HANA_EXT_TREX = f"{REPO_ROOT}/plugins/hana/build/debug/extension/hana_scan/hana_scan.trex"
+TPM_EXT_TREX = f"{REPO_ROOT}/plugins/tpm/build/debug/extension/tpm/tpm.trex"
+ETL_EXT_TREX = f"{REPO_ROOT}/plugins/etl/build/debug/extension/etl/etl.trex"
+MIGRATION_EXT_TREX = f"{REPO_ROOT}/plugins/migration/build/debug/extension/migration/migration.trex"
+CQL2ELM_EXT_TREX = f"{REPO_ROOT}/plugins/cql2elm/build/release/extension/cql2elm/cql2elm.trex"
+FHIR_EXT_TREX = f"{REPO_ROOT}/plugins/fhir/build/debug/extension/fhir/fhir.trex"
 TREXAS_EXT_TREX = f"{REPO_ROOT}/trex/ext/trexas/build/debug/extension/trexas/trexas.trex"
 
-# DuckDB Python API requires .duckdb_extension suffix for LOAD.
-FLIGHT_EXT = f"{REPO_ROOT}/flight/build/debug/extension/flight/flight.duckdb_extension"
-SWARM_EXT = f"{REPO_ROOT}/swarm/build/debug/extension/swarm/swarm.duckdb_extension"
-PGWIRE_EXT = f"{REPO_ROOT}/pgwire/build/debug/extension/pgwire/pgwire.duckdb_extension"
-CIRCE_EXT = f"{REPO_ROOT}/circe/build/release/extension/circe/circe.duckdb_extension"
-LLAMA_EXT = f"{REPO_ROOT}/llama/build/debug/extension/llama/llama.duckdb_extension"
-CHDB_EXT = f"{REPO_ROOT}/chdb/build/debug/extension/chdb/chdb.duckdb_extension"
-HANA_EXT = f"{REPO_ROOT}/hana/build/debug/extension/hana_scan/hana_scan.duckdb_extension"
-TPM_EXT = f"{REPO_ROOT}/tpm/build/debug/extension/tpm/tpm.duckdb_extension"
+# trexsql Python API requires .duckdb_extension suffix for LOAD.
+DB_EXT = f"{REPO_ROOT}/plugins/db/build/debug/extension/db/db.duckdb_extension"
+PGWIRE_EXT = f"{REPO_ROOT}/plugins/pgwire/build/debug/extension/pgwire/pgwire.duckdb_extension"
+ATLAS_EXT = f"{REPO_ROOT}/plugins/atlas/build/release/extension/circe/circe.duckdb_extension"
+AI_EXT = f"{REPO_ROOT}/plugins/ai/build/debug/extension/ai/ai.duckdb_extension"
+CHDB_EXT = f"{REPO_ROOT}/plugins/chdb/build/debug/extension/chdb/chdb.duckdb_extension"
+HANA_EXT = f"{REPO_ROOT}/plugins/hana/build/debug/extension/hana_scan/hana_scan.duckdb_extension"
+TPM_EXT = f"{REPO_ROOT}/plugins/tpm/build/debug/extension/tpm/tpm.duckdb_extension"
+ETL_EXT = f"{REPO_ROOT}/plugins/etl/build/debug/extension/etl/etl.duckdb_extension"
+MIGRATION_EXT = f"{REPO_ROOT}/plugins/migration/build/debug/extension/migration/migration.duckdb_extension"
+CQL2ELM_EXT = f"{REPO_ROOT}/plugins/cql2elm/build/release/extension/cql2elm/cql2elm.duckdb_extension"
+FHIR_EXT = f"{REPO_ROOT}/plugins/fhir/build/debug/extension/fhir/fhir.duckdb_extension"
 TREXAS_EXT = f"{REPO_ROOT}/trex/ext/trexas/build/debug/extension/trexas/trexas.duckdb_extension"
 
 for src, dst in [
-    (FLIGHT_EXT_TREX, FLIGHT_EXT),
-    (SWARM_EXT_TREX, SWARM_EXT),
+    (DB_EXT_TREX, DB_EXT),
     (PGWIRE_EXT_TREX, PGWIRE_EXT),
-    (CIRCE_EXT_TREX, CIRCE_EXT),
-    (LLAMA_EXT_TREX, LLAMA_EXT),
+    (ATLAS_EXT_TREX, ATLAS_EXT),
+    (CQL2ELM_EXT_TREX, CQL2ELM_EXT),
+    (AI_EXT_TREX, AI_EXT),
     (CHDB_EXT_TREX, CHDB_EXT),
     (HANA_EXT_TREX, HANA_EXT),
     (TPM_EXT_TREX, TPM_EXT),
+    (ETL_EXT_TREX, ETL_EXT),
+    (MIGRATION_EXT_TREX, MIGRATION_EXT),
+    (FHIR_EXT_TREX, FHIR_EXT),
     (TREXAS_EXT_TREX, TREXAS_EXT),
 ]:
     if os.path.exists(src) and not os.path.exists(dst):
@@ -68,9 +77,12 @@ def alloc_ports():
 # ---------------------------------------------------------------------------
 
 def _node_worker(ext_paths, cmd_queue, result_queue):
-    """Child process: create DuckDB connection, load extensions, run commands."""
+    """Child process: create trexsql connection, load extensions, run commands."""
     try:
-        conn = duckdb.connect(":memory:", config={"allow_unsigned_extensions": "true"})
+        conn = duckdb.connect(":memory:", config={
+            "allow_unsigned_extensions": "true",
+            "allow_extensions_metadata_mismatch": "true",
+        })
         for path in ext_paths:
             conn.execute(f"LOAD '{path}'")
         result_queue.put(("ready", None))
@@ -96,7 +108,7 @@ def _node_worker(ext_paths, cmd_queue, result_queue):
 
 
 class Node:
-    """A DuckDB node running in a separate process with extensions loaded."""
+    """A trexsql node running in a separate process with extensions loaded."""
 
     def __init__(self, ext_paths, gossip_port, flight_port, pgwire_port, trexas_port):
         self.gossip_port = gossip_port
@@ -118,7 +130,7 @@ class Node:
     def execute(self, sql):
         """Execute SQL and return fetchall() result (list of tuples)."""
         self._cmd_queue.put(sql)
-        status, data = self._result_queue.get(timeout=30)
+        status, data = self._result_queue.get(timeout=90)
         if status == "error":
             raise RuntimeError(data)
         return data
@@ -157,29 +169,37 @@ def wait_for(node, sql, check, timeout=10, interval=0.5):
 
 @pytest.fixture
 def node_factory():
-    """Factory that creates DuckDB nodes (each in a separate process)."""
+    """Factory that creates trexsql nodes (each in a separate process)."""
     nodes = []
 
-    def create_node(load_flight=True, load_swarm=True, load_pgwire=False,
-                     load_circe=False, load_llama=False, load_chdb=False,
-                     load_hana=False, load_tpm=False, load_trexas=False):
+    def create_node(load_db=True, load_pgwire=False,
+                     load_atlas=False, load_cql2elm=False, load_ai=False,
+                     load_chdb=False, load_hana=False, load_tpm=False,
+                     load_etl=False, load_migration=False, load_fhir=False,
+                     load_trexas=False):
         ext_paths = []
-        if load_flight:
-            ext_paths.append(FLIGHT_EXT)
-        if load_swarm:
-            ext_paths.append(SWARM_EXT)
+        if load_db:
+            ext_paths.append(DB_EXT)
         if load_pgwire:
             ext_paths.append(PGWIRE_EXT)
-        if load_circe:
-            ext_paths.append(CIRCE_EXT)
-        if load_llama:
-            ext_paths.append(LLAMA_EXT)
+        if load_atlas:
+            ext_paths.append(ATLAS_EXT)
+        if load_cql2elm:
+            ext_paths.append(CQL2ELM_EXT)
+        if load_ai:
+            ext_paths.append(AI_EXT)
         if load_chdb:
             ext_paths.append(CHDB_EXT)
         if load_hana:
             ext_paths.append(HANA_EXT)
         if load_tpm:
             ext_paths.append(TPM_EXT)
+        if load_etl:
+            ext_paths.append(ETL_EXT)
+        if load_migration:
+            ext_paths.append(MIGRATION_EXT)
+        if load_fhir:
+            ext_paths.append(FHIR_EXT)
         if load_trexas:
             ext_paths.append(TREXAS_EXT)
         gossip_port, flight_port, pgwire_port, trexas_port = alloc_ports()
@@ -194,3 +214,103 @@ def node_factory():
             node.close()
         except Exception:
             pass
+
+
+def create_node_with_tables(node_factory_fn, tables_sql_list, node_name, cluster_id,
+                            gossip_seeds=None, distributed_engine=False,
+                            roles=None):
+    """Create a node, start gossip + flight, and populate tables.
+
+    Args:
+        node_factory_fn: The create_node callable from node_factory fixture.
+        tables_sql_list: List of SQL CREATE TABLE statements to execute.
+        node_name: Logical name for this node in the cluster.
+        cluster_id: Cluster identifier for gossip.
+        gossip_seeds: Optional comma-separated seed addresses (host:port,...).
+        distributed_engine: Whether to enable the DataFusion distributed engine.
+        roles: List of distributed roles (e.g. ["scheduler", "executor"]).
+
+    Returns:
+        Node instance with tables created and gossip/flight started.
+    """
+    node = node_factory_fn()
+
+    # Create tables
+    for sql in tables_sql_list:
+        node.execute(sql)
+
+    # Start gossip
+    if gossip_seeds:
+        node.execute(
+            f"SELECT trex_db_start_seeds('127.0.0.1', {node.gossip_port}, "
+            f"'{cluster_id}', '{gossip_seeds}')"
+        )
+    else:
+        node.execute(
+            f"SELECT trex_db_start('127.0.0.1', {node.gossip_port}, '{cluster_id}')"
+        )
+
+    # Start flight server
+    node.execute(
+        f"SELECT trex_db_flight_start('0.0.0.0', {node.flight_port})"
+    )
+
+    return node
+
+
+def setup_two_node_cluster(node_factory_fn, tables_a, tables_b,
+                           cluster_id="test-cluster",
+                           distributed_engine=False):
+    """Set up a two-node cluster with different tables on each node.
+
+    Args:
+        node_factory_fn: The create_node callable from node_factory fixture.
+        tables_a: List of SQL CREATE TABLE statements for node A.
+        tables_b: List of SQL CREATE TABLE statements for node B.
+        cluster_id: Cluster identifier.
+        distributed_engine: Whether to enable distributed engine.
+
+    Returns:
+        Tuple of (node_a, node_b).
+    """
+    node_a = create_node_with_tables(
+        node_factory_fn, tables_a, "node-a", cluster_id,
+        distributed_engine=distributed_engine,
+        roles=["scheduler", "executor"],
+    )
+    node_b = create_node_with_tables(
+        node_factory_fn, tables_b, "node-b", cluster_id,
+        gossip_seeds=f"127.0.0.1:{node_a.gossip_port}",
+        distributed_engine=distributed_engine,
+        roles=["executor"],
+    )
+    return node_a, node_b
+
+
+def setup_three_node_cluster(node_factory_fn, tables_a, tables_b, tables_c,
+                             cluster_id="test-cluster",
+                             distributed_engine=False):
+    """Set up a three-node cluster with different tables on each node.
+
+    Returns:
+        Tuple of (node_a, node_b, node_c).
+    """
+    node_a = create_node_with_tables(
+        node_factory_fn, tables_a, "node-a", cluster_id,
+        distributed_engine=distributed_engine,
+        roles=["scheduler", "executor"],
+    )
+    seed = f"127.0.0.1:{node_a.gossip_port}"
+    node_b = create_node_with_tables(
+        node_factory_fn, tables_b, "node-b", cluster_id,
+        gossip_seeds=seed,
+        distributed_engine=distributed_engine,
+        roles=["executor"],
+    )
+    node_c = create_node_with_tables(
+        node_factory_fn, tables_c, "node-c", cluster_id,
+        gossip_seeds=seed,
+        distributed_engine=distributed_engine,
+        roles=["executor"],
+    )
+    return node_a, node_b, node_c

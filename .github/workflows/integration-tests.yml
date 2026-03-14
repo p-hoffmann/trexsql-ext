@@ -22,7 +22,7 @@ jobs:
   # ===========================================================================
 
   build-rust-core:
-    name: "Build flight + swarm"
+    name: "Build db"
     runs-on: ubuntu-24.04
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     steps:
@@ -37,29 +37,68 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            flight/target
-            swarm/target
-          key: rust-core-${{ runner.os }}-${{ hashFiles('flight/Cargo.lock', 'swarm/Cargo.lock') }}
+            plugins/db/target
+          key: rust-core-${{ runner.os }}-${{ hashFiles('plugins/db/Cargo.lock') }}
           restore-keys: rust-core-${{ runner.os }}-
 
-      - name: Build flight
+      - name: Build db
         run: make configure && make debug
-        working-directory: flight
-
-      - name: Build swarm
-        run: make configure && make debug
-        working-directory: swarm
+        working-directory: plugins/db
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ext-flight
-          path: flight/build/debug/extension/flight/flight.trex
+          name: ext-db
+          path: plugins/db/build/debug/extension/db/db.trex
           retention-days: 1
 
+  build-pg-trex:
+    name: "Build pg_trex"
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install PostgreSQL 17 dev headers
+        run: |
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg
+          sudo apt-get update
+          sudo apt-get install -y postgresql-17 postgresql-server-dev-17
+
+      - name: Download libtrexsql
+        run: |
+          wget -O /tmp/libtrexsql.zip \
+            https://github.com/p-hoffmann/trexsql-rs/releases/download/v1.4.4-trex/libtrexsql-linux-amd64.zip
+          unzip /tmp/libtrexsql.zip -d /tmp/trexsql
+          ln -sf /tmp/trexsql/libtrexsql.so /tmp/trexsql/libduckdb.so
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.pgrx
+            plugins/pg_trex/target
+          key: rust-pg-trex-${{ runner.os }}-${{ hashFiles('plugins/pg_trex/Cargo.lock') }}
+          restore-keys: rust-pg-trex-${{ runner.os }}-
+
+      - name: Install cargo-pgrx and init
+        run: |
+          cargo install cargo-pgrx --version 0.16.1 --locked
+          cargo pgrx init --pg17=$(which pg_config)
+
+      - name: Build pg_trex
+        run: LIBRARY_PATH=/tmp/trexsql cargo build
+        working-directory: plugins/pg_trex
+
       - uses: actions/upload-artifact@v4
         with:
-          name: ext-swarm
-          path: swarm/build/debug/extension/swarm/swarm.trex
+          name: pg-trex-build
+          path: plugins/pg_trex/target/debug/libpg_trex.so
           retention-days: 1
 
   build-pgwire:
@@ -78,18 +117,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            pgwire/target
-          key: rust-pgwire-${{ runner.os }}-${{ hashFiles('pgwire/Cargo.lock') }}
+            plugins/pgwire/target
+          key: rust-pgwire-${{ runner.os }}-${{ hashFiles('plugins/pgwire/Cargo.lock') }}
           restore-keys: rust-pgwire-${{ runner.os }}-
 
       - name: Build pgwire
         run: make configure && make debug
-        working-directory: pgwire
+        working-directory: plugins/pgwire
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-pgwire
-          path: pgwire/build/debug/extension/pgwire/pgwire.trex
+          path: plugins/pgwire/build/debug/extension/pgwire/pgwire.trex
           retention-days: 1
 
   build-chdb:
@@ -105,25 +144,25 @@ jobs:
 
       - name: Install chdb native library
         run: sudo apt-get update && sudo apt-get install -y libc6-dev clang && sudo bash ./install_chdb.sh
-        working-directory: chdb
+        working-directory: plugins/chdb
 
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            chdb/target
-          key: rust-chdb-${{ runner.os }}-${{ hashFiles('chdb/Cargo.lock') }}
+            plugins/chdb/target
+          key: rust-chdb-${{ runner.os }}-${{ hashFiles('plugins/chdb/Cargo.lock') }}
           restore-keys: rust-chdb-${{ runner.os }}-
 
       - name: Build chdb
         run: make configure && make debug
-        working-directory: chdb
+        working-directory: plugins/chdb
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-chdb
-          path: chdb/build/debug/extension/chdb/chdb.trex
+          path: plugins/chdb/build/debug/extension/chdb/chdb.trex
           retention-days: 1
 
   build-hana:
@@ -142,18 +181,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            hana/target
-          key: rust-hana-${{ runner.os }}-${{ hashFiles('hana/Cargo.lock') }}
+            plugins/hana/target
+          key: rust-hana-${{ runner.os }}-${{ hashFiles('plugins/hana/Cargo.lock') }}
           restore-keys: rust-hana-${{ runner.os }}-
 
       - name: Build hana
         run: make configure && make debug
-        working-directory: hana
+        working-directory: plugins/hana
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-hana
-          path: hana/build/debug/extension/hana_scan/hana_scan.trex
+          path: plugins/hana/build/debug/extension/hana_scan/hana_scan.trex
           retention-days: 1
 
   build-tpm:
@@ -172,18 +211,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            tpm/target
-          key: rust-tpm-${{ runner.os }}-${{ hashFiles('tpm/Cargo.lock') }}
+            plugins/tpm/target
+          key: rust-tpm-${{ runner.os }}-${{ hashFiles('plugins/tpm/Cargo.lock') }}
           restore-keys: rust-tpm-${{ runner.os }}-
 
       - name: Build tpm
         run: make configure && make debug
-        working-directory: tpm
+        working-directory: plugins/tpm
 
       - uses: actions/upload-artifact@v4
         with:
           name: ext-tpm
-          path: tpm/build/debug/extension/tpm/tpm.trex
+          path: plugins/tpm/build/debug/extension/tpm/tpm.trex
           retention-days: 1
 
   build-trexas:
@@ -223,8 +262,8 @@ jobs:
           path: trex/ext/trexas/build/debug/extension/trexas/trexas.trex
           retention-days: 1
 
-  build-circe:
-    name: "Build circe"
+  build-atlas:
+    name: "Build atlas"
     runs-on: ubuntu-24.04
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     steps:
@@ -244,23 +283,23 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: |
-            circe/build
-            circe/circe-be/target
-          key: circe-${{ runner.os }}-${{ hashFiles('circe/CMakeLists.txt', 'circe/extension_config.cmake', 'circe/circe-be/pom.xml', 'circe/graalvm-config/**') }}
+            plugins/atlas/build
+            plugins/atlas/circe-be/target
+          key: circe-${{ runner.os }}-${{ hashFiles('plugins/atlas/CMakeLists.txt', 'plugins/atlas/extension_config.cmake', 'plugins/atlas/circe-be/pom.xml', 'plugins/atlas/graalvm-config/**') }}
           restore-keys: circe-${{ runner.os }}-
 
-      - name: Build circe
+      - name: Build atlas
         run: make configure && make release
-        working-directory: circe
+        working-directory: plugins/atlas
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ext-circe
-          path: circe/build/release/extension/circe/circe.trex
+          name: ext-atlas
+          path: plugins/atlas/build/release/extension/circe/circe.trex
           retention-days: 1
 
-  build-llama:
-    name: "Build llama"
+  build-ai:
+    name: "Build ai"
     runs-on: ubuntu-24.04
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     steps:
@@ -268,23 +307,82 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install llama build dependencies
+      - name: Install ai build dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake libssl-dev libvulkan1 libvulkan-dev vulkan-tools glslc libshaderc1 spirv-tools vulkan-validationlayers mesa-vulkan-drivers
 
       - uses: actions/cache@v4
         with:
-          path: llama/build
-          key: llama-cmake-${{ runner.os }}-${{ hashFiles('llama/CMakeLists.txt', 'llama/llama.cpp/CMakeLists.txt') }}
-          restore-keys: llama-cmake-${{ runner.os }}-
+          path: plugins/ai/build
+          key: ai-cmake-${{ runner.os }}-${{ hashFiles('plugins/ai/CMakeLists.txt', 'plugins/ai/llama.cpp/CMakeLists.txt') }}
+          restore-keys: ai-cmake-${{ runner.os }}-
 
-      - name: Build llama
+      - name: Build ai
         run: make configure && make debug
-        working-directory: llama
+        working-directory: plugins/ai
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ext-llama
-          path: llama/build/debug/extension/llama/llama.trex
+          name: ext-ai
+          path: plugins/ai/build/debug/extension/ai/ai.trex
+          retention-days: 1
+
+  build-etl:
+    name: "Build etl"
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            plugins/etl/target
+          key: rust-etl-${{ runner.os }}-${{ hashFiles('plugins/etl/Cargo.lock') }}
+          restore-keys: rust-etl-${{ runner.os }}-
+
+      - name: Build etl
+        run: make configure && make debug
+        working-directory: plugins/etl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ext-etl
+          path: plugins/etl/build/debug/extension/etl/etl.trex
+          retention-days: 1
+    
+  build-migration:
+    name: "Build migration"
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            plugins/migration/target
+          key: rust-migration-${{ runner.os }}-${{ hashFiles('plugins/migration/Cargo.lock') }}
+          restore-keys: rust-migration-${{ runner.os }}-
+
+      - name: Build migration
+        run: make configure && make debug
+        working-directory: plugins/migration
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ext-migration
+          path: plugins/migration/build/debug/extension/migration/migration.trex
           retention-days: 1
 
   # ===========================================================================
@@ -304,13 +402,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ext-flight
-          path: flight/build/debug/extension/flight/
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ext-swarm
-          path: swarm/build/debug/extension/swarm/
+          name: ext-db
+          path: plugins/db/build/debug/extension/db/
 
       - name: Setup test environment
         run: make configure
@@ -341,18 +434,13 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ext-flight
-          path: flight/build/debug/extension/flight/
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ext-swarm
-          path: swarm/build/debug/extension/swarm/
+          name: ext-db
+          path: plugins/db/build/debug/extension/db/
 
       - uses: actions/download-artifact@v4
         with:
           name: ext-pgwire
-          path: pgwire/build/debug/extension/pgwire/
+          path: plugins/pgwire/build/debug/extension/pgwire/
 
       - name: Setup test environment
         run: make configure
@@ -362,14 +450,14 @@ jobs:
         run: venv/bin/pytest -v test_pgwire_standalone.py
         working-directory: integration-tests
 
-      - name: Run pgwire swarm tests
-        run: venv/bin/pytest -v test_pgwire_swarm.py
+      - name: Run pgwire db tests
+        run: venv/bin/pytest -v test_pgwire_db.py
         working-directory: integration-tests
 
-  test-circe:
-    name: "Test circe"
+  test-atlas:
+    name: "Test atlas"
     runs-on: ubuntu-24.04
-    needs: [build-circe]
+    needs: [build-atlas]
     steps:
       - uses: actions/checkout@v4
 
@@ -379,21 +467,21 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ext-circe
-          path: circe/build/release/extension/circe/
+          name: ext-atlas
+          path: plugins/atlas/build/release/extension/circe/
 
       - name: Setup test environment
         run: make configure
         working-directory: integration-tests
 
-      - name: Run circe standalone tests
-        run: venv/bin/pytest -v test_circe_standalone.py
+      - name: Run atlas standalone tests
+        run: venv/bin/pytest -v test_atlas_standalone.py
         working-directory: integration-tests
 
-  test-llama:
-    name: "Test llama"
+  test-ai:
+    name: "Test ai"
     runs-on: ubuntu-24.04
-    needs: [build-llama]
+    needs: [build-ai]
     steps:
       - uses: actions/checkout@v4
 
@@ -403,15 +491,15 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ext-llama
-          path: llama/build/debug/extension/llama/
+          name: ext-ai
+          path: plugins/ai/build/debug/extension/ai/
 
       - name: Setup test environment
         run: make configure
         working-directory: integration-tests
 
-      - name: Run llama standalone tests
-        run: venv/bin/pytest -v test_llama_standalone.py
+      - name: Run ai standalone tests
+        run: venv/bin/pytest -v test_ai_standalone.py
         working-directory: integration-tests
 
   test-chdb:
@@ -427,22 +515,17 @@ jobs:
 
       - name: Install chdb native library
         run: sudo bash ./install_chdb.sh
-        working-directory: chdb
+        working-directory: plugins/chdb
 
       - uses: actions/download-artifact@v4
         with:
-          name: ext-flight
-          path: flight/build/debug/extension/flight/
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ext-swarm
-          path: swarm/build/debug/extension/swarm/
+          name: ext-db
+          path: plugins/db/build/debug/extension/db/
 
       - uses: actions/download-artifact@v4
         with:
           name: ext-chdb
-          path: chdb/build/debug/extension/chdb/
+          path: plugins/chdb/build/debug/extension/chdb/
 
       - name: Setup test environment
         run: make configure
@@ -452,8 +535,8 @@ jobs:
         run: venv/bin/pytest -v test_chdb_standalone.py
         working-directory: integration-tests
 
-      - name: Run chdb swarm tests
-        run: venv/bin/pytest -v test_chdb_swarm.py
+      - name: Run chdb db tests
+        run: venv/bin/pytest -v test_chdb_db.py
         working-directory: integration-tests
 
   test-trexas:
@@ -471,13 +554,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ext-flight
-          path: flight/build/debug/extension/flight/
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ext-swarm
-          path: swarm/build/debug/extension/swarm/
+          name: ext-db
+          path: plugins/db/build/debug/extension/db/
 
       - uses: actions/download-artifact@v4
         with:
@@ -510,7 +588,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-tpm
-          path: tpm/build/debug/extension/tpm/
+          path: plugins/tpm/build/debug/extension/tpm/
 
       - name: Setup test environment
         run: make configure
@@ -520,6 +598,63 @@ jobs:
         run: venv/bin/pytest -v test_tpm_standalone.py
         working-directory: integration-tests
 
+  test-etl:
+    name: "Test etl"
+    runs-on: ubuntu-24.04
+    needs: [build-etl, build-rust-core]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-etl
+          path: plugins/etl/build/debug/extension/etl/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-db
+          path: plugins/db/build/debug/extension/db/
+
+      - name: Setup test environment
+        run: make configure
+        working-directory: integration-tests
+
+      - name: Run etl standalone tests
+        run: venv/bin/pytest -v test_etl_standalone.py
+        working-directory: integration-tests
+
+      - name: Run etl db tests
+        run: venv/bin/pytest -v test_etl_db.py
+        working-directory: integration-tests
+
+  test-migration:
+    name: "Test migration"
+    runs-on: ubuntu-24.04
+    needs: [build-migration]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-migration
+          path: plugins/migration/build/debug/extension/migration/
+
+      - name: Setup test environment
+        run: make configure
+        working-directory: integration-tests
+
+      - name: Run migration standalone tests
+        run: venv/bin/pytest -v test_migration_standalone.py
+        working-directory: integration-tests
+        
   test-hana:
     name: "Test hana"
     runs-on: ubuntu-24.04
@@ -538,7 +673,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-hana
-          path: hana/build/debug/extension/hana_scan/
+          path: plugins/hana/build/debug/extension/hana_scan/
 
       - name: Setup test environment
         run: make configure
@@ -569,6 +704,66 @@ jobs:
         if: always()
         run: docker compose -f integration-tests/docker-compose.hana.yml down -v
 
+  test-pg-trex:
+    name: "Test pg_trex"
+    runs-on: ubuntu-24.04
+    needs: [build-rust-core, build-pg-trex]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pg-trex-build
+          path: plugins/pg_trex/target/debug/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-db
+          path: extensions/
+
+      - name: List pg_trex build context
+        run: |
+          ls -la plugins/pg_trex/target/debug/libpg_trex.so
+          ls -la extensions/
+
+      - name: Start pg_trex container
+        run: docker compose -f integration-tests/docker-compose.pg_trex.yml up -d --build
+
+      - name: Wait for pg_trex to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if docker exec trex-pg-trex pg_isready -U postgres 2>/dev/null; then
+              echo "PostgreSQL ready after ~$((i * 2))s"
+              sleep 5
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Timeout waiting for PostgreSQL"
+          docker logs trex-pg-trex 2>&1 | tail -30
+          exit 1
+
+      - name: Setup test environment
+        run: make configure
+        working-directory: integration-tests
+
+      - name: Run pg_trex tests
+        run: venv/bin/pytest -v test_pg_trex.py
+        working-directory: integration-tests
+
+      - name: Show pg_trex logs on failure
+        if: failure()
+        run: docker logs trex-pg-trex 2>&1 | tail -50
+
+      - name: Cleanup
+        if: always()
+        run: docker compose -f integration-tests/docker-compose.pg_trex.yml down -v
+
   # ===========================================================================
   # Layer 3: Status Gate
   # ===========================================================================
@@ -580,31 +775,40 @@ jobs:
     needs:
       - test-distributed
       - test-pgwire
-      - test-circe
-      - test-llama
+      - test-atlas
+      - test-ai
       - test-chdb
       - test-trexas
       - test-tpm
+      - test-migration
       - test-hana
+      - test-etl
+      - test-pg-trex
     steps:
       - name: Check test results
         run: |
           echo "test-distributed: ${{ needs.test-distributed.result }}"
           echo "test-pgwire:      ${{ needs.test-pgwire.result }}"
-          echo "test-circe:       ${{ needs.test-circe.result }}"
-          echo "test-llama:       ${{ needs.test-llama.result }}"
+          echo "test-atlas:       ${{ needs.test-atlas.result }}"
+          echo "test-ai:          ${{ needs.test-ai.result }}"
           echo "test-chdb:        ${{ needs.test-chdb.result }}"
           echo "test-trexas:      ${{ needs.test-trexas.result }}"
           echo "test-tpm:         ${{ needs.test-tpm.result }}"
+          echo "test-migration:   ${{ needs.test-migration.result }}"
           echo "test-hana:        ${{ needs.test-hana.result }}"
+          echo "test-etl:         ${{ needs.test-etl.result }}"
+          echo "test-pg-trex:     ${{ needs.test-pg-trex.result }}"
 
           if [[ "${{ needs.test-distributed.result }}" == "failure" ||
                 "${{ needs.test-pgwire.result }}" == "failure" ||
-                "${{ needs.test-circe.result }}" == "failure" ||
-                "${{ needs.test-llama.result }}" == "failure" ||
+                "${{ needs.test-atlas.result }}" == "failure" ||
+                "${{ needs.test-ai.result }}" == "failure" ||
                 "${{ needs.test-chdb.result }}" == "failure" ||
                 "${{ needs.test-trexas.result }}" == "failure" ||
                 "${{ needs.test-tpm.result }}" == "failure" ||
+                "${{ needs.test-etl.result }}" == "failure" ||
+                "${{ needs.test-pg-trex.result }}" == "failure" ||
+                "${{ needs.test-migration.result }}" == "failure" ||
                 "${{ needs.test-hana.result }}" == "failure" ]]; then
             echo "::error::One or more integration test jobs failed"
             exit 1

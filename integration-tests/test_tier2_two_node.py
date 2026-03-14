@@ -23,12 +23,12 @@ def _setup_two_nodes(node_factory):
         "SELECT i as id, 'US' as region, random() * 100 as price "
         "FROM range(1000) t(i)"
     )
-    node_a.execute(f"SELECT start_flight_server('0.0.0.0', {node_a.flight_port})")
+    node_a.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node_a.flight_port})")
     node_a.execute(
-        f"SELECT swarm_start('0.0.0.0', {node_a.gossip_port}, 'test-cluster')"
+        f"SELECT trex_db_start('0.0.0.0', {node_a.gossip_port}, 'test-cluster')"
     )
     node_a.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_a.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_a.flight_port})"
     )
 
     # Node B: EU data, joins Node A
@@ -37,52 +37,52 @@ def _setup_two_nodes(node_factory):
         "SELECT i as id, 'EU' as region, random() * 100 as price "
         "FROM range(1000) t(i)"
     )
-    node_b.execute(f"SELECT start_flight_server('0.0.0.0', {node_b.flight_port})")
+    node_b.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node_b.flight_port})")
     node_b.execute(
-        f"SELECT swarm_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
+        f"SELECT trex_db_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
         f"'127.0.0.1:{node_a.gossip_port}')"
     )
     node_b.execute(
-        f"SELECT swarm_register_service('flight', '127.0.0.1', {node_b.flight_port})"
+        f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_b.flight_port})"
     )
 
     return node_a, node_b
 
 
 def test_gossip_convergence(node_factory):
-    """Both nodes see each other via swarm_nodes() after gossip join."""
+    """Both nodes see each other via trex_db_nodes() after gossip join."""
     node_a, node_b = _setup_two_nodes(node_factory)
 
     # Wait for both nodes to see 2 members
     wait_for(
         node_a,
-        "SELECT * FROM swarm_nodes()",
+        "SELECT * FROM trex_db_nodes()",
         lambda rows: len(rows) >= 2,
         timeout=15,
     )
     wait_for(
         node_b,
-        "SELECT * FROM swarm_nodes()",
+        "SELECT * FROM trex_db_nodes()",
         lambda rows: len(rows) >= 2,
         timeout=15,
     )
 
 
 def test_swarm_tables_both_nodes(node_factory):
-    """swarm_tables() shows orders table from both nodes."""
+    """trex_db_tables() shows orders table from both nodes."""
     node_a, node_b = _setup_two_nodes(node_factory)
 
     # Wait for convergence first
     wait_for(
         node_a,
-        "SELECT * FROM swarm_nodes()",
+        "SELECT * FROM trex_db_nodes()",
         lambda rows: len(rows) >= 2,
         timeout=15,
     )
 
     tables = wait_for(
         node_a,
-        "SELECT * FROM swarm_tables()",
+        "SELECT * FROM trex_db_tables()",
         lambda rows: len(rows) >= 2,
         timeout=10,
     )
@@ -96,7 +96,7 @@ def test_distributed_query_regions(node_factory):
     # Wait for convergence
     wait_for(
         node_a,
-        "SELECT * FROM swarm_nodes()",
+        "SELECT * FROM trex_db_nodes()",
         lambda rows: len(rows) >= 2,
         timeout=15,
     )
@@ -104,7 +104,7 @@ def test_distributed_query_regions(node_factory):
     # Run distributed query
     result = wait_for(
         node_a,
-        "SELECT * FROM swarm_query("
+        "SELECT * FROM trex_db_query("
         "'SELECT region, COUNT(*) as cnt FROM orders GROUP BY region')",
         lambda rows: len(rows) >= 2,
         timeout=10,
