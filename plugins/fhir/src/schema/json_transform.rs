@@ -3,6 +3,23 @@ use crate::schema::type_mapping::{fhir_to_duckdb_type, is_primitive_type};
 
 const MAX_RECURSION_DEPTH: usize = 4;
 
+pub fn generate_column_names(
+    registry: &DefinitionRegistry,
+    resource_type: &str,
+) -> Result<Vec<String>, String> {
+    let sd = registry
+        .get_resource(resource_type)
+        .ok_or_else(|| format!("Unknown resource type: {}", resource_type))?;
+
+    Ok(sd
+        .elements
+        .iter()
+        .filter(|e| e.name != "resourceType")
+        .filter(|e| element_to_transform_field(registry, e, 0).is_some())
+        .map(|e| e.name.clone())
+        .collect())
+}
+
 pub fn generate_json_transform(
     registry: &DefinitionRegistry,
     resource_type: &str,
@@ -133,4 +150,56 @@ fn children_to_transform(
     }
 
     format!("{{{}}}", fields.join(", "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fhir_server::load_default_definitions;
+
+    #[test]
+    fn test_column_names_patient() {
+        let defs = load_default_definitions().expect("load defs");
+        let cols = generate_column_names(&defs, "Patient").expect("column names");
+        assert!(!cols.is_empty(), "Patient should have columns");
+        assert!(cols.contains(&"id".to_string()), "should contain id");
+        assert!(cols.contains(&"gender".to_string()), "should contain gender");
+        assert!(cols.contains(&"birthDate".to_string()), "should contain birthDate");
+        assert!(cols.contains(&"name".to_string()), "should contain name");
+        assert!(!cols.contains(&"resourceType".to_string()), "should not contain resourceType");
+    }
+
+    #[test]
+    fn test_column_names_excludes_choice_types() {
+        let defs = load_default_definitions().expect("load defs");
+        let cols = generate_column_names(&defs, "Observation").expect("column names");
+        // value[x] is a choice type and should be excluded
+        assert!(!cols.iter().any(|c| c.contains("[x]")), "should not contain [x] columns");
+        // but non-choice columns should be present
+        assert!(cols.contains(&"status".to_string()), "should contain status");
+        assert!(cols.contains(&"code".to_string()), "should contain code");
+    }
+
+    #[test]
+    fn test_column_names_matches_transform_keys() {
+        let defs = load_default_definitions().expect("load defs");
+        let cols = generate_column_names(&defs, "Patient").expect("column names");
+        let transform = generate_json_transform(&defs, "Patient").expect("transform");
+        // Every column name should appear as a key in the transform spec
+        for col in &cols {
+            assert!(
+                transform.contains(&format!("\"{}\":", col)),
+                "transform should contain key for column '{}'. Transform: {}",
+                col,
+                &transform[..transform.len().min(500)]
+            );
+        }
+    }
+
+    #[test]
+    fn test_column_names_unknown_type() {
+        let defs = load_default_definitions().expect("load defs");
+        let result = generate_column_names(&defs, "FakeResource");
+        assert!(result.is_err());
+    }
 }

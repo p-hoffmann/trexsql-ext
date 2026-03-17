@@ -91,6 +91,14 @@ impl ResourceRegistry {
         Ok(transform)
     }
 
+    pub fn get_column_names(&self, resource_type: &str) -> Result<Vec<String>, String> {
+        let definitions = self
+            .definitions
+            .as_ref()
+            .ok_or("No definitions loaded")?;
+        json_transform::generate_column_names(definitions, resource_type)
+    }
+
     pub fn table_name(resource_type: &str) -> String {
         resource_type.to_lowercase()
     }
