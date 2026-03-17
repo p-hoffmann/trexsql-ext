@@ -95,7 +95,7 @@ def main():
         s, b = http(base, "POST", f"/{ds}/Patient", p)
         pid = b["id"]
         patient_ids.append(pid)
-        print(f"  {p['name'][0]['given'][0]} {p['name'][0]['family']} => {pid}")
+        print(f"  {p['name'][0]['given'][0]} {p['name'][0]['family']} => ok")
 
     # Link conditions to patients via subject reference
     print("\nInserting conditions...")
@@ -105,7 +105,7 @@ def main():
         s, b = http(base, "POST", f"/{ds}/Condition", c)
         display = c["code"]["coding"][0]["display"]
         ref = c["subject"]["reference"]
-        print(f"  {display} for {ref} => {b['id']}")
+        print(f"  {display} for {ref} => ok")
 
     # ── Run CQL queries ──
     print("\n" + "=" * 60)
