@@ -123,7 +123,7 @@ def main():
     print(f"CQL: {cql1}\n")
     s, b = http(base, "POST", f"/{ds}/$cql", {"cql": cql1})
     print(f"Status: {s}")
-    print(f"Result: {json.dumps(b, indent=2)}")
+    print(f"Result entries: {len(b) if isinstance(b, list) else 'N/A'}")
 
     # Query 2: raw CQL text — filter male patients
     cql2 = (
@@ -136,7 +136,7 @@ def main():
     print(f"CQL: {cql2}\n")
     s, b = http(base, "POST", f"/{ds}/$cql", {"cql": cql2})
     print(f"Status: {s}")
-    print(f"Result: {json.dumps(b, indent=2)}")
+    print(f"Result entries: {len(b) if isinstance(b, list) else 'N/A'}")
 
     # Query 3: patient count via pre-compiled ELM (Count is not supported by cql2elm translator)
     elm3 = {
@@ -156,7 +156,7 @@ def main():
     print("ELM: define PatientCount: Count([Patient])\n")
     s, b = http(base, "POST", f"/{ds}/$cql", {"library": elm3})
     print(f"Status: {s}")
-    print(f"Result: {json.dumps(b, indent=2)}")
+    print(f"Result: {b if isinstance(b, (int, float)) else type(b).__name__}")
 
     # Query 4: raw CQL text — retrieve all conditions
     cql4 = (
@@ -169,7 +169,7 @@ def main():
     print(f"CQL: {cql4}\n")
     s, b = http(base, "POST", f"/{ds}/$cql", {"cql": cql4})
     print(f"Status: {s}")
-    print(f"Result: {json.dumps(b, indent=2)}")
+    print(f"Result entries: {len(b) if isinstance(b, list) else 'N/A'}")
 
     # Query 5: pre-compiled ELM JSON — female patients born after 2000
     elm5 = {
@@ -202,7 +202,7 @@ def main():
     print("ELM: define YoungFemales: [Patient] P where P.gender = 'female' and P.birthDate >= @2000-01-01\n")
     s, b = http(base, "POST", f"/{ds}/$cql", {"library": elm5})
     print(f"Status: {s}")
-    print(f"Result: {json.dumps(b, indent=2)}")
+    print(f"Result entries: {len(b) if isinstance(b, list) else 'N/A'}")
 
     # ── Cleanup ──
     print("\n" + "=" * 60)
