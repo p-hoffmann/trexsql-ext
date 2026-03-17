@@ -209,16 +209,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - PKGPATH: ./ext/hana
-          - PKGPATH: ./ext/pgwire
-          - PKGPATH: ./ext/tpm
-          - PKGPATH: ./ext/migration
-          - PKGPATH: ./ext/db
+          - PKGPATH: ./plugins/hana
+          - PKGPATH: ./plugins/pgwire
+          - PKGPATH: ./plugins/tpm
+          - PKGPATH: ./plugins/migration
+          - PKGPATH: ./plugins/db
             SWAP: true
             CARGO_BUILD_JOBS: 2
-          - PKGPATH: ./ext/etl
-          - PKGPATH: ./ext/fhir
-          - PKGPATH: ./ext/transform
+          - PKGPATH: ./plugins/etl
+          - PKGPATH: ./plugins/fhir
+          - PKGPATH: ./plugins/transform
 
     runs-on: ubuntu-24.04-arm
 
@@ -250,10 +250,10 @@ jobs:
         run: |
           sudo swapoff /swapfile 2>/dev/null || true
           sudo rm -f /swapfile
-          sudo fallocate -l 8G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          sudo fallocate -l 8G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
 
       - name: Build
         run: |
