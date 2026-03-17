@@ -6,7 +6,7 @@ ARG CHDB_VERSION=v3.6.0
 ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y curl unzip wget gcc libc6-dev && rm -rf /var/lib/apt/lists/*
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.85.1
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Download libtrexsql from GitHub release (arch-specific)
@@ -71,14 +71,14 @@ RUN mkdir -p /usr/lib/trexsql/extensions && \
 ARG TARGETARCH
 ENV DUCKDB_VERSION=1.4.4
 RUN DUCKDB_PLATFORM="linux_${TARGETARCH}" && \
-    mkdir -p /root/.duckdb/extensions/v${DUCKDB_VERSION}/${DUCKDB_PLATFORM} && \
-    cd /root/.duckdb/extensions/v${DUCKDB_VERSION}/${DUCKDB_PLATFORM} && \
+    mkdir -p /usr/share/trexsql/extensions/v${DUCKDB_VERSION}/${DUCKDB_PLATFORM} && \
+    cd /usr/share/trexsql/extensions/v${DUCKDB_VERSION}/${DUCKDB_PLATFORM} && \
     for lib in avro aws delta ducklake fts httpfs icu iceberg inet json mysql_scanner parquet postgres_scanner spatial sqlite sqlite_scanner vss; do \
-        curl -sfO http://extensions.duckdb.org/v${DUCKDB_VERSION}/${DUCKDB_PLATFORM}/${lib}.duckdb_extension.gz && \
+        curl -sfO https://extensions.duckdb.org/v${DUCKDB_VERSION}/${DUCKDB_PLATFORM}/${lib}.duckdb_extension.gz && \
         gzip -d ${lib}.duckdb_extension.gz; \
     done && \
     for lib in bigquery; do \
-        curl -sfO http://community-extensions.duckdb.org/v${DUCKDB_VERSION}/${DUCKDB_PLATFORM}/${lib}.duckdb_extension.gz && \
+        curl -sfO https://community-extensions.duckdb.org/v${DUCKDB_VERSION}/${DUCKDB_PLATFORM}/${lib}.duckdb_extension.gz && \
         gzip -d ${lib}.duckdb_extension.gz; \
     done
 
@@ -100,8 +100,9 @@ RUN curl -sLO https://github.com/posit-dev/shinylive/releases/download/v${SHINYL
     mv shinylive-${SHINYLIVE_VERSION} shinylive && \
     rm shinylive-${SHINYLIVE_VERSION}.tar.gz
 
-# Create plugins directory for plugin installs
-RUN mkdir -p ./plugins
+# Create plugins directory and symlink @trex npm packages for plugin scanner
+RUN mkdir -p ./plugins && \
+    ln -sf $(pwd)/node_modules/@trex ./plugins/@trex
 
 # Copy core (overridden by volume mount in development)
 COPY core/ ./core/
@@ -109,11 +110,9 @@ COPY core/ ./core/
 # Copy functions (overridden by volume mount in development)
 COPY functions/ ./functions/
 
-# Build documentation site
-COPY docs/ ./docs/
-RUN cd docs && npm ci && npm run build
-
 ENV SCHEMA_DIR=/usr/src/core/schema
+ENV DUCKDB_EXTENSION_DIRECTORY=/usr/share/trexsql/extensions
 
 EXPOSE 8001
+USER node
 ENTRYPOINT ["trex"]

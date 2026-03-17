@@ -1,9 +1,10 @@
 /.*
+!.github
 node_modules
 /target
 /specs
 /extensions/*.trex
 /extensions/*.duckdb_extension
-docs/build/
-docs/.docusaurus/
+core/docs/build/
+core/docs/.docusaurus/
 shinylive/

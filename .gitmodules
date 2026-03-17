@@ -1,9 +1,9 @@
 [submodule "extension-ci-tools"]
-	path = ext/extension-ci-tools
+	path = plugins/extension-ci-tools
 	url = https://github.com/p-hoffmann/extension-ci-tools.git
 [submodule "atlas/circe-be"]
-	path = ext/atlas/circe-be
+	path = plugins/atlas/circe-be
 	url = https://github.com/p-hoffmann/circe-be.git
 [submodule "ai/llama.cpp"]
-	path = ext/ai/llama.cpp
+	path = plugins/ai/llama.cpp
 	url = https://github.com/ggml-org/llama.cpp.git

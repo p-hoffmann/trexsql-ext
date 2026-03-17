@@ -4,7 +4,6 @@ use std::ptr;
 
 use duckdb::ffi;
 
-/// Appender that uses raw libduckdb-sys FFI.
 /// Owns its own connection to avoid borrowing the main TrexDatabase connection.
 pub struct TrexAppender {
     raw_conn: ffi::duckdb_connection,
@@ -14,15 +13,12 @@ pub struct TrexAppender {
 unsafe impl Send for TrexAppender {}
 
 impl TrexAppender {
-    /// Create a new appender for the given schema.table.
-    /// `raw_db` is the database handle from TrexDatabase.
     pub fn create(
         raw_db: ffi::duckdb_database,
         schema: &str,
         table: &str,
     ) -> Result<Self, String> {
         unsafe {
-            // Create a dedicated connection for the appender
             let mut raw_conn: ffi::duckdb_connection = ptr::null_mut();
             let rc = ffi::duckdb_connect(raw_db, &mut raw_conn);
             if rc != ffi::DuckDBSuccess {
@@ -218,7 +214,6 @@ mod tests {
             let c_path = CString::new(":memory:").unwrap();
             ffi::duckdb_open_ext(c_path.as_ptr(), &mut db, ptr::null_mut(), &mut err);
 
-            // Create table via a separate connection
             let mut conn: ffi::duckdb_connection = ptr::null_mut();
             ffi::duckdb_connect(db, &mut conn);
             let sql = CString::new("CREATE TABLE t (id INTEGER, name VARCHAR, val DOUBLE)").unwrap();
@@ -226,7 +221,6 @@ mod tests {
             ffi::duckdb_query(conn, sql.as_ptr(), &mut result);
             ffi::duckdb_destroy_result(&mut result);
 
-            // Use appender
             let mut app = TrexAppender::create(db, "main", "t").unwrap();
             app.append_int(1).unwrap();
             app.append_string("hello").unwrap();
@@ -241,7 +235,6 @@ mod tests {
             app.flush().unwrap();
             app.close().unwrap();
 
-            // Verify data
             let sql = CString::new("SELECT COUNT(*) FROM t").unwrap();
             let mut result = std::mem::zeroed();
             ffi::duckdb_query(conn, sql.as_ptr(), &mut result);

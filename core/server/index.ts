@@ -27,7 +27,11 @@ addEventListener("unhandledrejection", (ev) => {
 const app = express();
 const server = createServer(app);
 
-app.use(cors({ origin: true, credentials: true }));
+const trustedOrigins = (Deno.env.get("BETTER_AUTH_TRUSTED_ORIGINS") || "").split(",").filter(Boolean);
+app.use(cors({
+  origin: trustedOrigins.length > 0 ? trustedOrigins : false,
+  credentials: true,
+}));
 
 // Public settings endpoint — no auth required, only whitelisted keys
 const PUBLIC_SETTING_KEYS = ["auth.selfRegistration"];
@@ -163,10 +167,18 @@ app.post(`${BASE_PATH}/api/api-keys`, express.json(), async (req, res) => {
       res.status(400).json({ error: "name is required" });
       return;
     }
+    let expiresDate: Date | undefined;
+    if (expiresAt) {
+      expiresDate = new Date(expiresAt);
+      if (isNaN(expiresDate.getTime())) {
+        res.status(400).json({ error: "Invalid expiresAt date" });
+        return;
+      }
+    }
     const result = await generateApiKey(
       session.user.id,
       name,
-      expiresAt ? new Date(expiresAt) : undefined,
+      expiresDate,
     );
     res.json(result);
   } catch (err) {
@@ -175,7 +187,6 @@ app.post(`${BASE_PATH}/api/api-keys`, express.json(), async (req, res) => {
   }
 });
 
-// List current admin user's API keys
 app.get(`${BASE_PATH}/api/api-keys`, async (req, res) => {
   try {
     const session = await auth.api.getSession({ headers: req.headers as any });
@@ -195,7 +206,6 @@ app.get(`${BASE_PATH}/api/api-keys`, async (req, res) => {
   }
 });
 
-// Revoke an API key (soft-delete via revokedAt)
 app.delete(`${BASE_PATH}/api/api-keys/:id`, async (req, res) => {
   try {
     const session = await auth.api.getSession({ headers: req.headers as any });
@@ -219,10 +229,8 @@ app.delete(`${BASE_PATH}/api/api-keys/:id`, async (req, res) => {
   }
 });
 
-// Auth context middleware for PostGraphile
 app.use(authContext);
 
-// Plugin system: discover and register plugins
 try {
   await Plugins.initPlugins(app);
   addPluginRoutes(app);
@@ -237,12 +245,15 @@ try {
   if (schemaDir) {
     // deno-lint-ignore no-explicit-any
     const conn = new (globalThis as any).Trex.TrexDB("memory");
-    await conn.execute(`SELECT * FROM trex_migration_run_schema('${schemaDir}', 'trex', '_config')`, []);
+    const { escapeSql: esc } = await import("./lib/sql.ts");
+    const safeDir = esc(schemaDir);
+    await conn.execute(`SELECT * FROM trex_migration_run_schema('${safeDir}', 'trex', '_config')`, []);
     console.log("Core schema migrations applied");
   }
 } catch (err) {
   console.error("Core schema migration failed:", err);
 }
+
 
 // Run plugin migrations after plugin discovery
 try {
@@ -260,7 +271,6 @@ try {
   console.error("Role auto-creation failed:", err);
 }
 
-// PostGraphile
 const databaseUrl = Deno.env.get("DATABASE_URL");
 if (databaseUrl) {
   try {
@@ -276,18 +286,27 @@ if (databaseUrl) {
   console.warn("DATABASE_URL not set — PostGraphile disabled");
 }
 
-// Internal endpoints
 app.get(`${BASE_PATH}/_internal/health`, (_req, res) => {
   res.status(STATUS_CODE.OK).json({ message: "ok" });
 });
 
-app.get(`${BASE_PATH}/_internal/metric`, async (_req, res) => {
+app.get(`${BASE_PATH}/_internal/metric`, async (req, res) => {
+  const session = await auth.api.getSession({ headers: req.headers as any });
+  if (!session?.user || (session.user as any).role !== "admin") {
+    res.status(401).json({ error: "Admin authentication required" });
+    return;
+  }
   const metric = await EdgeRuntime.getRuntimeMetrics();
   res.json(metric);
 });
 
 app.put(`${BASE_PATH}/_internal/upload`, async (req, res) => {
   try {
+    const session = await auth.api.getSession({ headers: req.headers as any });
+    if (!session?.user || (session.user as any).role !== "admin") {
+      res.status(401).json({ error: "Admin authentication required" });
+      return;
+    }
     let body = "";
     for await (const chunk of req) {
       body += chunk;
@@ -362,20 +381,27 @@ app.use(`${FUNCTIONS_BASE_PATH}/:scope/:service_name`, async (req, res, next) =>
   });
 
   const callWorker = async (): Promise<Response> => {
-    try {
-      const worker = await createWorker();
-      const controller = new AbortController();
-      return await worker.fetch(webReq, { signal: controller.signal });
-    } catch (e) {
-      if (e instanceof Deno.errors.WorkerAlreadyRetired) {
-        return await callWorker();
+    const MAX_RETRIES = 3;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const worker = await createWorker();
+        const controller = new AbortController();
+        return await worker.fetch(webReq, { signal: controller.signal });
+      } catch (e) {
+        if (e instanceof Deno.errors.WorkerAlreadyRetired && attempt < MAX_RETRIES - 1) {
+          continue;
+        }
+        const error = { msg: e.toString() };
+        return new Response(JSON.stringify(error), {
+          status: STATUS_CODE.InternalServerError,
+          headers: { "Content-Type": "application/json" },
+        });
       }
-      const error = { msg: e.toString() };
-      return new Response(JSON.stringify(error), {
-        status: STATUS_CODE.InternalServerError,
-        headers: { "Content-Type": "application/json" },
-      });
     }
+    return new Response(JSON.stringify({ msg: "Worker unavailable after retries" }), {
+      status: STATUS_CODE.InternalServerError,
+      headers: { "Content-Type": "application/json" },
+    });
   };
 
   try {
@@ -408,6 +434,10 @@ app.use(`${FUNCTIONS_BASE_PATH}/:service_name`, async (req, res, next) => {
   if (serviceName.startsWith("tmp")) {
     try {
       servicePath = await Deno.realPath(`/tmp/${serviceName}`);
+      if (!servicePath.startsWith("/tmp/")) {
+        res.status(400).json({ error: "Invalid service path" });
+        return;
+      }
     } catch (err) {
       res.status(STATUS_CODE.BadRequest).json(err);
       return;
@@ -416,7 +446,6 @@ app.use(`${FUNCTIONS_BASE_PATH}/:service_name`, async (req, res, next) => {
     servicePath = `./functions/${serviceName}`;
   }
 
-  // Check if function directory exists before trying to create a worker
   try {
     await Deno.stat(servicePath);
   } catch {
@@ -449,7 +478,6 @@ app.use(`${FUNCTIONS_BASE_PATH}/:service_name`, async (req, res, next) => {
     });
   };
 
-  // Build a web-standard Request from the Express req
   const host = req.get("host") || "localhost";
   const protocol = req.protocol || "http";
   const webUrl = `${protocol}://${host}${req.originalUrl}`;
@@ -472,21 +500,27 @@ app.use(`${FUNCTIONS_BASE_PATH}/:service_name`, async (req, res, next) => {
   });
 
   const callWorker = async (): Promise<Response> => {
-    try {
-      const worker = await createWorker();
-      const controller = new AbortController();
-      return await worker.fetch(webReq, { signal: controller.signal });
-    } catch (e) {
-      if (e instanceof Deno.errors.WorkerAlreadyRetired) {
-        return await callWorker();
+    const MAX_RETRIES = 3;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const worker = await createWorker();
+        const controller = new AbortController();
+        return await worker.fetch(webReq, { signal: controller.signal });
+      } catch (e) {
+        if (e instanceof Deno.errors.WorkerAlreadyRetired && attempt < MAX_RETRIES - 1) {
+          continue;
+        }
+        const error = { msg: e.toString() };
+        return new Response(JSON.stringify(error), {
+          status: STATUS_CODE.InternalServerError,
+          headers: { "Content-Type": "application/json" },
+        });
       }
-
-      const error = { msg: e.toString() };
-      return new Response(JSON.stringify(error), {
-        status: STATUS_CODE.InternalServerError,
-        headers: { "Content-Type": "application/json" },
-      });
     }
+    return new Response(JSON.stringify({ msg: "Worker unavailable after retries" }), {
+      status: STATUS_CODE.InternalServerError,
+      headers: { "Content-Type": "application/json" },
+    });
   };
 
   try {
@@ -502,20 +536,6 @@ app.use(`${FUNCTIONS_BASE_PATH}/:service_name`, async (req, res, next) => {
   }
 });
 
-// Serve Docusaurus docs at /trex/docs
-try {
-  const docsDistPath = join(Deno.cwd(), "docs", "build");
-  await Deno.stat(docsDistPath);
-  const serveDocsStatic = (await import("express")).default.static;
-  app.use(`${BASE_PATH}/docs`, serveDocsStatic(docsDistPath));
-  app.get(`${BASE_PATH}/docs/*`, (_req, res) => {
-    res.sendFile(join(docsDistPath, "index.html"));
-  });
-  console.log("Serving docs from docs/build/");
-} catch (_e) {
-  console.warn("Docs not found — /trex/docs disabled");
-}
-
 // Serve self-hosted Shinylive assets (must be before SPA catch-all)
 try {
   const shinyliveDistPath = join(Deno.cwd(), "shinylive");
@@ -525,29 +545,10 @@ try {
   console.log("Serving Shinylive assets from shinylive/");
 } catch { /* shinylive assets not present — skip */ }
 
-// Static file serving for production frontend build
-try {
-  const webDistPath = join(Deno.cwd(), "core", "web", "dist");
-  await Deno.stat(webDistPath);
-  const serveStatic = (await import("express")).default.static;
-  app.use(BASE_PATH, serveStatic(webDistPath));
-  app.get(`${BASE_PATH}/*`, (_req, res, next) => {
-    if (_req.path.startsWith(`${BASE_PATH}/api/`) || _req.path.startsWith(`${BASE_PATH}/graphql`) || _req.path.startsWith(`${BASE_PATH}/graphiql`) || _req.path.startsWith(`${BASE_PATH}/_internal`) || _req.path.startsWith(`${BASE_PATH}/docs`)) {
-      return next();
-    }
-    res.sendFile(join(webDistPath, "index.html"));
-  });
-  console.log("Serving static files from core/web/dist/");
-} catch (e) {
-  console.warn("Static file serving disabled:", e);
-}
-
-// Redirect root to BASE_PATH
 app.get("/", (_req, res) => {
-  res.redirect(`${BASE_PATH}/`);
+  res.redirect("/plugins/trex/web/");
 });
 
-// Load SSO providers from DB (falls back to env vars if table doesn't exist)
 await initAuthFromDB();
 
 // Bootstrap initial API key from env var (for Docker/CI)
@@ -555,11 +556,9 @@ const initialKeyName = Deno.env.get("TREX_INITIAL_API_KEY_NAME");
 if (initialKeyName) {
   try {
     const { pool } = await import("./auth.ts");
-    // Check if any API keys exist
     const existing = await pool.query("SELECT 1 FROM trex.api_key LIMIT 1");
     if (existing.rows.length === 0) {
       const { generateApiKey } = await import("./mcp/auth.ts");
-      // Use the seed admin user
       const adminResult = await pool.query(
         `SELECT id FROM trex."user" WHERE role = 'admin' ORDER BY "createdAt" ASC LIMIT 1`
       );

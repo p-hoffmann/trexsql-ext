@@ -21,6 +21,7 @@ import { registerPluginResources } from "./resources/plugins.ts";
 interface SessionEntry {
   transport: StreamableHTTPServerTransport;
   lastActivity: number;
+  userId: string;
 }
 
 const sessions = new Map<string, SessionEntry>();
@@ -82,6 +83,10 @@ export function mountMcpServer(app: Express) {
 
     if (sessionId && sessions.has(sessionId)) {
       const entry = sessions.get(sessionId)!;
+      if (entry.userId !== user.id) {
+        res.status(403).json({ error: "Session belongs to a different user" });
+        return;
+      }
       entry.lastActivity = Date.now();
       await entry.transport.handleRequest(req, res, req.body);
       return;
@@ -95,7 +100,7 @@ export function mountMcpServer(app: Express) {
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => crypto.randomUUID(),
       onsessioninitialized: (id) => {
-        sessions.set(id, { transport, lastActivity: Date.now() });
+        sessions.set(id, { transport, lastActivity: Date.now(), userId: user.id });
       },
     });
 
@@ -119,6 +124,10 @@ export function mountMcpServer(app: Express) {
     }
 
     const entry = sessions.get(sessionId)!;
+    if (entry.userId !== user.id) {
+      res.status(403).json({ error: "Session belongs to a different user" });
+      return;
+    }
     entry.lastActivity = Date.now();
     await entry.transport.handleRequest(req, res);
   });
@@ -133,6 +142,10 @@ export function mountMcpServer(app: Express) {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     if (sessionId && sessions.has(sessionId)) {
       const entry = sessions.get(sessionId)!;
+      if (entry.userId !== user.id) {
+        res.status(403).json({ error: "Session belongs to a different user" });
+        return;
+      }
       entry.transport.close();
       sessions.delete(sessionId);
     }

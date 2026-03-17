@@ -5,9 +5,7 @@ import { pool } from "../../auth.ts";
 declare const Trex: any;
 declare const Deno: any;
 
-function escapeSql(s: string): string {
-  return s.replace(/'/g, "''");
-}
+import { escapeSql, validateInt } from "../../lib/sql.ts";
 
 export function registerEtlTools(server: McpServer) {
   server.tool(
@@ -92,10 +90,10 @@ export function registerEtlTools(server: McpServer) {
 
         let sql: string;
         if (batchSize != null || batchTimeoutMs != null || retryDelayMs != null || retryMaxAttempts != null) {
-          const bs = batchSize ?? 1000;
-          const bt = batchTimeoutMs ?? 5000;
-          const rd = retryDelayMs ?? 10000;
-          const rm = retryMaxAttempts ?? 5;
+          const bs = validateInt(batchSize ?? 1000, "batchSize");
+          const bt = validateInt(batchTimeoutMs ?? 5000, "batchTimeoutMs");
+          const rd = validateInt(retryDelayMs ?? 10000, "retryDelayMs");
+          const rm = validateInt(retryMaxAttempts ?? 5, "retryMaxAttempts");
           sql = `SELECT trex_etl_start('${escapeSql(name)}', '${escapeSql(connStr)}', '${escapeSql(mode)}', ${bs}, ${bt}, ${rd}, ${rm})`;
         } else {
           sql = `SELECT trex_etl_start('${escapeSql(name)}', '${escapeSql(connStr)}', '${escapeSql(mode)}')`;

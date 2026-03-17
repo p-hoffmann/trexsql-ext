@@ -45,10 +45,18 @@ export function registerApiKeyTools(server: McpServer) {
           return { content: [{ type: "text", text: "API keys can only be created for admin users" }], isError: true };
         }
 
+        let expiresDate: Date | undefined;
+        if (expiresAt) {
+          expiresDate = new Date(expiresAt);
+          if (isNaN(expiresDate.getTime())) {
+            return { content: [{ type: "text", text: "Invalid expiresAt date" }], isError: true };
+          }
+        }
+
         const result = await generateApiKey(
           userId,
           name,
-          expiresAt ? new Date(expiresAt) : undefined,
+          expiresDate,
         );
 
         return {

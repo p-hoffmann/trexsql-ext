@@ -6,11 +6,9 @@ import { pluginAuthz } from "../middleware/plugin-authz.ts";
 import { scopeUrlPrefix, waitfor } from "./utils.ts";
 import { PLUGINS_BASE_PATH } from "../config.ts";
 
-// Global registries accumulated from plugin configs
 export const ROLE_SCOPES: Record<string, string[]> = {};
 export const REQUIRED_URL_SCOPES: Array<{ path: string; scopes: string[] }> = [];
 
-// Tracked registered functions metadata
 export const REGISTERED_FUNCTIONS: Array<{
   name: string;
   source: string;
@@ -20,7 +18,6 @@ export const REGISTERED_FUNCTIONS: Array<{
 // Inter-service request map (function name -> handler)
 const fnmap: Record<string, (req: globalThis.Request) => Promise<globalThis.Response>> = {};
 
-// Set up inter-service request listener
 // deno-lint-ignore no-explicit-any
 const Trex = (globalThis as any).Trex;
 if (Trex?.createRequestListener) {
@@ -79,8 +76,6 @@ if (Trex?.createRequestListener) {
     }
   );
 }
-
-// Bash-like env var substitution
 
 function substituteEnvVars(input: string): string {
   let result = input;
@@ -169,8 +164,6 @@ function substituteEnvVarsInObject(obj: any): any {
   return obj;
 }
 
-// Worker creation and routing
-
 async function _callWorker(
   req: globalThis.Request,
   servicePath: string,
@@ -218,7 +211,6 @@ async function _callWorker(
     return await worker.fetch(req, { signal: controller.signal });
   } catch (e: any) {
     if (e instanceof Deno.errors.WorkerRequestCancelled) {
-      // retry once
       // deno-lint-ignore no-explicit-any
       const worker = await (globalThis as any).EdgeRuntime.userWorkers.create(options);
       const controller = new AbortController();
@@ -290,18 +282,14 @@ function _addFunction(
   name: string,
   xenv: any
 ) {
-  // Track registered function metadata
   REGISTERED_FUNCTIONS.push({ name, source: url, function: fncfg.function });
 
-  // Register in inter-service map
   fnmap[`${name}${fncfg.function}`] = (req: globalThis.Request) =>
     _callWorker(req, path, imports, fncfg, dir, xenv);
 
-  // Register Express route with auth middleware
   const scopePrefix = scopeUrlPrefix(name);
   app.all(PLUGINS_BASE_PATH + scopePrefix + url + "/*", authContext, pluginAuthz, async (req: Request, res: Response) => {
     try {
-      // Reconstruct a web Request from Express req
       const host = req.get("host") || "localhost";
       const protocol = req.protocol || "http";
       const requestUrl = `${protocol}://${host}${req.originalUrl}`;
@@ -351,7 +339,6 @@ export async function addPlugin(
 ) {
   const xenv = substituteEnvVarsInObject(value.env || {});
 
-  // Process init functions
   if (value.init) {
     for (const r of value.init) {
       if (r.function) {
@@ -381,7 +368,6 @@ export async function addPlugin(
     }
   }
 
-  // Accumulate roles -> scopes
   if (value.roles) {
     for (const [roleName, scopes] of Object.entries(value.roles)) {
       if (ROLE_SCOPES[roleName]) {
@@ -394,12 +380,10 @@ export async function addPlugin(
     }
   }
 
-  // Accumulate required URL scopes
   if (value.scopes) {
     REQUIRED_URL_SCOPES.push(...value.scopes);
   }
 
-  // Register API routes
   if (value.api) {
     for (const r of value.api) {
       if (r.function) {

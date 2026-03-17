@@ -8,6 +8,11 @@ if (!databaseUrl) {
   throw new Error("DATABASE_URL environment variable is required");
 }
 
+const authSecret = Deno.env.get("BETTER_AUTH_SECRET");
+if (!authSecret) {
+  throw new Error("BETTER_AUTH_SECRET environment variable is required");
+}
+
 export const pool = new Pool({
   connectionString: databaseUrl,
   options: "-c search_path=trex,public",
@@ -17,7 +22,7 @@ function getBaseConfig() {
   return {
     database: pool,
     basePath: `${BASE_PATH}/api/auth`,
-    secret: Deno.env.get("BETTER_AUTH_SECRET"),
+    secret: authSecret,
     baseURL: (() => {
       const envUrl = Deno.env.get("BETTER_AUTH_URL");
       if (envUrl) {
@@ -31,13 +36,13 @@ function getBaseConfig() {
       enabled: true,
       requireEmailVerification: false,
       sendResetPassword: async ({ user, url }: { user: any; url: string }) => {
-        console.log(`[auth] Password reset for ${user.email}: ${url}`);
+        console.log(`[auth] Password reset requested for ${user.email}`);
       },
     },
 
     emailVerification: {
       sendVerificationEmail: async ({ user, url }: { user: any; url: string }) => {
-        console.log(`[auth] Email verification for ${user.email}: ${url}`);
+        console.log(`[auth] Verification email requested for ${user.email}`);
       },
       sendOnSignUp: true,
     },
@@ -49,7 +54,7 @@ function getBaseConfig() {
     },
 
     session: {
-      expiresIn: 7 * 24 * 60 * 60, // 7 days
+      expiresIn: 7 * 24 * 60 * 60,
     },
 
     user: {
@@ -143,7 +148,6 @@ function buildEnvFallback(): Record<string, { clientId: string; clientSecret: st
 async function loadProvidersFromDB(): Promise<Record<string, { clientId: string; clientSecret: string }> | null> {
   const client = await pool.connect();
   try {
-    // Check if the table exists
     const tableCheck = await client.query(
       `SELECT 1 FROM information_schema.tables WHERE table_schema = 'trex' AND table_name = 'sso_provider' LIMIT 1`
     );
@@ -179,7 +183,6 @@ function createAuthInstance(socialProviders: Record<string, { clientId: string; 
   });
 }
 
-// Initialize with env vars
 let _authInstance = createAuthInstance(buildEnvFallback());
 
 // Proxy so consumers always get the latest instance

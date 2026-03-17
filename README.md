@@ -17,18 +17,18 @@ Pass `--check` to verify extensions load and exit.
 
 | Extension | Language | Description |
 |-----------|----------|-------------|
-| `ext/db` | Rust | Distributed cluster coordination + Arrow Flight SQL |
-| `ext/atlas` | C/C++ | OHDSI Atlas Cohort definition to SQL translation |
-| `ext/ai` | C/C++ | LLM inference via llama.cpp (CUDA/Vulkan/Metal) |
-| `ext/tpm` | Rust | Package manager functions (resolve, install, tree) |
-| `ext/hana` | Rust | SAP HANA database scanner |
-| `ext/pgwire` | Rust | PostgreSQL wire protocol |
-| `ext/chdb` | Rust | ClickHouse integration |
-| `ext/etl` | Rust | Supabase ETL (PostgreSQL CDC replication) |
-| `ext/fhir` | Rust | FHIR server |
-| `ext/cql2elm` | C | CQL to ELM translation (GraalVM native) |
-| `ext/migration` | Rust | Database schema migration |
-| `ext/pgt` | Rust | PostgreSQL to SQL transformer (library) |
+| `plugins/db` | Rust | Distributed cluster coordination + Arrow Flight SQL |
+| `plugins/atlas` | C/C++ | OHDSI Atlas Cohort definition to SQL translation |
+| `plugins/ai` | C/C++ | LLM inference via llama.cpp (CUDA/Vulkan/Metal) |
+| `plugins/tpm` | Rust | Package manager functions (resolve, install, tree) |
+| `plugins/hana` | Rust | SAP HANA database scanner |
+| `plugins/pgwire` | Rust | PostgreSQL wire protocol |
+| `plugins/chdb` | Rust | ClickHouse integration |
+| `plugins/etl` | Rust | Supabase ETL (PostgreSQL CDC replication) |
+| `plugins/fhir` | Rust | FHIR server |
+| `plugins/cql2elm` | C | CQL to ELM translation (GraalVM native) |
+| `plugins/migration` | Rust | Database schema migration |
+| `plugins/pgt` | Rust | PostgreSQL to SQL transformer (library) |
 
 ## Build
 

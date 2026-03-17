@@ -19,7 +19,6 @@ export function pluginAuthz(
     return;
   }
 
-  // Find which scopes are required for this URL
   const requestPath = req.originalUrl || req.path;
   const requiredScopes: string[] = [];
   for (const entry of REQUIRED_URL_SCOPES) {
@@ -28,12 +27,10 @@ export function pluginAuthz(
     }
   }
 
-  // If no scopes are required for this URL, allow through
   if (requiredScopes.length === 0) {
     return next();
   }
 
-  // Expand application roles (set by authContext) to scopes
   const applicationRoles: string[] = (req as any).applicationRoles || [];
   const userScopes = new Set<string>();
   for (const roleName of applicationRoles) {

@@ -11,9 +11,7 @@ import { REGISTERED_FLOWS } from "../plugin/flow.ts";
 declare const Trex: any;
 declare const Deno: any;
 
-function escapeSql(s: string): string {
-  return s.replace(/'/g, "''");
-}
+import { escapeSql, validateInt } from "../lib/sql.ts";
 
 function assertAdmin(context: any) {
   const role = context.pgSettings?.["app.user_role"];
@@ -293,6 +291,7 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
         transformRun(pluginName: String!, destDb: String!, destSchema: String!, sourceDb: String!, sourceSchema: String!): [TransformRunResult!]!
         transformSeed(pluginName: String!, destDb: String!, destSchema: String!): [TransformSeedResult!]!
         transformTest(pluginName: String!, destDb: String!, destSchema: String!, sourceDb: String!, sourceSchema: String!): [TransformTestResult!]!
+        loadExtension(extensionName: String!): ServiceActionResult!
       }
     `,
     resolvers: {
@@ -334,11 +333,13 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
             });
           }
 
-          // Enrich with registry info if configured
           const registryUrl = Deno.env.get("PLUGINS_INFORMATION_URL");
           if (registryUrl) {
             try {
-              const pkgsRes = await fetch(registryUrl);
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 10000);
+              const pkgsRes = await fetch(registryUrl, { signal: controller.signal });
+              clearTimeout(timeout);
               const pkgsJson = await pkgsRes.json();
               const packages = pkgsJson.value || pkgsJson;
 
@@ -553,7 +554,6 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
             const conn = new Trex.TrexDB("memory");
             const summaries: any[] = [];
 
-            // Include core schema if SCHEMA_DIR is configured
             const schemaDir = Deno.env.get("SCHEMA_DIR");
             if (schemaDir) {
               try {
@@ -587,7 +587,6 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
               }
             }
 
-            // Include plugin migrations
             const plugins = getMigrationPlugins();
             for (const plugin of plugins) {
               try {
@@ -903,11 +902,9 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
             const dir = Deno.env.get("PLUGINS_PATH") || "./plugins";
             const conn = new Trex.TrexDB("memory");
 
-            // Delete first
             const delSql = `SELECT delete_results FROM trex_plugin_delete('${escapeSql(packageName)}', '${escapeSql(dir)}')`;
             await conn.execute(delSql, []);
 
-            // Reinstall
             const spec = version ? `${packageName}@${escapeSql(version)}` : packageName;
             const installSql = `SELECT install_results FROM trex_plugin_install('${escapeSql(spec)}', '${escapeSql(dir)}')`;
             const result = await conn.execute(installSql, []);
@@ -1041,7 +1038,6 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
             try {
               await conn.execute(`SELECT trex_db_stop_service('${escapeSql(extension)}')`, []);
             } catch {}
-            // Start with provided config
             const sql = `SELECT trex_db_start_service('${escapeSql(extension)}', '${escapeSql(config)}')`;
             const result = await conn.execute(sql, []);
             const rows = result?.rows || result || [];
@@ -1059,7 +1055,6 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
             const conn = new Trex.TrexDB("memory");
             const allResults: any[] = [];
 
-            // Determine targets
             type MigrationTarget = { name: string; path: string; schema: string; database: string };
             const targets: MigrationTarget[] = [];
 
@@ -1156,7 +1151,6 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
             }
             const cred = credResult.rows[0];
 
-            // Build libpq connection string
             const parts: string[] = [
               `host='${escapeSql(db.host)}'`,
               `port='${escapeSql(String(db.port))}'`,
@@ -1175,13 +1169,12 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
 
             const connStr = parts.join(" ");
 
-            // Build SQL call
             let sql: string;
             if (args.batchSize != null || args.batchTimeoutMs != null || args.retryDelayMs != null || args.retryMaxAttempts != null) {
-              const batchSize = args.batchSize ?? 1000;
-              const batchTimeout = args.batchTimeoutMs ?? 5000;
-              const retryDelay = args.retryDelayMs ?? 10000;
-              const retryMax = args.retryMaxAttempts ?? 5;
+              const batchSize = validateInt(args.batchSize ?? 1000, "batchSize");
+              const batchTimeout = validateInt(args.batchTimeoutMs ?? 5000, "batchTimeoutMs");
+              const retryDelay = validateInt(args.retryDelayMs ?? 10000, "retryDelayMs");
+              const retryMax = validateInt(args.retryMaxAttempts ?? 5, "retryMaxAttempts");
               sql = `SELECT trex_etl_start('${escapeSql(name)}', '${escapeSql(connStr)}', '${escapeSql(mode)}', ${batchSize}, ${batchTimeout}, ${retryDelay}, ${retryMax})`;
             } else {
               sql = `SELECT trex_etl_start('${escapeSql(name)}', '${escapeSql(connStr)}', '${escapeSql(mode)}')`;
@@ -1302,6 +1295,19 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
           } catch (err: any) {
             console.error("transformTest error:", err);
             throw new Error(err.message || "Test failed");
+          }
+        },
+
+        async loadExtension(_parent: any, args: { extensionName: string }, context: any) {
+          assertAdmin(context);
+          const { extensionName } = args;
+          try {
+            const conn = new Trex.TrexDB("memory");
+            await conn.execute(`LOAD '${escapeSql(extensionName)}'`, []);
+            return { success: true, message: `Extension '${extensionName}' loaded`, error: null };
+          } catch (err: any) {
+            console.error("loadExtension error:", err);
+            return { success: false, message: null, error: err.message || String(err) };
           }
         },
       },

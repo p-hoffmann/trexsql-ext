@@ -176,14 +176,14 @@ CREATE OR REPLACE FUNCTION soft_delete_user(target_user_id TEXT) RETURNS "user" 
   SET "deletedAt" = NOW(), banned = true, "updatedAt" = NOW()
   WHERE id = target_user_id AND "deletedAt" IS NULL
   RETURNING *;
-$$ LANGUAGE SQL VOLATILE STRICT SECURITY DEFINER;
+$$ LANGUAGE SQL VOLATILE STRICT SECURITY DEFINER SET search_path = trex;
 
 CREATE OR REPLACE FUNCTION restore_user(target_user_id TEXT) RETURNS "user" AS $$
   UPDATE "user"
   SET "deletedAt" = NULL, banned = false, "banReason" = NULL, "updatedAt" = NOW()
   WHERE id = target_user_id AND "deletedAt" IS NOT NULL
   RETURNING *;
-$$ LANGUAGE SQL VOLATILE STRICT SECURITY DEFINER;
+$$ LANGUAGE SQL VOLATILE STRICT SECURITY DEFINER SET search_path = trex;
 
 CREATE OR REPLACE FUNCTION search_users(query TEXT)
 RETURNS SETOF "user" AS $$
@@ -191,7 +191,7 @@ RETURNS SETOF "user" AS $$
   WHERE "deletedAt" IS NULL
     AND (name ILIKE '%' || query || '%' OR email ILIKE '%' || query || '%')
   ORDER BY "createdAt" DESC;
-$$ LANGUAGE SQL STABLE;
+$$ LANGUAGE SQL STABLE SECURITY DEFINER SET search_path = trex;
 
 CREATE OR REPLACE FUNCTION purge_deleted_users() RETURNS INTEGER AS $$
   WITH deleted AS (
@@ -201,7 +201,7 @@ CREATE OR REPLACE FUNCTION purge_deleted_users() RETURNS INTEGER AS $$
     RETURNING id
   )
   SELECT COUNT(*)::INTEGER FROM deleted;
-$$ LANGUAGE SQL VOLATILE;
+$$ LANGUAGE SQL VOLATILE SECURITY DEFINER SET search_path = trex;
 
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -249,7 +249,8 @@ CREATE TABLE IF NOT EXISTS database_credential (
   "userScope" TEXT,
   "serviceScope" TEXT,
   "createdAt" TIMESTAMPTZ DEFAULT NOW(),
-  "updatedAt" TIMESTAMPTZ DEFAULT NOW()
+  "updatedAt" TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE ("databaseId", username)
 );
 
 CREATE INDEX IF NOT EXISTS idx_database_credential_database_id ON database_credential("databaseId");
@@ -288,14 +289,13 @@ CREATE OR REPLACE FUNCTION save_database_credential(
 ) RETURNS database_credential AS $$
   INSERT INTO database_credential ("databaseId", username, password, "userScope", "serviceScope")
   VALUES (p_database_id, p_username, p_password, p_user_scope, p_service_scope)
-  ON CONFLICT (id) DO UPDATE SET
-    username = EXCLUDED.username,
+  ON CONFLICT ("databaseId", username) DO UPDATE SET
     password = EXCLUDED.password,
     "userScope" = EXCLUDED."userScope",
     "serviceScope" = EXCLUDED."serviceScope",
     "updatedAt" = NOW()
   RETURNING *;
-$$ LANGUAGE SQL VOLATILE STRICT SECURITY DEFINER;
+$$ LANGUAGE SQL VOLATILE STRICT SECURITY DEFINER SET search_path = trex;
 
 DROP TRIGGER IF EXISTS trg_database_updated_at ON database;
 CREATE TRIGGER trg_database_updated_at
@@ -398,12 +398,12 @@ CREATE OR REPLACE FUNCTION save_sso_provider(
     enabled = EXCLUDED.enabled,
     "updatedAt" = NOW()
   RETURNING *;
-$$ LANGUAGE SQL VOLATILE SECURITY DEFINER;
+$$ LANGUAGE SQL VOLATILE SECURITY DEFINER SET search_path = trex;
 
 CREATE OR REPLACE FUNCTION enabled_sso_providers()
 RETURNS TABLE(id TEXT, "displayName" TEXT) AS $$
   SELECT id, "displayName" FROM trex.sso_provider WHERE enabled = true ORDER BY id;
-$$ LANGUAGE SQL STABLE SECURITY DEFINER;
+$$ LANGUAGE SQL STABLE SECURITY DEFINER SET search_path = trex;
 
 CREATE OR REPLACE FUNCTION search_sso_providers(query TEXT)
 RETURNS SETOF sso_provider AS $$
@@ -506,7 +506,6 @@ CREATE OR REPLACE FUNCTION save_subscription(
 ) RETURNS subscription AS $$
 DECLARE
   v_event TEXT;
-  v_func_name TEXT;
   v_trigger_name TEXT;
   v_event_clause TEXT;
   v_table_oid regclass;
@@ -521,7 +520,6 @@ BEGIN
   -- Validates table exists; returns safe quoted identifier
   v_table_oid := p_source_table::regclass;
 
-  v_func_name := 'trex.trex_sub_notify_' || p_name;
   v_trigger_name := 'trg_sub_' || p_name;
 
   BEGIN
@@ -545,12 +543,12 @@ BEGIN
     END IF;
   END;
 
-  EXECUTE format('DROP FUNCTION IF EXISTS %s() CASCADE', v_func_name);
+  EXECUTE format('DROP FUNCTION IF EXISTS %I.%I() CASCADE', 'trex', 'trex_sub_notify_' || p_name);
 
   IF p_enabled THEN
     EXECUTE format(
       $fn$
-      CREATE OR REPLACE FUNCTION %s() RETURNS TRIGGER AS $trg$
+      CREATE OR REPLACE FUNCTION %I.%I() RETURNS TRIGGER AS $trg$
       DECLARE
         v_payload JSONB;
         v_id TEXT;
@@ -578,14 +576,14 @@ BEGIN
       END;
       $trg$ LANGUAGE plpgsql
       $fn$,
-      v_func_name, p_topic
+      'trex', 'trex_sub_notify_' || p_name, p_topic
     );
 
     v_event_clause := array_to_string(p_events, ' OR ');
 
     EXECUTE format(
-      'CREATE TRIGGER %I AFTER %s ON %s FOR EACH ROW EXECUTE FUNCTION %s()',
-      v_trigger_name, v_event_clause, v_table_oid::TEXT, v_func_name
+      'CREATE TRIGGER %I AFTER %s ON %s FOR EACH ROW EXECUTE FUNCTION %I.%I()',
+      v_trigger_name, v_event_clause, v_table_oid::TEXT, 'trex', 'trex_sub_notify_' || p_name
     );
   END IF;
 
@@ -602,12 +600,11 @@ BEGIN
 
   RETURN v_result;
 END;
-$$ LANGUAGE plpgsql VOLATILE SECURITY DEFINER;
+$$ LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = trex;
 
 CREATE OR REPLACE FUNCTION remove_subscription(p_name TEXT) RETURNS subscription AS $$
 DECLARE
   v_sub trex.subscription;
-  v_func_name TEXT;
   v_trigger_name TEXT;
   v_table_oid regclass;
 BEGIN
@@ -616,7 +613,6 @@ BEGIN
     RAISE EXCEPTION 'Subscription "%" not found.', p_name;
   END IF;
 
-  v_func_name := 'trex.trex_sub_notify_' || p_name;
   v_trigger_name := 'trg_sub_' || p_name;
 
   BEGIN
@@ -626,13 +622,13 @@ BEGIN
     NULL;
   END;
 
-  EXECUTE format('DROP FUNCTION IF EXISTS %s() CASCADE', v_func_name);
+  EXECUTE format('DROP FUNCTION IF EXISTS %I.%I() CASCADE', 'trex', 'trex_sub_notify_' || p_name);
 
   DELETE FROM trex.subscription WHERE name = p_name;
 
   RETURN v_sub;
 END;
-$$ LANGUAGE plpgsql VOLATILE STRICT SECURITY DEFINER;
+$$ LANGUAGE plpgsql VOLATILE STRICT SECURITY DEFINER SET search_path = trex;
 
 -- ── Transform deployments ────────────────────────────────────────────────────
 
@@ -716,7 +712,7 @@ CREATE OR REPLACE FUNCTION save_setting(
     value = EXCLUDED.value,
     "updatedAt" = NOW()
   RETURNING *;
-$$ LANGUAGE SQL VOLATILE STRICT SECURITY DEFINER;
+$$ LANGUAGE SQL VOLATILE STRICT SECURITY DEFINER SET search_path = trex;
 
 CREATE OR REPLACE FUNCTION get_setting(
   p_key TEXT,
@@ -726,7 +722,7 @@ CREATE OR REPLACE FUNCTION get_setting(
     (SELECT value FROM trex.setting WHERE key = p_key),
     p_default
   );
-$$ LANGUAGE SQL STABLE SECURITY DEFINER;
+$$ LANGUAGE SQL STABLE SECURITY DEFINER SET search_path = trex;
 
 INSERT INTO setting (key, value) VALUES
   ('auth.selfRegistration', 'false'::JSONB),

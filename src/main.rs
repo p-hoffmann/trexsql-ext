@@ -5,6 +5,21 @@ use std::process;
 
 use duckdb::{Config, Connection};
 
+/// Redact credentials from error messages to avoid leaking them in logs
+fn redact_url(msg: &str) -> String {
+    let mut result = msg.to_string();
+    for key in ["password=", "user="] {
+        while let Some(start) = result.find(key) {
+            let val_start = start + key.len();
+            let end = result[val_start..].find(|c: char| c.is_whitespace() || c == '&' || c == '\'' || c == '"')
+                .map(|i| val_start + i)
+                .unwrap_or(result.len());
+            result.replace_range(val_start..end, "***");
+        }
+    }
+    result
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     let check_mode = args.iter().any(|a| a == "--check");
@@ -20,6 +35,9 @@ fn main() {
     let conn = Connection::open_with_flags(&db_path, config)
         .expect("Failed to open database");
 
+    conn.execute_batch("SET autoinstall_known_extensions=true; SET autoload_known_extensions=true;")
+        .expect("Failed to enable autoinstall/autoload");
+
     let mut loaded = 0u32;
     let mut failures = 0u32;
     let ext_path = Path::new(&ext_dir);
@@ -27,7 +45,20 @@ fn main() {
         match fs::read_dir(ext_path) {
             Ok(entries) => {
                 for entry in entries.flatten() {
-                    let path = entry.path();
+                    let path = match entry.path().canonicalize() {
+                        Ok(p) => p,
+                        Err(e) => {
+                            println!("Warning: could not resolve {}: {e}", entry.path().display());
+                            continue;
+                        }
+                    };
+                    // Reject symlinks pointing outside the extension directory
+                    if let Ok(canonical_ext) = ext_path.canonicalize() {
+                        if !path.starts_with(&canonical_ext) {
+                            println!("Warning: skipping {} (outside extension dir)", path.display());
+                            continue;
+                        }
+                    }
                     let ext = path.extension().and_then(|e| e.to_str());
                     if ext == Some("trex") || ext == Some("duckdb_extension") {
                         let path_str = path.display().to_string();
@@ -65,7 +96,7 @@ fn main() {
         let attach_sql = format!("ATTACH '{safe_url}' AS _config (TYPE postgres)");
         match conn.execute(&attach_sql, []) {
             Ok(_) => println!("ok"),
-            Err(e) => println!("FAILED: {e}"),
+            Err(e) => println!("FAILED: {}", redact_url(&e.to_string())),
         }
     }
 
@@ -109,7 +140,7 @@ fn main() {
         signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&shutdown))
             .expect("Failed to register SIGINT handler");
 
-        while !shutdown.load(Ordering::Relaxed) {
+        while !shutdown.load(Ordering::Acquire) {
             std::thread::park_timeout(std::time::Duration::from_secs(1));
         }
     }
