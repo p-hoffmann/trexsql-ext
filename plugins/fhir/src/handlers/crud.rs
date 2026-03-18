@@ -8,6 +8,7 @@ use std::sync::Arc;
 use crate::error::AppError;
 use crate::fhir::validation;
 use crate::query_executor::QueryResult;
+use crate::schema::sql_builder;
 use crate::sql_safety::{to_schema_name, validate_dataset_id, validate_fhir_id, validate_resource_type};
 use crate::state::AppState;
 
@@ -47,12 +48,11 @@ pub async fn create_resource(
     let raw_json = serde_json::to_string(&resource)
         .map_err(|e| AppError::Internal(format!("JSON serialize: {}", e)))?;
 
-    let insert_sql = format!(
-        "INSERT INTO {schema}.\"{table}\" (_id, _version_id, _last_updated, _is_deleted, _raw) \
-         VALUES ($1, 1, CURRENT_TIMESTAMP, false, $2)",
-        schema = schema_name,
-        table = table_name,
-    );
+    let transform_spec = state.registry.get_json_transform(&resource_type)
+        .map_err(|e| AppError::Internal(format!("Transform spec: {}", e)))?;
+    let column_names = state.registry.get_column_names(&resource_type)
+        .map_err(|e| AppError::Internal(format!("Column names: {}", e)))?;
+    let insert_sql = sql_builder::build_insert_sql(&schema_name, &table_name, 1, &transform_spec, &column_names);
 
     if let QueryResult::Error(e) = state.executor.submit_params(insert_sql, vec![id.clone(), raw_json]).await {
         eprintln!("[fhir] INSERT error for {}.{}: {}", dataset_id, resource_type, e);
@@ -272,22 +272,14 @@ pub async fn update_resource(
         ]).await;
     }
 
+    let transform_spec = state.registry.get_json_transform(&resource_type)
+        .map_err(|e| AppError::Internal(format!("Transform spec: {}", e)))?;
+    let column_names = state.registry.get_column_names(&resource_type)
+        .map_err(|e| AppError::Internal(format!("Column names: {}", e)))?;
     let sql = if is_new {
-        format!(
-            "INSERT INTO {schema}.\"{table}\" (_id, _version_id, _last_updated, _is_deleted, _raw) \
-             VALUES ($1, {version}, CURRENT_TIMESTAMP, false, $2)",
-            schema = schema_name,
-            table = table_name,
-            version = new_version,
-        )
+        sql_builder::build_insert_sql(&schema_name, &table_name, new_version, &transform_spec, &column_names)
     } else {
-        format!(
-            "UPDATE {schema}.\"{table}\" SET _version_id = {version}, _last_updated = CURRENT_TIMESTAMP, \
-             _is_deleted = false, _raw = $2 WHERE _id = $1",
-            schema = schema_name,
-            table = table_name,
-            version = new_version,
-        )
+        sql_builder::build_update_sql(&schema_name, &table_name, new_version, &transform_spec, &column_names)
     };
 
     if let QueryResult::Error(e) = state.executor.submit_params(sql, vec![resource_id.clone(), raw_json]).await {

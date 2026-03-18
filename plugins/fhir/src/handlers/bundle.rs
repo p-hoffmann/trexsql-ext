@@ -8,6 +8,7 @@ use std::sync::Arc;
 use crate::error::AppError;
 use crate::fhir::bundle_processor;
 use crate::query_executor::QueryResult;
+use crate::schema::sql_builder;
 use crate::sql_safety::validate_dataset_id;
 use crate::state::AppState;
 
@@ -190,11 +191,13 @@ async fn process_single_entry(
 
     match entry.method.as_str() {
         "POST" => {
-            let insert_sql = format!(
-                "INSERT INTO \"{schema}\".\"{table}\" (_id, _version_id, _last_updated, _is_deleted, _raw) \
-                 VALUES ($1, 1, CURRENT_TIMESTAMP, false, $2)",
-                schema = schema_name,
-                table = table_name,
+            let transform_spec = state.registry.get_json_transform(&entry.resource_type)
+                .map_err(|e| format!("Transform spec: {}", e))?;
+            let column_names = state.registry.get_column_names(&entry.resource_type)
+                .map_err(|e| format!("Column names: {}", e))?;
+            let quoted_schema = format!("\"{}\"", schema_name);
+            let insert_sql = sql_builder::build_insert_sql(
+                &quoted_schema, &table_name, 1, &transform_spec, &column_names,
             );
 
             match state.executor.submit_params(insert_sql, vec![entry.server_id.clone(), raw_json]).await {
@@ -215,11 +218,13 @@ async fn process_single_entry(
                 .and_then(|v| v.as_str())
                 .unwrap_or(&entry.server_id);
 
-            let upsert_sql = format!(
-                "INSERT OR REPLACE INTO \"{schema}\".\"{table}\" (_id, _version_id, _last_updated, _is_deleted, _raw) \
-                 VALUES ($1, 1, CURRENT_TIMESTAMP, false, $2)",
-                schema = schema_name,
-                table = table_name,
+            let transform_spec = state.registry.get_json_transform(&entry.resource_type)
+                .map_err(|e| format!("Transform spec: {}", e))?;
+            let column_names = state.registry.get_column_names(&entry.resource_type)
+                .map_err(|e| format!("Column names: {}", e))?;
+            let quoted_schema = format!("\"{}\"", schema_name);
+            let upsert_sql = sql_builder::build_upsert_sql(
+                &quoted_schema, &table_name, 1, &transform_spec, &column_names,
             );
 
             match state.executor.submit_params(upsert_sql, vec![resource_id.to_string(), raw_json]).await {
