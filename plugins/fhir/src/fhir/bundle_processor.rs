@@ -7,6 +7,17 @@ pub struct ProcessedEntry {
     pub resource_type: String,
     pub server_id: String,
     pub method: String,
+    pub request_url: Option<String>,
+}
+
+/// Parse a FHIR request URL like "Patient/123" into (ResourceType, id).
+fn parse_request_url(url: &str) -> Option<(&str, &str)> {
+    let parts: Vec<&str> = url.splitn(2, '/').collect();
+    if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+        Some((parts[0], parts[1]))
+    } else {
+        None
+    }
 }
 
 pub fn process_bundle_entries(
@@ -52,7 +63,26 @@ pub fn process_bundle_entries(
             .unwrap_or("POST")
             .to_uppercase();
 
-        let server_id = uuid::Uuid::new_v4().to_string();
+        let request_url = entry
+            .get("request")
+            .and_then(|r| r.get("url"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let server_id = match method.as_str() {
+            "PUT" | "DELETE" => {
+                // For PUT/DELETE, extract ID from request.url (e.g. "Patient/123" -> "123")
+                request_url
+                    .as_deref()
+                    .and_then(parse_request_url)
+                    .map(|(_, id)| id.to_string())
+                    .or_else(|| {
+                        resource.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())
+                    })
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+            }
+            _ => uuid::Uuid::new_v4().to_string(),
+        };
 
         if let Some(full_url) = entry.get("fullUrl").and_then(|v| v.as_str()) {
             if full_url.starts_with("urn:uuid:") {
@@ -66,6 +96,7 @@ pub fn process_bundle_entries(
             resource_type,
             server_id,
             method,
+            request_url,
         });
     }
 
@@ -177,6 +208,93 @@ mod tests {
             .unwrap();
         assert!(subject_ref.starts_with("Patient/"));
         assert!(!subject_ref.contains("urn:uuid:"));
+    }
+
+    #[test]
+    fn test_put_extracts_id_from_request_url() {
+        let bundle = json!({
+            "resourceType": "Bundle",
+            "type": "transaction",
+            "entry": [{
+                "resource": {
+                    "resourceType": "Patient",
+                    "name": [{"family": "Smith"}]
+                },
+                "request": {
+                    "method": "PUT",
+                    "url": "Patient/123"
+                }
+            }]
+        });
+        let result = process_bundle_entries(&bundle, 1000).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].server_id, "123");
+        assert_eq!(result[0].method, "PUT");
+    }
+
+    #[test]
+    fn test_delete_extracts_id_from_request_url() {
+        let bundle = json!({
+            "resourceType": "Bundle",
+            "type": "transaction",
+            "entry": [{
+                "resource": {
+                    "resourceType": "Patient"
+                },
+                "request": {
+                    "method": "DELETE",
+                    "url": "Patient/456"
+                }
+            }]
+        });
+        let result = process_bundle_entries(&bundle, 1000).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].server_id, "456");
+        assert_eq!(result[0].method, "DELETE");
+    }
+
+    #[test]
+    fn test_post_generates_uuid() {
+        let bundle = json!({
+            "resourceType": "Bundle",
+            "type": "transaction",
+            "entry": [{
+                "resource": {
+                    "resourceType": "Patient",
+                    "name": [{"family": "Smith"}]
+                },
+                "request": {
+                    "method": "POST",
+                    "url": "Patient"
+                }
+            }]
+        });
+        let result = process_bundle_entries(&bundle, 1000).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].method, "POST");
+        // POST should generate a UUID, not "Patient"
+        assert_ne!(result[0].server_id, "Patient");
+        assert!(result[0].server_id.contains('-')); // UUID format
+    }
+
+    #[test]
+    fn test_put_falls_back_to_resource_id() {
+        let bundle = json!({
+            "resourceType": "Bundle",
+            "type": "transaction",
+            "entry": [{
+                "resource": {
+                    "resourceType": "Patient",
+                    "id": "from-resource"
+                },
+                "request": {
+                    "method": "PUT",
+                    "url": "Patient"
+                }
+            }]
+        });
+        let result = process_bundle_entries(&bundle, 1000).unwrap();
+        assert_eq!(result[0].server_id, "from-resource");
     }
 
     #[test]

@@ -212,12 +212,6 @@ async fn process_single_entry(
             }
         }
         "PUT" => {
-            let resource_id = entry
-                .resource
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&entry.server_id);
-
             let transform_spec = state.registry.get_json_transform(&entry.resource_type)
                 .map_err(|e| format!("Transform spec: {}", e))?;
             let column_names = state.registry.get_column_names(&entry.resource_type)
@@ -227,25 +221,19 @@ async fn process_single_entry(
                 &quoted_schema, &table_name, 1, &transform_spec, &column_names,
             );
 
-            match state.executor.submit_params(upsert_sql, vec![resource_id.to_string(), raw_json]).await {
+            match state.executor.submit_params(upsert_sql, vec![entry.server_id.clone(), raw_json]).await {
                 QueryResult::Error(e) => Err(format!("Upsert failed: {}", e)),
                 _ => Ok(json!({
                     "response": {
                         "status": "200 OK",
-                        "location": format!("/{}/{}/{}", dataset_id, entry.resource_type, resource_id),
+                        "location": format!("/{}/{}/{}", dataset_id, entry.resource_type, entry.server_id),
                         "etag": "W/\"1\""
                     }
                 })),
             }
         }
         "DELETE" => {
-            let resource_id = entry
-                .resource
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-
-            if resource_id.is_empty() {
+            if entry.server_id.is_empty() {
                 return Err("DELETE entry missing resource id".to_string());
             }
 
@@ -257,7 +245,7 @@ async fn process_single_entry(
                 table = table_name,
             );
 
-            match state.executor.submit_params(delete_sql, vec![resource_id.to_string()]).await {
+            match state.executor.submit_params(delete_sql, vec![entry.server_id.clone()]).await {
                 QueryResult::Error(e) => Err(format!("Delete failed: {}", e)),
                 _ => Ok(json!({
                     "response": {
