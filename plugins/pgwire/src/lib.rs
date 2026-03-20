@@ -34,10 +34,13 @@ fn store_shared_connection(connection: &Connection) -> Result<(), Box<dyn Error>
         .set(Arc::new(Mutex::new(cloned)))
         .map_err(|_| "connection already stored")?;
 
-    let pool_size: usize = std::env::var("TREX_CONNECTION_POOL_SIZE")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
+    let pool_size: usize = match std::env::var("TREX_CONNECTION_POOL_SIZE") {
+        Ok(v) => v.parse().unwrap_or_else(|_| {
+            eprintln!("WARNING: invalid TREX_CONNECTION_POOL_SIZE={v}, defaulting to 0");
+            0
+        }),
+        Err(_) => 0,
+    };
 
     if pool_size > 0 {
         let executor = QueryExecutor::new(connection, pool_size)?;
