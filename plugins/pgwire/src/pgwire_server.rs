@@ -26,8 +26,10 @@ use tokio::sync::oneshot;
 
 use arrow_pg::datatypes::{encode_recordbatch, into_pg_type};
 
-use crate::{get_query_executor, get_shared_connection, QueryExecutor, QueryResult};
+use crate::{get_query_executor, get_shared_connection, execute_query, QueryExecutor, QueryResult};
 use crate::server_registry::{ServerHandle, ServerRegistry};
+
+use std::sync::Mutex;
 
 const DEBUG_LOGGING: bool = false;
 
@@ -223,19 +225,41 @@ impl AuthSource for SimpleAuthSource {
 
 #[derive(Clone)]
 pub struct TrexQueryHandler {
-    executor: Arc<QueryExecutor>,
+    executor: Option<Arc<QueryExecutor>>,
+    connection: Arc<Mutex<duckdb::Connection>>,
     server_host: String,
     server_port: u16,
     worker_id: usize,
 }
 
 impl TrexQueryHandler {
-    pub fn new(executor: Arc<QueryExecutor>, host: String, port: u16, worker_id: usize) -> Self {
+    pub fn new(
+        executor: Option<Arc<QueryExecutor>>,
+        connection: Arc<Mutex<duckdb::Connection>>,
+        host: String,
+        port: u16,
+        worker_id: usize,
+    ) -> Self {
         Self {
             executor,
+            connection,
             server_host: host,
             server_port: port,
             worker_id,
+        }
+    }
+
+    async fn submit_query(&self, query: String) -> Result<QueryResult, String> {
+        if let Some(ref executor) = self.executor {
+            executor.submit_to(self.worker_id, query).await.map_err(|_| "executor channel closed".to_string())
+        } else {
+            let conn = self.connection.clone();
+            tokio::task::spawn_blocking(move || {
+                let guard = conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                execute_query(&guard, &query)
+            })
+            .await
+            .map_err(|e| format!("spawn_blocking failed: {e}"))
         }
     }
 }
@@ -306,8 +330,7 @@ impl SimpleQueryHandler for TrexQueryHandler {
         if let Some(db) = login_info.database() {
             if let Some(db_credentials) = ServerRegistry::instance().get_db_credentials(&self.server_host, self.server_port) {
                 if matches!(check_database_action(db, &db_credentials), DatabaseAction::SetDatabase) {
-                    let use_rx = self.executor.submit_to(self.worker_id, format!("USE \"{}\"", db.replace('"', "\"\"")));
-                    if let Ok(QueryResult::Error(err)) = use_rx.await {
+                    if let Ok(QueryResult::Error(err)) = self.submit_query(format!("USE \"{}\"", db.replace('"', "\"\""))).await {
                         return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                             "ERROR".to_owned(),
                             "XX000".to_owned(),
@@ -339,13 +362,12 @@ impl SimpleQueryHandler for TrexQueryHandler {
                 "SELECT c.oid,t.relname  as tabrelname,rt.relnamespace as refnamespace,d.description, null as consrc_copy");
 
             log_debug(&format!("Submitting to worker {}: {}", self.worker_id, sql));
-            let result_rx = self.executor.submit_to(self.worker_id, sql.clone());
 
-            let query_result = result_rx.await.map_err(|_| {
+            let query_result = self.submit_query(sql.clone()).await.map_err(|e| {
                 PgWireError::UserError(Box::new(ErrorInfo::new(
                     "ERROR".to_owned(),
                     "XX000".to_owned(),
-                    "Query execution channel closed".to_owned(),
+                    e,
                 )))
             })?;
 
@@ -412,8 +434,7 @@ impl ExtendedQueryHandler for TrexQueryHandler {
         if let Some(db) = login_info.database() {
             if let Some(db_credentials) = ServerRegistry::instance().get_db_credentials(&self.server_host, self.server_port) {
                 if matches!(check_database_action(db, &db_credentials), DatabaseAction::SetDatabase) {
-                    let use_rx = self.executor.submit_to(self.worker_id, format!("USE \"{}\"", db.replace('"', "\"\"")));
-                    if let Ok(QueryResult::Error(err)) = use_rx.await {
+                    if let Ok(QueryResult::Error(err)) = self.submit_query(format!("USE \"{}\"", db.replace('"', "\"\""))).await {
                         return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                             "ERROR".to_owned(),
                             "XX000".to_owned(),
@@ -424,13 +445,11 @@ impl ExtendedQueryHandler for TrexQueryHandler {
             }
         }
 
-        let result_rx = self.executor.submit_to(self.worker_id, query);
-
-        let query_result = result_rx.await.map_err(|_| {
+        let query_result = self.submit_query(query).await.map_err(|e| {
             PgWireError::UserError(Box::new(ErrorInfo::new(
                 "ERROR".to_owned(),
                 "XX000".to_owned(),
-                "Query execution channel closed".to_owned(),
+                e,
             )))
         })?;
 
@@ -599,9 +618,15 @@ pub struct TrexPgWireServerFactory {
 }
 
 impl TrexPgWireServerFactory {
-    pub fn new(executor: Arc<QueryExecutor>, host: String, port: u16, worker_id: usize) -> Self {
+    pub fn new(
+        executor: Option<Arc<QueryExecutor>>,
+        connection: Arc<Mutex<duckdb::Connection>>,
+        host: String,
+        port: u16,
+        worker_id: usize,
+    ) -> Self {
         Self {
-            query_handler: Arc::new(TrexQueryHandler::new(executor, host, port, worker_id)),
+            query_handler: Arc::new(TrexQueryHandler::new(executor, connection, host, port, worker_id)),
         }
     }
 }
@@ -627,14 +652,15 @@ pub struct TrexPgWireServerWithAuth {
 
 impl TrexPgWireServerWithAuth {
     pub fn new(
-        executor: Arc<QueryExecutor>,
+        executor: Option<Arc<QueryExecutor>>,
+        connection: Arc<Mutex<duckdb::Connection>>,
         password: String,
         host: String,
         port: u16,
         worker_id: usize,
     ) -> Self {
         Self {
-            query_handler: Arc::new(TrexQueryHandler::new(executor, host, port, worker_id)),
+            query_handler: Arc::new(TrexQueryHandler::new(executor, connection, host, port, worker_id)),
             password,
         }
     }
@@ -688,11 +714,17 @@ pub fn start_pgwire_server_capi(
                 let listener = TcpListener::bind(format!("{}:{}", server_host, server_port)).await?;
                 log_debug(&format!("Bound to {}:{}", server_host, server_port));
 
-                let executor = get_query_executor().ok_or_else(|| {
-                    log_debug("No query executor available");
-                    std::io::Error::new(std::io::ErrorKind::Other, "No query executor available")
+                let executor = get_query_executor();
+                let connection = get_shared_connection().ok_or_else(|| {
+                    log_debug("No shared connection available");
+                    std::io::Error::new(std::io::ErrorKind::Other, "No shared connection available")
                 })?;
-                log_debug(&format!("Using query executor with {} workers", executor.pool_size()));
+
+                if let Some(ref ex) = executor {
+                    log_debug(&format!("Using query executor with {} workers", ex.pool_size()));
+                } else {
+                    log_debug("No connection pool — using shared mutex connection");
+                }
 
                 // Treat empty password as no authentication
                 if let Some(required_password) = password_opt.filter(|p| !p.is_empty()) {
@@ -702,8 +734,8 @@ pub fn start_pgwire_server_capi(
                             result = listener.accept() => {
                                 match result {
                                     Ok((socket, _addr)) => {
-                                        let worker_id = executor.next_worker_id();
-                                        let handlers = Arc::new(TrexPgWireServerWithAuth::new(executor.clone(), required_password.to_string(), server_host.clone(), server_port, worker_id));
+                                        let worker_id = executor.as_ref().map_or(0, |e| e.next_worker_id());
+                                        let handlers = Arc::new(TrexPgWireServerWithAuth::new(executor.clone(), connection.clone(), required_password.to_string(), server_host.clone(), server_port, worker_id));
                                         tokio::spawn(async move {
                                             let _ = process_socket(socket, None, handlers).await;
                                         });
@@ -727,8 +759,8 @@ pub fn start_pgwire_server_capi(
                                 match result {
                                     Ok((socket, addr)) => {
                                         log_debug(&format!("New connection from {:?}", addr));
-                                        let worker_id = executor.next_worker_id();
-                                        let handlers = Arc::new(TrexPgWireServerFactory::new(executor.clone(), server_host.clone(), server_port, worker_id));
+                                        let worker_id = executor.as_ref().map_or(0, |e| e.next_worker_id());
+                                        let handlers = Arc::new(TrexPgWireServerFactory::new(executor.clone(), connection.clone(), server_host.clone(), server_port, worker_id));
                                         tokio::spawn(async move {
                                             log_debug("Processing socket...");
                                             let result = process_socket(socket, None, handlers).await;

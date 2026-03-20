@@ -139,7 +139,7 @@ fn extract_panic_message(err: Box<dyn std::any::Any + Send>) -> String {
     }
 }
 
-fn execute_query(conn: &Connection, query: &str) -> QueryResult {
+pub fn execute_query(conn: &Connection, query: &str) -> QueryResult {
     let trimmed = query.trim();
     let upper = trimmed.to_uppercase();
 

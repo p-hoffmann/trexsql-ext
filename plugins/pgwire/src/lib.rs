@@ -6,7 +6,7 @@ mod pgwire_server;
 mod query_executor;
 mod server_registry;
 
-pub use query_executor::{QueryExecutor, QueryResult};
+pub use query_executor::{QueryExecutor, QueryResult, execute_query};
 
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
@@ -25,8 +25,6 @@ use std::{
 static SHARED_CONNECTION: OnceCell<Arc<Mutex<Connection>>> = OnceCell::new();
 static QUERY_EXECUTOR: OnceCell<Arc<QueryExecutor>> = OnceCell::new();
 
-const EXECUTOR_POOL_SIZE: usize = 4;
-
 fn store_shared_connection(connection: &Connection) -> Result<(), Box<dyn Error>> {
     let cloned = connection
         .try_clone()
@@ -36,10 +34,17 @@ fn store_shared_connection(connection: &Connection) -> Result<(), Box<dyn Error>
         .set(Arc::new(Mutex::new(cloned)))
         .map_err(|_| "connection already stored")?;
 
-    let executor = QueryExecutor::new(connection, EXECUTOR_POOL_SIZE)?;
-    QUERY_EXECUTOR
-        .set(Arc::new(executor))
-        .map_err(|_| "executor already created")?;
+    let pool_size: usize = std::env::var("TREX_CONNECTION_POOL_SIZE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+
+    if pool_size > 0 {
+        let executor = QueryExecutor::new(connection, pool_size)?;
+        QUERY_EXECUTOR
+            .set(Arc::new(executor))
+            .map_err(|_| "executor already created")?;
+    }
 
     Ok(())
 }
