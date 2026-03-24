@@ -45,9 +45,13 @@ export function ChangePassword() {
 
       // Clear the mustChangePassword flag
       const apiUrl = import.meta.env.VITE_API_URL || window.location.origin;
-      await fetch(`${apiUrl}${BASE_PATH}/api/auth/password-changed`, {
+      const token = authClient.getAccessToken();
+      await fetch(`${apiUrl}${BASE_PATH}/auth/v1/password-changed`, {
         method: "POST",
-        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
       });
 
       toast.success("Password changed successfully.");

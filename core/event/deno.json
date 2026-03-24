@@ -1,3 +1,6 @@
 {
-  "nodeModulesDir": "manual"
+  "nodeModulesDir": "manual",
+  "imports": {
+    "pg": "npm:pg@^8.13.0"
+  }
 }

@@ -53,13 +53,62 @@ export async function runAllPluginMigrations(): Promise<void> {
 
   const conn = new Trex.TrexDB("memory");
 
-  for (const [name, info] of migrationRegistry) {
-    try {
-      const sql = `SELECT * FROM trex_migration_run_schema('${escapeSql(info.migrationsPath)}', '${escapeSql(info.schema)}', '${escapeSql(info.database)}')`;
-      await conn.execute(sql, []);
-      console.log(`Plugin ${name}: migrations applied successfully`);
-    } catch (err) {
-      console.error(`Plugin ${name}: migration failed:`, err);
+  // Plugin migrations run via direct PostgreSQL connection since DuckDB's
+  // postgres extension can't be used inside the PG process (libpq conflict).
+  const databaseUrl = Deno.env.get("DATABASE_URL") || "";
+  if (!databaseUrl) {
+    console.warn("DATABASE_URL not set — skipping plugin migrations");
+    return;
+  }
+
+  try {
+    const { Pool } = await import("pg");
+    const pool = new Pool({ connectionString: databaseUrl });
+
+    for (const [name, info] of migrationRegistry) {
+      try {
+        // Read migration files and execute them in order
+        const files: string[] = [];
+        for await (const entry of Deno.readDir(info.migrationsPath)) {
+          if (entry.isFile && entry.name.endsWith(".sql")) {
+            files.push(entry.name);
+          }
+        }
+        files.sort();
+
+        // Ensure schema exists
+        await pool.query(`CREATE SCHEMA IF NOT EXISTS ${info.schema}`);
+
+        // Track applied migrations
+        await pool.query(`CREATE TABLE IF NOT EXISTS ${info.schema}._migrations (
+          version TEXT PRIMARY KEY,
+          applied_at TIMESTAMPTZ DEFAULT NOW()
+        )`);
+
+        for (const file of files) {
+          const version = file.replace(".sql", "");
+          const check = await pool.query(
+            `SELECT 1 FROM ${info.schema}._migrations WHERE version = $1`,
+            [version]
+          );
+          if (check.rows.length > 0) continue;
+
+          const sql = await Deno.readTextFile(`${info.migrationsPath}/${file}`);
+          await pool.query(sql);
+          await pool.query(
+            `INSERT INTO ${info.schema}._migrations (version) VALUES ($1)`,
+            [version]
+          );
+          console.log(`Plugin ${name}: applied migration ${version}`);
+        }
+        console.log(`Plugin ${name}: migrations up to date`);
+      } catch (err) {
+        console.error(`Plugin ${name}: migration failed:`, err);
+      }
     }
+
+    await pool.end();
+  } catch (err) {
+    console.error("Plugin migration runner failed:", err);
   }
 }

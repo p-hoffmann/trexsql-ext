@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, gql } from "urql";
 import { authClient } from "@/lib/auth-client";
+import { BASE_PATH } from "@/lib/config";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -259,11 +260,29 @@ export function UserDetail() {
     }
   }
 
+  async function adminFetch(_path: string, body: Record<string, unknown>) {
+    const token = authClient.getAccessToken();
+    const res = await fetch(`${BASE_PATH}/graphql`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ query: body.query, variables: body.variables }),
+    });
+    return res.json();
+  }
+
   async function handleRoleChange(newRole: string) {
     try {
-      const res = await authClient.admin.setRole({ userId: user!.rowId, role: newRole as "user" | "admin" });
-      if (res.error) {
-        toast.error(res.error.message || "Failed to change role");
+      const res = await adminFetch("/graphql", {
+        query: `mutation UpdateUserRole($id: String!, $role: String!) {
+          updateUser(input: { rowId: $id, userPatch: { role: $role } }) { user { rowId role } }
+        }`,
+        variables: { id: user!.rowId, role: newRole },
+      });
+      if (res.errors) {
+        toast.error(res.errors[0]?.message || "Failed to change role");
         return;
       }
       toast.success(`Role changed to ${newRole}`);
@@ -275,21 +294,18 @@ export function UserDetail() {
 
   async function handleBanToggle() {
     try {
-      if (user!.banned) {
-        const res = await authClient.admin.unbanUser({ userId: user!.rowId });
-        if (res.error) {
-          toast.error(res.error.message || "Failed to unban user");
-          return;
-        }
-        toast.success("User unbanned");
-      } else {
-        const res = await authClient.admin.banUser({ userId: user!.rowId, banReason: "Banned by admin" });
-        if (res.error) {
-          toast.error(res.error.message || "Failed to ban user");
-          return;
-        }
-        toast.success("User banned");
+      const banned = !user!.banned;
+      const res = await adminFetch("/graphql", {
+        query: `mutation ToggleBan($id: String!, $banned: Boolean!, $banReason: String) {
+          updateUser(input: { rowId: $id, userPatch: { banned: $banned, banReason: $banReason } }) { user { rowId banned } }
+        }`,
+        variables: { id: user!.rowId, banned, banReason: banned ? "Banned by admin" : null },
+      });
+      if (res.errors) {
+        toast.error(res.errors[0]?.message || "Failed to update ban status");
+        return;
       }
+      toast.success(banned ? "User banned" : "User unbanned");
       reexecute({ requestPolicy: "network-only" });
     } catch {
       toast.error("Failed to update ban status");
@@ -298,9 +314,21 @@ export function UserDetail() {
 
   async function handleSoftDelete() {
     try {
-      const res = await authClient.admin.removeUser({ userId: user!.rowId });
-      if (res.error) {
-        toast.error(res.error.message || "Failed to delete user");
+      const token = authClient.getAccessToken();
+      const res = await fetch(`${BASE_PATH}/graphql`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          query: `mutation SoftDeleteUser($id: String!) { softDeleteUser(input: { targetUserId: $id }) { user { rowId } } }`,
+          variables: { id: user!.rowId },
+        }),
+      });
+      const data = await res.json();
+      if (data.errors) {
+        toast.error(data.errors[0]?.message || "Failed to delete user");
         return;
       }
       toast.success("User deleted");

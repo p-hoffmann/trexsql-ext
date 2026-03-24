@@ -100,6 +100,40 @@ export class Plugins {
     );
   }
 
+  /**
+   * Dynamically register a plugin from a directory path.
+   * The directory must contain a package.json with a `trex` config section.
+   * Used by devx to register D2E app functions at runtime.
+   */
+  static async registerFromPath(app: Express, dir: string): Promise<{ ok: boolean; name?: string; error?: string }> {
+    try {
+      const pkgJsonPath = `${dir}/package.json`;
+      const pkg = JSON.parse(await Deno.readTextFile(pkgJsonPath));
+      const shortName = pkg.name?.includes("/")
+        ? pkg.name.split("/").pop()
+        : pkg.name || dir.split("/").pop();
+
+      if (!pkg.trex || typeof pkg.trex !== "object") {
+        return { ok: false, error: `No trex config in ${pkgJsonPath}` };
+      }
+
+      const existing = Plugins.activeRegistry.get(shortName);
+      if (existing) {
+        return { ok: true, name: shortName };
+      }
+
+      const fullName = pkg.name || shortName;
+      console.log(`Dynamic register: ${shortName} from ${dir}`);
+      Plugins.addPlugin(app, dir, pkg, shortName, fullName, "dev");
+      console.log(`Registered dynamic plugin ${shortName}`);
+      return { ok: true, name: shortName };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Dynamic plugin registration failed for ${dir}:`, msg);
+      return { ok: false, error: msg };
+    }
+  }
+
   static getActivePlugins(): Map<string, ActivePluginEntry> {
     return Plugins.activeRegistry;
   }

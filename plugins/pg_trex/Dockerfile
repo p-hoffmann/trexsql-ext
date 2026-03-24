@@ -99,7 +99,7 @@ FROM postgres:17
 
 # ── System dependencies ──
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates libssl3 libgomp1 libvulkan1 curl gnupg && \
+      ca-certificates libssl3 libgomp1 libvulkan1 curl gnupg git && \
     rm -rf /var/lib/apt/lists/*
 
 # ── Node.js 20 (needed for trexas / core server) ──

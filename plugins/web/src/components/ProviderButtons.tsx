@@ -28,7 +28,7 @@ export function ProviderButtons() {
     setLoadingProvider(provider);
     try {
       await authClient.signIn.social({
-        provider: provider as any,
+        provider,
         callbackURL: "/",
       });
     } catch {
