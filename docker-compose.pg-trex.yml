@@ -1,5 +1,6 @@
 volumes:
   pg-trex-data:
+  devx-workspaces:
 
 services:
   postgres:
@@ -7,6 +8,8 @@ services:
       context: .
       dockerfile: plugins/pg_trex/Dockerfile
     ports:
+      - 443:443
+      - 5432:5432
       - 65433:5432
       - 8001:8001
       - 50051:50051
@@ -16,30 +19,58 @@ services:
       -c shared_preload_libraries=pg_trex
       -c pg_trex.extension_dir=/usr/lib/trexsql/extensions
       -c log_min_messages=log
+      -c ssl=on
+      -c ssl_cert_file=/var/lib/postgresql/data/server.crt
+      -c ssl_key_file=/var/lib/postgresql/data/server.key
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: mypass
       POSTGRES_DB: testdb
       DATABASE_URL: postgres://postgres:mypass@localhost:5432/testdb
+      EXTERNAL_DB_URL: postgres://postgres:mypass@trex.local:5432/testdb?sslmode=disable
       BETTER_AUTH_SECRET: dev-secret-at-least-32-characters-long!!
       BASE_PATH: /trex
       BETTER_AUTH_URL: http://localhost:8001/trex
       PLUGINS_INFORMATION_URL: "https://feeds.dev.azure.com/data2evidence/d2e/_apis/packaging/Feeds/d2e/packages?api-version=7.1&includeDescription=true"
       TPM_REGISTRY_URL: "https://pkgs.dev.azure.com/data2evidence/d2e/_packaging/d2e/npm/registry"
       PLUGINS_PATH: /usr/src/plugins
+      PLUGINS_DEV_PATH: /usr/src/plugins-dev
       SCHEMA_DIR: /usr/src/core/schema
       SWARM_CONFIG: >-
-        {"cluster_id":"local","nodes":{"local":{"gossip_addr":"0.0.0.0:7946","extensions":[{"name":"trexas","config":{"host":"0.0.0.0","port":8001,"main_service_path":"/usr/src/core/server","event_worker_path":"/usr/src/core/event"}},{"name":"flight","config":{"host":"0.0.0.0","port":50051}}]}}}
+        {"cluster_id":"local","nodes":{"local":{"gossip_addr":"0.0.0.0:7946","extensions":[{"name":"trexas","config":{"host":"0.0.0.0","port":8001,"main_service_path":"/usr/src/core/server","event_worker_path":"/usr/src/core/event","tls_port":443,"tls_cert_path":"/var/lib/postgresql/data/server.crt","tls_key_path":"/var/lib/postgresql/data/server.key"}},{"name":"flight","config":{"host":"0.0.0.0","port":50051}}]}}}
       SWARM_NODE: local
+      POSTGREST_HOST: postgrest
+      POSTGREST_PORT: "3000"
     volumes:
       - pg-trex-data:/var/lib/postgresql/data
+      - devx-workspaces:/var/devx-workspaces
       - ./core/schema:/usr/src/core/schema
       - ./core/server:/usr/src/core/server
+      - ./core/event:/usr/src/core/event
       - ./functions:/usr/src/functions
+      - ./plugins/devx:/usr/src/plugins-dev/devx
+      - ./plugins/web:/usr/src/plugins-dev/web
+      - ./plugins/storage:/usr/src/plugins-dev/storage
+      - ./plugins/devx-ext/build/release/devx_ext.trex:/usr/lib/trexsql/extensions/devx_ext.trex
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres && psql -U postgres -d testdb -tAc \"SELECT 1 FROM pg_roles WHERE rolname='authenticator' AND rolcanlogin\" | grep -q 1"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
     shm_size: 256mb
     stop_grace_period: 10s
+
+
+  postgrest:
+    image: postgrest/postgrest:v12.2.3
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:authenticator_pass@postgres:5432/testdb
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: dev-secret-at-least-32-characters-long!!
+      PGRST_DB_PRE_REQUEST: public.postgrest_pre_request
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_OPENAPI_SERVER_PROXY_URI: http://localhost:8001/trex/rest/v1

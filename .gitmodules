@@ -7,3 +7,6 @@
 [submodule "ai/llama.cpp"]
 	path = plugins/ai/llama.cpp
 	url = https://github.com/ggml-org/llama.cpp.git
+[submodule "plugins/storage/supabase-storage"]
+	path = plugins/storage/supabase-storage
+	url = https://github.com/p-hoffmann/storage.git

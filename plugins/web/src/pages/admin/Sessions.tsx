@@ -4,6 +4,7 @@ import { DataTable, type Column } from "@/components/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth-client";
+import { BASE_PATH } from "@/lib/config";
 import { toast } from "sonner";
 
 const LIST_SESSIONS_QUERY = `
@@ -47,7 +48,7 @@ export function Sessions() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [prevCursors, setPrevCursors] = useState<string[]>([]);
 
-  const [result] = useQuery({
+  const [result, reexecute] = useQuery({
     query: LIST_SESSIONS_QUERY,
     variables: { first: 25, after: cursor },
   });
@@ -58,8 +59,22 @@ export function Sessions() {
 
   const handleRevoke = async (sessionId: string) => {
     try {
-      await authClient.admin.revokeUserSession({ sessionToken: sessionId });
+      const token = authClient.getAccessToken();
+      const res = await fetch(`${BASE_PATH}/graphql`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          query: `mutation DeleteSession($id: String!) { deleteSession(input: { rowId: $id }) { session { rowId } } }`,
+          variables: { id: sessionId },
+        }),
+      });
+      const data = await res.json();
+      if (data.errors) throw new Error(data.errors[0]?.message);
       toast.success("Session revoked");
+      reexecute({ requestPolicy: "network-only" });
     } catch {
       toast.error("Failed to revoke session");
     }

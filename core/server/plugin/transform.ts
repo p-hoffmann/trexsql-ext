@@ -4,6 +4,7 @@ import { authContext } from "../middleware/auth-context.ts";
 import { pluginAuthz } from "../middleware/plugin-authz.ts";
 import { ROLE_SCOPES, REQUIRED_URL_SCOPES } from "./function.ts";
 import { PLUGINS_BASE_PATH } from "../config.ts";
+import { apiLimiter } from "../middleware/rate-limit.ts";
 
 declare const Trex: any;
 declare const Deno: any;
@@ -65,7 +66,7 @@ export function addTransformPlugin(
   transformRegistry.set(shortName, entry);
 
   const basePath = `${PLUGINS_BASE_PATH}/transform/${shortName}`;
-  app.get(`${basePath}/*`, authContext, pluginAuthz, async (req: Request, res: Response) => {
+  app.get(`${basePath}/*`, apiLimiter, authContext, pluginAuthz, async (req: Request, res: Response) => {
     const plugin = transformRegistry.get(shortName);
     if (!plugin) {
       res.status(404).json({ error: "Plugin not found" });
@@ -124,7 +125,7 @@ export function addTransformPlugin(
         res.json(rows);
       }
     } catch (err: any) {
-      console.error(`Transform endpoint error (${shortName}${subPath}):`, err);
+      console.error("Transform endpoint error:", shortName + subPath, err);
       res.status(500).json({ error: err.message || "Query failed" });
     }
   });
@@ -134,7 +135,7 @@ export function addTransformPlugin(
   recoverEndpoints(shortName).catch((err: any) => {
     // Expected before V2 migration is applied
     if (String(err).includes("does not exist")) return;
-    console.error(`Failed to recover endpoints for ${shortName}:`, err);
+    console.error("Failed to recover endpoints for:", shortName, err);
   });
 }
 

@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, gql } from "urql";
 import { authClient } from "@/lib/auth-client";
+import { BASE_PATH } from "@/lib/config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -189,15 +190,23 @@ export function Users() {
     e.preventDefault();
     setCreating(true);
     try {
-      const res = await authClient.admin.createUser({
-        name: newUserName,
-        email: newUserEmail,
-        password: newUserPassword,
-        role: "user",
+      const token = authClient.getAccessToken();
+      const res = await fetch(`${BASE_PATH}/auth/v1/admin/create-user`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          email: newUserEmail,
+          password: newUserPassword,
+          data: { name: newUserName, role: "user" },
+        }),
       });
 
-      if (res.error) {
-        toast.error(res.error.message || "Failed to create user");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error_description || data.error || "Failed to create user");
         return;
       }
 

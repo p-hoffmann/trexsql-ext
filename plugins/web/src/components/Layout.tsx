@@ -1,5 +1,5 @@
 import { useSession, authClient } from "@/lib/auth-client";
-import { Navigate, Outlet, Link } from "react-router-dom";
+import { Navigate, Outlet, Link, NavLink, useLocation } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 
@@ -18,9 +18,12 @@ export function Layout() {
     return <Navigate to="/login" replace />;
   }
 
-  if ((session.user as any).mustChangePassword) {
+  if (session.user.mustChangePassword) {
     return <Navigate to="/change-password" replace />;
   }
+
+  const location = useLocation();
+  const isEmbed = location.pathname === "/docs" || location.pathname === "/devx";
 
   const initials = session.user?.name
     ?.split(" ")
@@ -36,14 +39,25 @@ export function Layout() {
             TREX
           </Link>
           <div className="flex items-center gap-4">
-            <a href={`${import.meta.env.BASE_URL}docs/`}
-               className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+            <NavLink to="/docs"
+               className={({ isActive }) =>
+                 `text-sm transition-colors ${isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`
+               }>
               Docs
-            </a>
-            {(session.user as any).role === "admin" && (
-              <Link to="/admin">
-                <Button variant="outline" size="sm">Admin</Button>
-              </Link>
+            </NavLink>
+            <NavLink to="/devx"
+               className={({ isActive }) =>
+                 `text-sm transition-colors ${isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`
+               }>
+              DevX
+            </NavLink>
+            {session.user.role === "admin" && (
+              <NavLink to="/admin"
+                className={({ isActive }) =>
+                  `text-sm transition-colors ${isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`
+                }>
+                Admin
+              </NavLink>
             )}
             <Link to="/profile">
               <span className="text-sm text-muted-foreground">
@@ -64,7 +78,7 @@ export function Layout() {
           </div>
         </div>
       </header>
-      <main className="container mx-auto px-4 py-6">
+      <main className={isEmbed ? "" : "container mx-auto px-4 py-6"}>
         <Outlet />
       </main>
     </div>
