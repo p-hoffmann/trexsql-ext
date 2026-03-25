@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { pool, auth } from "../../auth.ts";
+import { pool } from "../../db.ts";
+import { hashPassword } from "../../auth/password.ts";
 
 export function registerUserTools(server: McpServer) {
   server.tool(
@@ -76,27 +77,32 @@ export function registerUserTools(server: McpServer) {
     },
     async ({ name, email, password, role }) => {
       try {
+        const id = crypto.randomUUID();
+        const userRole = role || "user";
+
         if (password) {
-          const result = await auth.api.signUpEmail({
-            body: { name, email, password },
-          });
-          if (!result?.user?.id) {
-            return { content: [{ type: "text", text: "Error: Signup failed — no user returned" }], isError: true };
-          }
-          const id = result.user.id;
+          const passwordHash = await hashPassword(password);
           await pool.query(
-            `UPDATE trex."user" SET role = $1, "emailVerified" = true, "updatedAt" = NOW() WHERE id = $2`,
-            [role || "user", id],
+            `INSERT INTO trex."user" (id, name, email, role, "emailVerified", email_confirmed_at, password_hash)
+             VALUES ($1, $2, $3, $4, true, NOW(), $5)`,
+            [id, name, email, userRole, passwordHash],
           );
-          return { content: [{ type: "text", text: JSON.stringify({ id, name, email, role: role || "user" }, null, 2) }] };
+          // Also create account record for backward compat
+          await pool.query(
+            `INSERT INTO trex.account (id, "userId", "accountId", "providerId", password)
+             VALUES ($1, $2, $2, 'credential', $3)
+             ON CONFLICT ("providerId", "accountId") DO NOTHING`,
+            [crypto.randomUUID(), id, passwordHash],
+          );
+        } else {
+          await pool.query(
+            `INSERT INTO trex."user" (id, name, email, role, "emailVerified", email_confirmed_at)
+             VALUES ($1, $2, $3, $4, true, NOW())`,
+            [id, name, email, userRole],
+          );
         }
 
-        const id = crypto.randomUUID();
-        await pool.query(
-          `INSERT INTO trex."user" (id, name, email, role, "emailVerified") VALUES ($1, $2, $3, $4, true)`,
-          [id, name, email, role || "user"],
-        );
-        return { content: [{ type: "text", text: JSON.stringify({ id, name, email, role: role || "user" }, null, 2) }] };
+        return { content: [{ type: "text", text: JSON.stringify({ id, name, email, role: userRole }, null, 2) }] };
       } catch (err: any) {
         return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
       }

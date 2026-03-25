@@ -5,6 +5,7 @@ import { authContext } from "../middleware/auth-context.ts";
 import { pluginAuthz } from "../middleware/plugin-authz.ts";
 import { scopeUrlPrefix, waitfor } from "./utils.ts";
 import { PLUGINS_BASE_PATH } from "../config.ts";
+import { apiLimiter } from "../middleware/rate-limit.ts";
 
 export const ROLE_SCOPES: Record<string, string[]> = {};
 export const REQUIRED_URL_SCOPES: Array<{ path: string; scopes: string[] }> = [];
@@ -16,7 +17,7 @@ export const REGISTERED_FUNCTIONS: Array<{
 }> = [];
 
 // Inter-service request map (function name -> handler)
-const fnmap: Record<string, (req: globalThis.Request) => Promise<globalThis.Response>> = {};
+export const fnmap: Record<string, (req: globalThis.Request) => Promise<globalThis.Response>> = {};
 
 // deno-lint-ignore no-explicit-any
 const Trex = (globalThis as any).Trex;
@@ -194,6 +195,8 @@ async function _callWorker(
     netAccessDisabled: false,
     cpuTimeSoftLimitMs: 1000000,
     cpuTimeHardLimitMs: 2000000,
+    allowHostFsAccess: fncfg.allowHostFsAccess === true,
+    ...(fncfg.permissions ? { permissions: fncfg.permissions } : {}),
     context: {
       useReadSyncFileAPI: true,
       unstableSloppyImports: true,
@@ -288,7 +291,7 @@ function _addFunction(
     _callWorker(req, path, imports, fncfg, dir, xenv);
 
   const scopePrefix = scopeUrlPrefix(name);
-  app.all(PLUGINS_BASE_PATH + scopePrefix + url + "/*", authContext, pluginAuthz, async (req: Request, res: Response) => {
+  app.all(PLUGINS_BASE_PATH + scopePrefix + url + "/*", apiLimiter, authContext, pluginAuthz, async (req: Request, res: Response) => {
     try {
       const host = req.get("host") || "localhost";
       const protocol = req.protocol || "http";
@@ -296,18 +299,43 @@ function _addFunction(
 
       const headers = new Headers();
       for (const [key, val] of Object.entries(req.headers)) {
-        if (val) headers.set(key, Array.isArray(val) ? val.join(", ") : String(val));
+        if (val) {
+          // Strip encoding headers — the outer proxy handles compression;
+          // letting the worker compress causes double-encoding (ERR_CONTENT_DECODING_FAILED)
+          const lower = key.toLowerCase();
+          if (lower === "accept-encoding") continue;
+          headers.set(key, Array.isArray(val) ? val.join(", ") : String(val));
+        }
       }
 
-      let body: Blob | undefined;
+      // Inject auth context from middleware into headers for edge functions
+      const pgSettings = (req as any).pgSettings;
+      if (pgSettings?.["app.user_id"]) {
+        headers.set("x-user-id", pgSettings["app.user_id"]);
+      }
+      if (pgSettings?.["app.user_role"]) {
+        headers.set("x-user-role", pgSettings["app.user_role"]);
+      }
+
+      let body: Blob | string | undefined;
       if (req.method !== "GET" && req.method !== "HEAD") {
-        const chunks: Uint8Array[] = [];
-        for await (const chunk of req as any) {
-          chunks.push(
-            typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk
-          );
+        // If body was already parsed by middleware (e.g. express.json()),
+        // re-serialize it. Otherwise read the raw stream.
+        if ((req as any).body && typeof (req as any).body === "object" && Object.keys((req as any).body).length > 0) {
+          body = JSON.stringify((req as any).body);
+        } else {
+          const chunks: Uint8Array[] = [];
+          try {
+            for await (const chunk of req as any) {
+              chunks.push(
+                typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk
+              );
+            }
+          } catch {
+            // Stream may not be async iterable in some environments
+          }
+          if (chunks.length > 0) body = new Blob(chunks);
         }
-        if (chunks.length > 0) body = new Blob(chunks);
       }
 
       const webReq = new globalThis.Request(requestUrl, {
@@ -320,10 +348,36 @@ function _addFunction(
 
       res.status(workerResponse.status);
       workerResponse.headers.forEach((value: string, key: string) => {
+        // Skip transfer/encoding headers — .text() decodes the body,
+        // so forwarding these would cause ERR_CONTENT_DECODING_FAILED
+        const lower = key.toLowerCase();
+        if (lower === "content-encoding" || lower === "content-length" || lower === "transfer-encoding") return;
         res.setHeader(key, value);
       });
-      const responseBody = await workerResponse.text();
-      res.send(responseBody);
+      const contentType = workerResponse.headers.get("content-type") || "";
+
+      if (contentType.includes("text/event-stream") && workerResponse.body) {
+        // SSE: pipe the stream directly — don't buffer
+        res.flushHeaders();
+        const reader = workerResponse.body.getReader();
+        const pump = async () => {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            res.write(value);
+          }
+          res.end();
+        };
+        pump().catch(() => res.end());
+      } else if (contentType && !contentType.includes("text/") && !contentType.includes("application/json") && !contentType.includes("application/javascript")) {
+        // Binary responses (fonts, images, etc.): use arrayBuffer to preserve data
+        const responseBody = await workerResponse.arrayBuffer();
+        res.end(Buffer.from(responseBody));
+      } else {
+        // Text responses: buffer as before
+        const responseBody = await workerResponse.text();
+        res.send(responseBody);
+      }
     } catch (err) {
       console.error("Plugin route error:", err);
       res.status(500).json({ msg: String(err) });

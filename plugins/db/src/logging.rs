@@ -51,17 +51,66 @@ impl SwarmLogger {
         format!("{}.{:03}", secs, millis)
     }
 
+    /// Redact known sensitive patterns (passwords, tokens, credentials) from log messages.
+    fn sanitize(message: &str) -> String {
+        let mut result = message.to_string();
+        // Redact password=... or password: ... patterns (case-insensitive)
+        let patterns = [
+            "password", "passwd", "secret", "token", "credential", "authorization",
+        ];
+        for pat in &patterns {
+            // Match pattern followed by = or : or space, then a value (up to whitespace or quote)
+            let lower = result.to_lowercase();
+            let mut start = 0;
+            while let Some(idx) = lower[start..].find(pat) {
+                let abs_idx = start + idx;
+                let after_key = abs_idx + pat.len();
+                if after_key < result.len() {
+                    let rest = &result[after_key..];
+                    // Check for separator: =, :, or whitespace followed by value
+                    if let Some(first_char) = rest.chars().next() {
+                        if first_char == '=' || first_char == ':' {
+                            let value_start = after_key + 1;
+                            // Skip optional quotes/spaces
+                            let value_bytes = result[value_start..].as_bytes();
+                            let mut vs = 0;
+                            while vs < value_bytes.len() && (value_bytes[vs] == b' ' || value_bytes[vs] == b'\'' || value_bytes[vs] == b'"') {
+                                vs += 1;
+                            }
+                            let actual_start = value_start + vs;
+                            // Find end of value
+                            let mut ve = actual_start;
+                            while ve < result.len() {
+                                let c = result.as_bytes()[ve];
+                                if c == b' ' || c == b'\'' || c == b'"' || c == b',' || c == b';' || c == b'\n' || c == b')' {
+                                    break;
+                                }
+                                ve += 1;
+                            }
+                            if ve > actual_start {
+                                result.replace_range(actual_start..ve, "[REDACTED]");
+                            }
+                        }
+                    }
+                }
+                start = abs_idx + 1;
+            }
+        }
+        result
+    }
+
     pub fn log(level: LogLevel, category: &str, message: &str) {
         if level > LogLevel::current() {
             return;
         }
         let timestamp = Self::timestamp();
+        let sanitized = Self::sanitize(message);
         eprintln!(
             "[{}] [{}] [{}] {}",
             timestamp,
             level.as_str(),
             category,
-            message
+            sanitized
         );
     }
 
@@ -80,13 +129,15 @@ impl SwarmLogger {
             .map(|(k, v)| format!("{}={}", k, v))
             .collect::<Vec<_>>()
             .join(" ");
+        let sanitized_ctx = Self::sanitize(&ctx_str);
+        let sanitized_msg = Self::sanitize(message);
         eprintln!(
             "[{}] [{}] [{}] [{}] {}",
             timestamp,
             level.as_str(),
             category,
-            ctx_str,
-            message
+            sanitized_ctx,
+            sanitized_msg
         );
     }
 

@@ -1,7 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { pool } from "../../auth.ts";
-import { reloadAuthProviders } from "../../auth.ts";
+import { pool } from "../../db.ts";
 
 export function registerSsoTools(server: McpServer) {
   server.tool(
@@ -37,7 +36,7 @@ export function registerSsoTools(server: McpServer) {
           [id, displayName, clientId, clientSecret, enabled ?? false],
         );
         try {
-          await reloadAuthProviders();
+          // SSO providers are loaded from DB on each request; no reload needed
         } catch (e) {
           // Non-fatal
         }
@@ -64,7 +63,7 @@ export function registerSsoTools(server: McpServer) {
           return { content: [{ type: "text", text: "SSO provider not found" }], isError: true };
         }
         try {
-          await reloadAuthProviders();
+          // SSO providers are loaded from DB on each request; no reload needed
         } catch (e) {
           // Non-fatal
         }

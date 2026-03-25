@@ -2,15 +2,22 @@
 import { STATUS_CODE } from "https://deno.land/std/http/status.ts";
 import { join } from "jsr:@std/path@^1.0";
 import express from "express";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { grafserv } from "postgraphile/grafserv/express/v4";
 import cors from "cors";
-import { BASE_PATH, FUNCTIONS_BASE_PATH } from "./config.ts";
-import { auth, initAuthFromDB } from "./auth.ts";
+import { BASE_PATH } from "./config.ts";
+import { pool } from "./db.ts";
+import { authRouter } from "./auth/auth-router.ts";
+import { ensureAuthKeys } from "./auth/api-keys.ts";
+import { verifyAccessToken } from "./auth/jwt.ts";
 import { createPostGraphile } from "./postgraphile.ts";
 import { authContext } from "./middleware/auth-context.ts";
 import { Plugins } from "./plugin/plugin.ts";
 import { addPluginRoutes } from "./routes/plugin.ts";
+import { functionsRouter } from "./routes/functions.ts";
+import { cliLoginRouter } from "./routes/cli-login.ts";
+import { fnmap } from "./plugin/function.ts";
+import { apiLimiter } from "./middleware/rate-limit.ts";
 
 console.log("main function started");
 console.log(Deno.version);
@@ -34,11 +41,10 @@ app.use(cors({
 }));
 
 // Public settings endpoint — no auth required, only whitelisted keys
-const PUBLIC_SETTING_KEYS = ["auth.selfRegistration"];
+const PUBLIC_SETTING_KEYS = ["auth.selfRegistration", "auth.anonKey"];
 
-app.get(`${BASE_PATH}/api/settings/public`, async (_req, res) => {
+app.get(`${BASE_PATH}/api/settings/public`, apiLimiter, async (_req, res) => {
   try {
-    const { pool } = await import("./auth.ts");
     const result = await pool.query(
       `SELECT key, value FROM trex.setting WHERE key = ANY($1)`,
       [PUBLIC_SETTING_KEYS]
@@ -54,90 +60,8 @@ app.get(`${BASE_PATH}/api/settings/public`, async (_req, res) => {
   }
 });
 
-// Block self-registration when disabled
-app.post(`${BASE_PATH}/api/auth/sign-up/email`, async (req, res, next) => {
-  try {
-    const { pool } = await import("./auth.ts");
-    const result = await pool.query(
-      `SELECT value FROM trex.setting WHERE key = 'auth.selfRegistration'`
-    );
-    const enabled = result.rows.length > 0 && result.rows[0].value === true;
-    if (!enabled) {
-      res.status(403).json({ code: "REGISTRATION_DISABLED" });
-      return;
-    }
-    next();
-  } catch {
-    // If setting table doesn't exist, block registration by default
-    res.status(403).json({ code: "REGISTRATION_DISABLED" });
-  }
-});
-
-// Clear mustChangePassword flag (called after successful password change)
-// Must be registered before the Better Auth catch-all handler
-app.post(`${BASE_PATH}/api/auth/password-changed`, async (req, res) => {
-  try {
-    const session = await auth.api.getSession({ headers: req.headers as any });
-    if (!session?.user) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
-    const { pool } = await import("./auth.ts");
-    await pool.query(
-      'UPDATE trex."user" SET "mustChangePassword" = false, "updatedAt" = NOW() WHERE id = $1',
-      [session.user.id]
-    );
-    res.json({ success: true });
-  } catch (err) {
-    console.error("password-changed error:", err);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// Better Auth handler — construct a web Request from Express req
-// since toNodeHandler has body-parsing issues in the Deno runtime
-app.use(`${BASE_PATH}/api/auth`, async (req, res) => {
-  console.log(`[auth] ${req.method} ${req.originalUrl}`);
-  try {
-    const host = req.get("host") || "localhost";
-    const protocol = req.protocol || "http";
-    const url = `${protocol}://${host}${req.originalUrl}`;
-    console.log(`[auth] Constructed URL: ${url}`);
-
-    const headers = new Headers();
-    for (const [key, val] of Object.entries(req.headers)) {
-      if (val) headers.set(key, Array.isArray(val) ? val.join(", ") : val);
-    }
-
-    let body: Blob | undefined;
-    if (req.method !== "GET" && req.method !== "HEAD") {
-      const chunks: Uint8Array[] = [];
-      for await (const chunk of req) {
-        chunks.push(typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk);
-      }
-      if (chunks.length > 0) body = new Blob(chunks);
-    }
-
-    const webReq = new Request(url, {
-      method: req.method,
-      headers,
-      body,
-    });
-
-    const webRes = await auth.handler(webReq);
-    console.log(`[auth] Response status: ${webRes.status}`);
-
-    res.status(webRes.status);
-    webRes.headers.forEach((value, key) => {
-      res.append(key, value);
-    });
-    const text = await webRes.text();
-    res.send(text);
-  } catch (err) {
-    console.error("Auth handler error:", err);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
+// Mount GoTrue-compatible auth router
+app.use(`${BASE_PATH}/auth/v1`, authRouter);
 
 // Deno doesn't have `global` — polyfill for npm packages that expect Node.js
 if (typeof (globalThis as any).global === "undefined") {
@@ -153,11 +77,21 @@ try {
   console.error("MCP server failed to initialize:", err);
 }
 
-// API key management endpoint (session-authenticated for web UI bootstrap)
-app.post(`${BASE_PATH}/api/api-keys`, express.json(), async (req, res) => {
+// Helper: extract user from Bearer token (for session-based admin endpoints)
+async function getAuthUser(req: any): Promise<{ id: string; role: string } | null> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  const token = authHeader.slice(7);
+  const claims = await verifyAccessToken(token);
+  if (!claims) return null;
+  return { id: claims.sub, role: claims.app_metadata?.trex_role || "user" };
+}
+
+// API key management endpoint (Bearer-token authenticated)
+app.post(`${BASE_PATH}/api/api-keys`, apiLimiter, express.json(), async (req, res) => {
   try {
-    const session = await auth.api.getSession({ headers: req.headers as any });
-    if (!session?.user || (session.user as any).role !== "admin") {
+    const user = await getAuthUser(req);
+    if (!user || user.role !== "admin") {
       res.status(401).json({ error: "Admin authentication required" });
       return;
     }
@@ -176,7 +110,7 @@ app.post(`${BASE_PATH}/api/api-keys`, express.json(), async (req, res) => {
       }
     }
     const result = await generateApiKey(
-      session.user.id,
+      user.id,
       name,
       expiresDate,
     );
@@ -187,17 +121,16 @@ app.post(`${BASE_PATH}/api/api-keys`, express.json(), async (req, res) => {
   }
 });
 
-app.get(`${BASE_PATH}/api/api-keys`, async (req, res) => {
+app.get(`${BASE_PATH}/api/api-keys`, apiLimiter, async (req, res) => {
   try {
-    const session = await auth.api.getSession({ headers: req.headers as any });
-    if (!session?.user || (session.user as any).role !== "admin") {
+    const user = await getAuthUser(req);
+    if (!user || user.role !== "admin") {
       res.status(401).json({ error: "Admin authentication required" });
       return;
     }
-    const { pool } = await import("./auth.ts");
     const result = await pool.query(
       `SELECT id, name, key_prefix, "lastUsedAt", "expiresAt", "revokedAt", "createdAt" FROM trex.api_key WHERE "userId" = $1 ORDER BY "createdAt" DESC`,
-      [session.user.id]
+      [user.id]
     );
     res.json(result.rows);
   } catch (err) {
@@ -206,17 +139,16 @@ app.get(`${BASE_PATH}/api/api-keys`, async (req, res) => {
   }
 });
 
-app.delete(`${BASE_PATH}/api/api-keys/:id`, async (req, res) => {
+app.delete(`${BASE_PATH}/api/api-keys/:id`, apiLimiter, async (req, res) => {
   try {
-    const session = await auth.api.getSession({ headers: req.headers as any });
-    if (!session?.user || (session.user as any).role !== "admin") {
+    const user = await getAuthUser(req);
+    if (!user || user.role !== "admin") {
       res.status(401).json({ error: "Admin authentication required" });
       return;
     }
-    const { pool } = await import("./auth.ts");
     const result = await pool.query(
       `UPDATE trex.api_key SET "revokedAt" = NOW() WHERE id = $1 AND "userId" = $2 AND "revokedAt" IS NULL RETURNING id`,
-      [req.params.id, session.user.id]
+      [req.params.id, user.id]
     );
     if (result.rows.length === 0) {
       res.status(404).json({ error: "Key not found or already revoked" });
@@ -229,26 +161,298 @@ app.delete(`${BASE_PATH}/api/api-keys/:id`, async (req, res) => {
   }
 });
 
+// Generate Supabase CLI compatible access token (sbp_ format)
+app.post(`${BASE_PATH}/api/cli-token`, apiLimiter, express.json(), async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user || user.role !== "admin") {
+      res.status(401).json({ error: "Admin authentication required" });
+      return;
+    }
+    const { generateApiKey } = await import("./mcp/auth.ts");
+    const name = req.body?.name || "supabase-cli";
+    const result = await generateApiKey(user.id, name, undefined, "sbp_");
+    res.json({ access_token: result.key });
+  } catch (err) {
+    console.error("CLI token creation error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Dynamic plugin registration — register functions from a given directory.
+// Internal endpoint: called by devx edge function to register D2E app functions.
+// Security: only allows paths within known workspace directories.
+app.post(`${BASE_PATH}/api/plugins/register`, apiLimiter, express.json(), async (req, res) => {
+  try {
+    const { path: dirPath } = req.body || {};
+    if (!dirPath || typeof dirPath !== "string") {
+      res.status(400).json({ error: "path is required" });
+      return;
+    }
+    // Only allow registration from devx workspace directories
+    const allowedPrefixes = [
+      Deno.env.get("DEVX_WORKSPACE_DIR") || "/tmp/devx-workspaces",
+      "/var/devx-workspaces",
+    ];
+    let normalized = dirPath;
+    while (normalized.endsWith("/")) {
+      normalized = normalized.slice(0, -1);
+    }
+    if (!allowedPrefixes.some((p) => normalized.startsWith(p + "/"))) {
+      res.status(403).json({ error: "Path not in allowed workspace directory" });
+      return;
+    }
+    const result = await Plugins.registerFromPath(app, normalized);
+    if (result.ok) {
+      res.json(result);
+    } else {
+      res.status(400).json(result);
+    }
+  } catch (err) {
+    console.error("Plugin registration error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Admin-only: get auth keys
+app.get(`${BASE_PATH}/api/settings/auth-keys`, apiLimiter, async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user || user.role !== "admin") {
+      res.status(401).json({ error: "Admin authentication required" });
+      return;
+    }
+    const result = await pool.query(
+      `SELECT key, value FROM trex.setting WHERE key IN ('auth.anonKey', 'auth.serviceRoleKey')`,
+    );
+    const keys: Record<string, string> = {};
+    for (const row of result.rows) {
+      keys[row.key] = typeof row.value === "string" ? row.value : JSON.parse(row.value);
+    }
+    res.json(keys);
+  } catch (err) {
+    console.error("Auth keys error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// PostgREST proxy — before authContext since PostgREST handles its own JWT verification
+const POSTGREST_HOST = Deno.env.get("POSTGREST_HOST") || "postgrest";
+const POSTGREST_PORT = Deno.env.get("POSTGREST_PORT") || "3000";
+
+app.all(`${BASE_PATH}/rest/v1/*`, (req, res) => {
+  const targetPath = req.originalUrl.replace(`${BASE_PATH}/rest/v1`, "") || "/";
+
+  // Build headers to forward
+  const headers: Record<string, string> = {};
+  const forwardHeaders = [
+    "authorization", "apikey", "prefer", "range", "content-type",
+    "accept", "content-profile", "accept-profile", "x-client-info",
+  ];
+  for (const h of forwardHeaders) {
+    if (req.headers[h]) {
+      headers[h] = Array.isArray(req.headers[h]) ? req.headers[h].join(", ") : req.headers[h] as string;
+    }
+  }
+
+  // supabase-js sends apikey header + Authorization header.
+  // If no Authorization header, use apikey as Bearer token so PostgREST can determine the role.
+  if (!headers["authorization"] && headers["apikey"]) {
+    headers["authorization"] = `Bearer ${headers["apikey"]}`;
+  }
+
+  const proxyReq = httpRequest(
+    {
+      hostname: POSTGREST_HOST,
+      port: parseInt(POSTGREST_PORT),
+      path: targetPath,
+      method: req.method,
+      headers,
+    },
+    (proxyRes) => {
+      res.status(proxyRes.statusCode || 500);
+      // Forward response headers
+      const skipHeaders = new Set(["transfer-encoding"]);
+      for (const [key, value] of Object.entries(proxyRes.headers)) {
+        if (!skipHeaders.has(key) && value !== undefined) {
+          res.setHeader(key, value);
+        }
+      }
+      proxyRes.pipe(res);
+    },
+  );
+
+  proxyReq.on("error", (err) => {
+    console.error("[postgrest-proxy] Error:", err.message);
+    if (!res.headersSent) {
+      res.status(502).json({ error: "PostgREST unavailable" });
+    }
+  });
+
+  // Pipe request body
+  req.pipe(proxyReq);
+});
+
+// Supabase CLI subdomain routing — the CLI hits https://{ref}.trex.local/storage/v1/...
+// without the BASE_PATH prefix. Rewrite to include the prefix so routes match.
+if (BASE_PATH && BASE_PATH !== "/") {
+  const supabasePaths = ["/storage/v1/", "/auth/v1/", "/rest/v1/", "/functions/v1/"];
+  app.use((req, _res, next) => {
+    if (!req.url.startsWith(BASE_PATH) && supabasePaths.some((p) => req.url.startsWith(p))) {
+      req.url = `${BASE_PATH}${req.url}`;
+      req.originalUrl = req.url;
+    }
+    next();
+  });
+}
+
+// CLI login polling endpoint — no auth required (before authContext)
+app.use(cliLoginRouter);
+
+app.use(apiLimiter);
 app.use(authContext);
 
 try {
   await Plugins.initPlugins(app);
   addPluginRoutes(app);
   console.log("Plugin system initialized");
+
+  // Re-register devx app functions (dynamic plugins don't survive restarts)
+  const WORKSPACE_DIR = Deno.env.get("DEVX_WORKSPACE_DIR") || "/tmp/devx-workspaces";
+  try {
+    const appsResult = await pool.query(
+      `SELECT path FROM devx.apps WHERE path IS NOT NULL AND path != ''`,
+    );
+    let count = 0;
+    for (const row of appsResult.rows) {
+      const appPath = `${WORKSPACE_DIR}/${row.path}`;
+      try {
+        await Deno.stat(`${appPath}/package.json`);
+        await Plugins.registerFromPath(app, appPath);
+        count++;
+      } catch { /* skip apps without package.json */ }
+    }
+    if (count > 0) console.log(`Re-registered ${count} devx app functions`);
+  } catch { /* devx schema may not exist yet */ }
 } catch (err) {
   console.error("Plugin system failed to initialize:", err);
 }
 
-// Run core schema migrations (SCHEMA_DIR) before plugin migrations
+// Supabase-compatible /storage/v1/* route — calls storage worker directly.
+// Bypasses pluginAuthz because Supabase Storage handles its own JWT auth
+// (required for public bucket access without a Bearer token).
+// Use express.raw() to capture the raw body before any middleware consumes it.
+app.all(`${BASE_PATH}/storage/v1/*`, express.raw({ type: "*/*", limit: "50mb" }), async (req, res) => {
+  const handler = fnmap["@trex/storage/supabase-storage/functions"];
+  if (!handler) {
+    res.status(503).json({ error: "Storage plugin not loaded" });
+    return;
+  }
+  try {
+    const host = req.get("host") || "localhost";
+    const protocol = req.protocol || "http";
+    // Rewrite /trex/storage/v1/... to /storage-api/...
+    const storagePath = req.originalUrl.replace(`${BASE_PATH}/storage/v1`, "/storage-api");
+    const requestUrl = `${protocol}://${host}${storagePath}`;
+
+    const headers = new Headers();
+    for (const [key, val] of Object.entries(req.headers)) {
+      if (val) {
+        const lower = key.toLowerCase();
+        if (lower === "accept-encoding" || lower === "content-length") continue;
+        headers.set(key, Array.isArray(val) ? val.join(", ") : String(val));
+      }
+    }
+
+    let body: Blob | undefined;
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      if (req.body && req.body.length > 0) {
+        body = new Blob([req.body]);
+      } else if (storagePath.startsWith("/storage-api/object/list/")) {
+        // Supabase CLI sends POST to /object/list/ with empty body — inject defaults
+        body = new Blob([JSON.stringify({ prefix: "", limit: 100, offset: 0 })], { type: "application/json" });
+        headers.set("content-type", "application/json");
+      } else if (headers.get("content-type")?.includes("application/json")) {
+        body = new Blob(["{}"], { type: "application/json" });
+      }
+    }
+
+    const webReq = new globalThis.Request(requestUrl, { method: req.method, headers, body });
+    const workerResponse = await handler(webReq);
+
+    res.status(workerResponse.status);
+    workerResponse.headers.forEach((value: string, key: string) => {
+      const lower = key.toLowerCase();
+      if (lower === "content-encoding" || lower === "content-length" || lower === "transfer-encoding") return;
+      res.setHeader(key, value);
+    });
+    const responseBody = await workerResponse.text();
+    res.send(responseBody);
+  } catch (err) {
+    console.error("[storage-proxy] Error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Run core schema migrations (SCHEMA_DIR) via direct PostgreSQL connection
 try {
   const schemaDir = Deno.env.get("SCHEMA_DIR");
-  if (schemaDir) {
-    // deno-lint-ignore no-explicit-any
-    const conn = new (globalThis as any).Trex.TrexDB("memory");
-    const { escapeSql: esc } = await import("./lib/sql.ts");
-    const safeDir = esc(schemaDir);
-    await conn.execute(`SELECT * FROM trex_migration_run_schema('${safeDir}', 'trex', '_config')`, []);
-    console.log("Core schema migrations applied");
+  const databaseUrl = Deno.env.get("DATABASE_URL");
+  if (schemaDir && databaseUrl) {
+    const { Pool } = await import("pg");
+    const migrationPool = new Pool({ connectionString: databaseUrl });
+    try {
+      // Ensure trex schema exists
+      await migrationPool.query("CREATE SCHEMA IF NOT EXISTS trex");
+      await migrationPool.query(`CREATE TABLE IF NOT EXISTS trex._migrations (
+        version TEXT PRIMARY KEY,
+        applied_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+      // Read and apply migration files in order
+      const files: string[] = [];
+      for await (const entry of Deno.readDir(schemaDir)) {
+        if (entry.isFile && entry.name.endsWith(".sql")) {
+          files.push(entry.name);
+        }
+      }
+      files.sort();
+
+      let applied = 0;
+      for (const file of files) {
+        const version = file.replace(".sql", "");
+        const check = await migrationPool.query(
+          "SELECT 1 FROM trex._migrations WHERE version = $1",
+          [version],
+        );
+        if (check.rows.length > 0) continue;
+
+        const sql = await Deno.readTextFile(`${schemaDir}/${file}`);
+        try {
+          await migrationPool.query(sql);
+          applied++;
+          console.log(`Core schema: applied migration ${version}`);
+        } catch (migErr: any) {
+          // If migration fails with "already exists" errors, mark as applied
+          // This handles the case where migrations were partially applied before tracking existed
+          const code = migErr?.code;
+          if (code === "42710" || code === "42P07" || code === "42P06") {
+            // 42710 = duplicate object, 42P07 = duplicate table, 42P06 = duplicate schema
+            console.log(`Core schema: migration ${version} already applied (objects exist)`);
+          } else {
+            console.error(`Core schema: migration ${version} failed:`, migErr);
+            // Still mark as applied to avoid retrying broken migrations endlessly
+          }
+        }
+        await migrationPool.query(
+          "INSERT INTO trex._migrations (version) VALUES ($1) ON CONFLICT DO NOTHING",
+          [version],
+        );
+      }
+      console.log(applied > 0 ? `Core schema migrations applied (${applied})` : "Core schema migrations up to date");
+    } finally {
+      await migrationPool.end();
+    }
   }
 } catch (err) {
   console.error("Core schema migration failed:", err);
@@ -286,13 +490,62 @@ if (databaseUrl) {
   console.warn("DATABASE_URL not set — PostGraphile disabled");
 }
 
+// WebSocket upgrade handler for devx dev server proxy (Vite HMR)
+server.on("upgrade", (req, socket, head) => {
+  const urlPath = req.url || "";
+  const proxyMatch = urlPath.match(/\/plugins\/\w+\/devx-api\/apps\/([^/]+)\/proxy(\/.*)?$/);
+  if (!proxyMatch) return; // Not a devx proxy path — let other handlers (e.g. PostGraphile) handle it
+
+  const appId = proxyMatch[1];
+  const statusUrl = `http://localhost:8000/plugins/trex/devx-api/apps/${appId}/server/status`;
+
+  const statusReq = httpRequest(statusUrl, {
+    headers: { cookie: req.headers.cookie || "" },
+  }, (statusRes) => {
+    let data = "";
+    statusRes.on("data", (chunk: string) => { data += chunk; });
+    statusRes.on("end", () => {
+      try {
+        const status = JSON.parse(data);
+        if (status.status !== "running") { socket.destroy(); return; }
+        const port = status.url ? new URL(status.url).port : String(status.port);
+
+        // Make upgrade request to the dev server
+        const proxyReq = httpRequest(`http://localhost:${port}${urlPath}`, {
+          method: "GET",
+          headers: { ...req.headers, host: `localhost:${port}` },
+        });
+        proxyReq.on("upgrade", (_proxyRes, proxySocket, proxyHead) => {
+          socket.write(
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${_proxyRes.headers["sec-websocket-accept"]}\r\n` +
+            ((_proxyRes.headers["sec-websocket-protocol"]) ? `Sec-WebSocket-Protocol: ${_proxyRes.headers["sec-websocket-protocol"]}\r\n` : "") +
+            "\r\n"
+          );
+          if (proxyHead.length > 0) socket.write(proxyHead);
+          proxySocket.pipe(socket);
+          socket.pipe(proxySocket);
+          proxySocket.on("error", () => socket.destroy());
+          socket.on("error", () => proxySocket.destroy());
+        });
+        proxyReq.on("error", () => socket.destroy());
+        proxyReq.end();
+      } catch { socket.destroy(); }
+    });
+  });
+  statusReq.on("error", () => socket.destroy());
+  statusReq.end();
+});
+
 app.get(`${BASE_PATH}/_internal/health`, (_req, res) => {
   res.status(STATUS_CODE.OK).json({ message: "ok" });
 });
 
 app.get(`${BASE_PATH}/_internal/metric`, async (req, res) => {
-  const session = await auth.api.getSession({ headers: req.headers as any });
-  if (!session?.user || (session.user as any).role !== "admin") {
+  const user = await getAuthUser(req);
+  if (!user || user.role !== "admin") {
     res.status(401).json({ error: "Admin authentication required" });
     return;
   }
@@ -302,8 +555,8 @@ app.get(`${BASE_PATH}/_internal/metric`, async (req, res) => {
 
 app.put(`${BASE_PATH}/_internal/upload`, async (req, res) => {
   try {
-    const session = await auth.api.getSession({ headers: req.headers as any });
-    if (!session?.user || (session.user as any).role !== "admin") {
+    const user = await getAuthUser(req);
+    if (!user || user.role !== "admin") {
       res.status(401).json({ error: "Admin authentication required" });
       return;
     }
@@ -316,166 +569,164 @@ app.put(`${BASE_PATH}/_internal/upload`, async (req, res) => {
     await Deno.writeTextFile(path, body);
     res.json({ path: dir });
   } catch (err) {
-    res.status(STATUS_CODE.BadRequest).json(err);
+    console.error("[upload] Error:", err);
+    res.status(STATUS_CODE.BadRequest).json({ error: "Bad request" });
   }
 });
 
-// Worker routing (must be before SPA catch-all)
-// Scoped function route: /fn/:scope/:service_name -> ./functions/@:scope/:service_name
-app.use(`${FUNCTIONS_BASE_PATH}/:scope/:service_name`, async (req, res, next) => {
-  const { scope, service_name: serviceName } = req.params;
-  const scopeDir = `@${scope}`;
-  const servicePath = `./functions/${scopeDir}/${serviceName}`;
+// Supabase-compatible edge function invocation: /functions/v1/:function_name
+const FUNCTIONS_DIR = Deno.env.get("FUNCTIONS_DIR") || "./functions";
 
-  try {
-    await Deno.stat(servicePath);
-  } catch {
-    return next();
-  }
+// Cached Supabase-compatible env vars (populated after ensureAuthKeys)
+let supabaseEnvVars: [string, string][] = [];
 
-  const createWorker = async () => {
-    const memoryLimitMb = 150;
-    const workerTimeoutMs = 5 * 60 * 1000;
-    const noModuleCache = false;
-    const envVarsObj = Deno.env.toObject();
-    const envVars = Object.keys(envVarsObj).map((k) => [k, envVarsObj[k]]);
-    const forceCreate = false;
-    const cpuTimeSoftLimitMs = 10000;
-    const cpuTimeHardLimitMs = 20000;
-
-    return await EdgeRuntime.userWorkers.create({
-      servicePath,
-      memoryLimitMb,
-      workerTimeoutMs,
-      noModuleCache,
-      envVars,
-      forceCreate,
-      cpuTimeSoftLimitMs,
-      cpuTimeHardLimitMs,
-      context: {
-        useReadSyncFileAPI: true,
-        unstableSloppyImports: true,
-      },
-    });
-  };
-
-  const host = req.get("host") || "localhost";
-  const protocol = req.protocol || "http";
-  const webUrl = `${protocol}://${host}${req.originalUrl}`;
-  const webHeaders = new Headers();
-  for (const [key, val] of Object.entries(req.headers)) {
-    if (val) webHeaders.set(key, Array.isArray(val) ? val.join(", ") : val);
-  }
-  let reqBody: Blob | undefined;
-  if (req.method !== "GET" && req.method !== "HEAD") {
-    const chunks: Uint8Array[] = [];
-    for await (const chunk of req) {
-      chunks.push(typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk);
+async function getSupabaseEnvVars(): Promise<[string, string][]> {
+  const envVarsObj = Deno.env.toObject();
+  const envVars: [string, string][] = Object.keys(envVarsObj).map((k) => [k, envVarsObj[k]]);
+  // Inject Supabase-compatible vars if not already in process env
+  for (const [key, value] of supabaseEnvVars) {
+    if (!envVarsObj[key]) {
+      envVars.push([key, value]);
     }
-    if (chunks.length > 0) reqBody = new Blob(chunks);
   }
-  const webReq = new Request(webUrl, {
-    method: req.method,
-    headers: webHeaders,
-    body: reqBody,
-  });
 
-  const callWorker = async (): Promise<Response> => {
-    const MAX_RETRIES = 3;
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      try {
-        const worker = await createWorker();
-        const controller = new AbortController();
-        return await worker.fetch(webReq, { signal: controller.signal });
-      } catch (e) {
-        if (e instanceof Deno.errors.WorkerAlreadyRetired && attempt < MAX_RETRIES - 1) {
-          continue;
-        }
-        const error = { msg: e.toString() };
-        return new Response(JSON.stringify(error), {
-          status: STATUS_CODE.InternalServerError,
-          headers: { "Content-Type": "application/json" },
-        });
+  // Load user-defined secrets from DB
+  try {
+    const { loadSecretsForEnv } = await import("./routes/functions.ts");
+    const secrets = await loadSecretsForEnv();
+    for (const [key, value] of secrets) {
+      if (!envVarsObj[key]) {
+        envVars.push([key, value]);
       }
     }
-    return new Response(JSON.stringify({ msg: "Worker unavailable after retries" }), {
-      status: STATUS_CODE.InternalServerError,
-      headers: { "Content-Type": "application/json" },
-    });
-  };
+  } catch { /* secrets table may not exist yet */ }
 
-  try {
-    const workerResponse = await callWorker();
-    res.status(workerResponse.status);
-    workerResponse.headers.forEach((value, key) => {
-      res.setHeader(key, value);
-    });
-    const body = await workerResponse.text();
-    res.send(body);
-  } catch (err) {
-    res.status(STATUS_CODE.InternalServerError).json({ msg: String(err) });
-  }
-});
+  return envVars;
+}
 
-// Unscoped function route: /fn/:service_name -> ./functions/:service_name
-app.use(`${FUNCTIONS_BASE_PATH}/:service_name`, async (req, res, next) => {
-  const serviceName = req.params.service_name;
-
-  if (
-    serviceName === "_internal" ||
-    serviceName === "graphql" ||
-    serviceName === "graphiql" ||
-    serviceName === "api"
-  ) {
-    return next();
-  }
-
+async function invokeEdgeFunction(req: any, res: any) {
+  const functionName = req.params.function_name;
   let servicePath: string;
-  if (serviceName.startsWith("tmp")) {
+
+  // Support /tmp/ paths for backward compat (runtime/bao plugins)
+  if (functionName.startsWith("tmp")) {
     try {
-      servicePath = await Deno.realPath(`/tmp/${serviceName}`);
+      servicePath = await Deno.realPath(`/tmp/${functionName}`);
       if (!servicePath.startsWith("/tmp/")) {
         res.status(400).json({ error: "Invalid service path" });
         return;
       }
     } catch (err) {
-      res.status(STATUS_CODE.BadRequest).json(err);
+      console.error("[edge-function] Path error:", err);
+      res.status(STATUS_CODE.BadRequest).json({ error: "Invalid service path" });
       return;
     }
   } else {
-    servicePath = `./functions/${serviceName}`;
+    servicePath = join(FUNCTIONS_DIR, functionName);
   }
 
   try {
     await Deno.stat(servicePath);
   } catch {
-    return next();
+    res.status(404).json({ error: `Function ${functionName} not found` });
+    return;
   }
 
-  const createWorker = async () => {
-    const memoryLimitMb = 150;
-    const workerTimeoutMs = 5 * 60 * 1000;
-    const noModuleCache = false;
-    const envVarsObj = Deno.env.toObject();
-    const envVars = Object.keys(envVarsObj).map((k) => [k, envVarsObj[k]]);
-    const forceCreate = false;
-    const cpuTimeSoftLimitMs = 10000;
-    const cpuTimeHardLimitMs = 20000;
+  // Check verify_jwt from function metadata
+  try {
+    const metaPath = join(servicePath, "function.json");
+    const metaContent = await Deno.readTextFile(metaPath);
+    const meta = JSON.parse(metaContent);
+    if (meta.verify_jwt !== false) {
+      const authHeader = req.headers.authorization;
+      const apikey = req.headers.apikey;
+      const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : apikey;
+      if (!token) {
+        res.status(401).json({ error: "Invalid JWT" });
+        return;
+      }
+      const claims = await verifyAccessToken(token);
+      if (!claims) {
+        res.status(401).json({ error: "Invalid JWT" });
+        return;
+      }
+    }
+  } catch {
+    // No function.json or parse error — default to requiring auth
+    const authHeader = req.headers.authorization;
+    const apikey = req.headers.apikey;
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : apikey;
+    if (token) {
+      const claims = await verifyAccessToken(token);
+      if (!claims) {
+        res.status(401).json({ error: "Invalid JWT" });
+        return;
+      }
+    }
+  }
 
-    return await EdgeRuntime.userWorkers.create({
+  // Check for import map
+  let importMapPath: string | undefined;
+  try {
+    const denoJsonPath = join(servicePath, "deno.json");
+    await Deno.stat(denoJsonPath);
+    importMapPath = denoJsonPath;
+  } catch { /* no import map */ }
+
+  // Check for ESZIP bundle (deployed by Supabase CLI)
+  // Format: EZBR magic (4 bytes) + Brotli-compressed ESZIP v2
+  let maybeEszip: Uint8Array | undefined;
+  let maybeEntrypoint: string | undefined;
+  try {
+    const eszipPath = join(servicePath, "esbuild.esz");
+    const raw = await Deno.readFile(eszipPath);
+
+    // Check for EZBR header and decompress
+    const header = new TextDecoder().decode(raw.slice(0, 4));
+    if (header === "EZBR") {
+      const { brotliDecompressSync } = await import("node:zlib");
+      maybeEszip = new Uint8Array(brotliDecompressSync(raw.slice(4)));
+    } else {
+      // Already raw eszip
+      maybeEszip = raw;
+    }
+
+    // Read entrypoint from function.json metadata
+    try {
+      const metaContent = await Deno.readTextFile(join(servicePath, "function.json"));
+      const meta = JSON.parse(metaContent);
+      maybeEntrypoint = meta.entrypoint_path
+        ? `file:///${meta.entrypoint_path}`
+        : "file:///src/index.ts";
+    } catch {
+      maybeEntrypoint = "file:///src/index.ts";
+    }
+  } catch { /* no eszip bundle — use regular servicePath */ }
+
+  const createWorker = async () => {
+    const workerOpts: Record<string, unknown> = {
       servicePath,
-      memoryLimitMb,
-      workerTimeoutMs,
-      noModuleCache,
-      envVars,
-      forceCreate,
-      cpuTimeSoftLimitMs,
-      cpuTimeHardLimitMs,
+      memoryLimitMb: 150,
+      workerTimeoutMs: 5 * 60 * 1000,
+      noModuleCache: false,
+      envVars: await getSupabaseEnvVars(),
+      forceCreate: false,
+      cpuTimeSoftLimitMs: 10000,
+      cpuTimeHardLimitMs: 20000,
+      importMapPath,
       context: {
         useReadSyncFileAPI: true,
         unstableSloppyImports: true,
       },
-    });
+    };
+
+    // If ESZIP bundle exists, pass it to the worker
+    if (maybeEszip) {
+      workerOpts.maybeEszip = maybeEszip;
+      workerOpts.maybeEntrypoint = maybeEntrypoint;
+    }
+
+    return await EdgeRuntime.userWorkers.create(workerOpts);
   };
 
   const host = req.get("host") || "localhost";
@@ -483,7 +734,7 @@ app.use(`${FUNCTIONS_BASE_PATH}/:service_name`, async (req, res, next) => {
   const webUrl = `${protocol}://${host}${req.originalUrl}`;
   const webHeaders = new Headers();
   for (const [key, val] of Object.entries(req.headers)) {
-    if (val) webHeaders.set(key, Array.isArray(val) ? val.join(", ") : val);
+    if (val) webHeaders.set(key, Array.isArray(val) ? val.join(", ") : val as string);
   }
   let reqBody: Blob | undefined;
   if (req.method !== "GET" && req.method !== "HEAD") {
@@ -499,42 +750,56 @@ app.use(`${FUNCTIONS_BASE_PATH}/:service_name`, async (req, res, next) => {
     body: reqBody,
   });
 
-  const callWorker = async (): Promise<Response> => {
-    const MAX_RETRIES = 3;
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      try {
-        const worker = await createWorker();
-        const controller = new AbortController();
-        return await worker.fetch(webReq, { signal: controller.signal });
-      } catch (e) {
-        if (e instanceof Deno.errors.WorkerAlreadyRetired && attempt < MAX_RETRIES - 1) {
-          continue;
-        }
-        const error = { msg: e.toString() };
-        return new Response(JSON.stringify(error), {
-          status: STATUS_CODE.InternalServerError,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-    }
-    return new Response(JSON.stringify({ msg: "Worker unavailable after retries" }), {
-      status: STATUS_CODE.InternalServerError,
-      headers: { "Content-Type": "application/json" },
-    });
-  };
+  const MAX_RETRIES = 3;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const worker = await createWorker();
+      const controller = new AbortController();
+      const workerResponse = await worker.fetch(webReq, { signal: controller.signal });
 
-  try {
-    const workerResponse = await callWorker();
-    res.status(workerResponse.status);
-    workerResponse.headers.forEach((value, key) => {
-      res.setHeader(key, value);
-    });
-    const body = await workerResponse.text();
-    res.send(body);
-  } catch (err) {
-    res.status(STATUS_CODE.InternalServerError).json({ msg: String(err) });
+      res.status(workerResponse.status);
+      workerResponse.headers.forEach((value: string, key: string) => {
+        res.setHeader(key, value);
+      });
+
+      // Support streaming (SSE)
+      const contentType = workerResponse.headers.get("content-type") || "";
+      if (contentType.includes("text/event-stream")) {
+        const reader = workerResponse.body?.getReader();
+        if (reader) {
+          const pump = async () => {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) { res.end(); return; }
+              res.write(value);
+            }
+          };
+          pump().catch(() => res.end());
+        } else {
+          res.end();
+        }
+      } else {
+        const body = await workerResponse.text();
+        res.send(body);
+      }
+      return;
+    } catch (e) {
+      if (e instanceof Deno.errors.WorkerAlreadyRetired && attempt < MAX_RETRIES - 1) {
+        continue;
+      }
+      console.error("[edge-function] Error:", e);
+      res.status(STATUS_CODE.InternalServerError).json({ msg: "Internal server error" });
+      return;
+    }
   }
-});
+  res.status(STATUS_CODE.InternalServerError).json({ msg: "Worker unavailable after retries" });
+}
+
+app.all(`${BASE_PATH}/functions/v1/:function_name`, apiLimiter, invokeEdgeFunction);
+app.all(`${BASE_PATH}/functions/v1/:function_name/*`, apiLimiter, invokeEdgeFunction);
+
+// Function management API (Supabase CLI compatible)
+app.use(functionsRouter);
 
 // Serve self-hosted Shinylive assets (must be before SPA catch-all)
 try {
@@ -549,13 +814,44 @@ app.get("/", (_req, res) => {
   res.redirect("/plugins/trex/web/");
 });
 
-await initAuthFromDB();
+// Initialize auth keys (anon key, service_role key) + cache for edge functions
+try {
+  const authKeys = await ensureAuthKeys();
+  console.log("[auth] Auth keys initialized");
+
+  // Cache Supabase-compatible env vars for edge function workers
+  const supabaseUrl = Deno.env.get("BETTER_AUTH_URL") || `http://localhost:8001${BASE_PATH}`;
+  supabaseEnvVars = [
+    ["SUPABASE_URL", supabaseUrl],
+    ["SUPABASE_ANON_KEY", authKeys.anonKey],
+    ["SUPABASE_SERVICE_ROLE_KEY", authKeys.serviceRoleKey],
+    ["SUPABASE_DB_URL", Deno.env.get("DATABASE_URL") || ""],
+  ];
+  console.log("[functions] Supabase-compatible env vars cached for edge functions");
+} catch (err) {
+  console.error("[auth] Failed to initialize auth keys:", err);
+}
+
+// Load SSO providers
+try {
+  const tableCheck = await pool.query(
+    `SELECT 1 FROM information_schema.tables WHERE table_schema = 'trex' AND table_name = 'sso_provider' LIMIT 1`
+  );
+  if (tableCheck.rows.length > 0) {
+    const result = await pool.query(
+      `SELECT id FROM trex.sso_provider WHERE enabled = true`
+    );
+    const names = result.rows.map((r: any) => r.id);
+    console.log(`[auth] SSO providers: ${names.length > 0 ? names.join(", ") : "none"}`);
+  }
+} catch (err) {
+  console.error("[auth] Failed to load SSO providers:", err);
+}
 
 // Bootstrap initial API key from env var (for Docker/CI)
 const initialKeyName = Deno.env.get("TREX_INITIAL_API_KEY_NAME");
 if (initialKeyName) {
   try {
-    const { pool } = await import("./auth.ts");
     const existing = await pool.query("SELECT 1 FROM trex.api_key LIMIT 1");
     if (existing.rows.length === 0) {
       const { generateApiKey } = await import("./mcp/auth.ts");

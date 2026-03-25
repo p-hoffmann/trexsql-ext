@@ -19,7 +19,7 @@ pub async fn search_resources(
     validate_dataset_id(&dataset_id)?;
     validate_resource_type(&resource_type, &state.registry)?;
 
-    let schema_name = dataset_id.replace('-', "_");
+    let schema_name = state.qualified_schema(&dataset_id);
     let table_name = resource_type.to_lowercase();
 
     let count: usize = params
@@ -47,7 +47,7 @@ pub async fn search_resources(
     };
 
     let sql = format!(
-        "SELECT _raw FROM \"{schema}\".\"{table}\" WHERE {where_clause} LIMIT {limit} OFFSET {offset}",
+        "SELECT _raw FROM {schema}.\"{table}\" WHERE {where_clause} LIMIT {limit} OFFSET {offset}",
         schema = schema_name,
         table = table_name,
         where_clause = where_clause,
@@ -56,13 +56,15 @@ pub async fn search_resources(
     );
 
     let count_sql = format!(
-        "SELECT COUNT(*)::VARCHAR as cnt FROM \"{schema}\".\"{table}\" WHERE {where_clause}",
+        "SELECT COUNT(*)::VARCHAR as cnt FROM {schema}.\"{table}\" WHERE {where_clause}",
         schema = schema_name,
         table = table_name,
         where_clause = where_clause
     );
 
-    let total = match state.executor.submit(count_sql).await {
+    let worker_id = state.executor.next_worker_id();
+
+    let total = match state.executor.submit_on(worker_id, count_sql).await {
         QueryResult::Select { rows, .. } => rows
             .first()
             .and_then(|r| r.first())
@@ -72,7 +74,7 @@ pub async fn search_resources(
         _ => 0,
     };
 
-    match state.executor.submit(sql).await {
+    match state.executor.submit_on(worker_id, sql).await {
         QueryResult::Select { rows, .. } => {
             let has_more = rows.len() > count;
             let entries: Vec<Value> = rows

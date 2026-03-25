@@ -28,7 +28,6 @@ import {
   SmartphoneIcon,
   LinkIcon,
   UnlinkIcon,
-  ShieldIcon,
   Loader2Icon,
   KeyIcon,
   CopyIcon,
@@ -53,7 +52,6 @@ interface AccountInfo {
 }
 
 // Known social providers the system supports.
-// Extend this list as new providers are configured in Better Auth.
 const KNOWN_PROVIDERS = ["github", "google", "microsoft", "apple"] as const;
 
 function parseUserAgent(ua: string | null): {
@@ -288,7 +286,7 @@ function SecurityTab() {
   );
 }
 
-// --- Linked Accounts Tab (T045 + T047 lockout protection) ---
+// --- Linked Accounts Tab ---
 
 function LinkedAccountsTab() {
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
@@ -314,8 +312,7 @@ function LinkedAccountsTab() {
     fetchAccounts();
   }, [fetchAccounts]);
 
-  // T047: Check if user has at least one other auth method before allowing unlink.
-  // The user must retain at least one linked account (social or credential).
+  // Check if user has at least one other auth method before allowing unlink.
   const canUnlink = accounts.length > 1;
 
   async function handleUnlink(providerId: string) {
@@ -341,7 +338,7 @@ function LinkedAccountsTab() {
     setLinking(provider);
     try {
       await authClient.signIn.social({
-        provider: provider as "github" | "google" | "microsoft" | "apple",
+        provider,
         callbackURL: window.location.href,
       });
     } catch {
@@ -458,10 +455,9 @@ function LinkedAccountsTab() {
   );
 }
 
-// --- Sessions Tab (T046) ---
+// --- Sessions Tab ---
 
 function SessionsTab() {
-  const { data: currentSession } = useSession();
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [revoking, setRevoking] = useState<string | null>(null);
@@ -509,14 +505,15 @@ function SessionsTab() {
     );
   }
 
-  const currentToken = currentSession?.session?.token;
+  // We don't have a direct session token match, but we can identify by session_id
+  // The current session token from JWT is the access_token, not session_id
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Active Sessions</CardTitle>
         <CardDescription>
-          Manage your active sessions across devices ({sessions.length} total)
+          Manage your active sessions ({sessions.length} total)
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -528,7 +525,6 @@ function SessionsTab() {
           ) : (
             sessions.map((session) => {
               const { browser, device } = parseUserAgent(session.userAgent);
-              const isCurrent = session.token === currentToken;
               const DeviceIcon =
                 device === "Mobile" ? SmartphoneIcon : MonitorIcon;
 
@@ -546,12 +542,6 @@ function SessionsTab() {
                         <p className="text-sm font-medium">
                           {browser} on {device}
                         </p>
-                        {isCurrent && (
-                          <Badge variant="default" className="text-xs">
-                            <ShieldIcon className="size-3 mr-0.5" />
-                            Current
-                          </Badge>
-                        )}
                       </div>
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         {session.ipAddress && (
@@ -566,16 +556,14 @@ function SessionsTab() {
                       </div>
                     </div>
                   </div>
-                  {!isCurrent && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={revoking === session.token}
-                      onClick={() => handleRevoke(session.token)}
-                    >
-                      {revoking === session.token ? "Revoking..." : "Revoke"}
-                    </Button>
-                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={revoking === session.token}
+                    onClick={() => handleRevoke(session.token)}
+                  >
+                    {revoking === session.token ? "Revoking..." : "Revoke"}
+                  </Button>
                 </div>
               );
             })
@@ -616,7 +604,10 @@ function ApiKeysTab() {
   const fetchKeys = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${BASE_PATH}/api/api-keys`, { credentials: "include" });
+      const token = authClient.getAccessToken();
+      const res = await fetch(`${BASE_PATH}/api/api-keys`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (!res.ok) throw new Error("Failed to fetch keys");
       setKeys(await res.json());
     } catch {
@@ -636,10 +627,13 @@ function ApiKeysTab() {
     try {
       const body: Record<string, string> = { name: newKeyName };
       if (newKeyExpiry) body.expiresAt = new Date(newKeyExpiry).toISOString();
+      const token = authClient.getAccessToken();
       const res = await fetch(`${BASE_PATH}/api/api-keys`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify(body),
       });
       if (!res.ok) {
@@ -663,9 +657,10 @@ function ApiKeysTab() {
   async function handleRevoke(id: string) {
     setRevoking(id);
     try {
+      const token = authClient.getAccessToken();
       const res = await fetch(`${BASE_PATH}/api/api-keys/${id}`, {
         method: "DELETE",
-        credentials: "include",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error("Failed to revoke key");
       toast.success("API key revoked.");
@@ -838,7 +833,7 @@ function ApiKeysTab() {
 
 export function Profile() {
   const { data: session } = useSession();
-  const isAdmin = (session?.user as any)?.role === "admin";
+  const isAdmin = session?.user?.role === "admin";
 
   return (
     <div className="space-y-6">

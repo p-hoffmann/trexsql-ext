@@ -19,13 +19,13 @@ import pytest
 
 from conftest import Node, FHIR_EXT, alloc_ports
 
-# DuckDB cloned connections share the database but have separate transaction
-# contexts.  With a multi-worker pool, DDL executed on one worker (CREATE
-# SCHEMA / CREATE TABLE) may not be visible to other workers immediately.
-# Using a single worker avoids this cross-connection catalog visibility issue
-# and is sufficient for integration testing since we are not benchmarking
-# concurrency here.
-os.environ.setdefault("FHIR_POOL_SIZE", "1")
+# Pool sizes to test: single-threaded and multi-threaded.
+# Each parametrized value starts a separate FHIR server instance.
+POOL_SIZES = [1, 4]
+
+# DB modes: "standalone" = FHIR server owns its own DuckDB (default),
+#            "host" = FHIR server uses the host DuckDB connection.
+DB_MODES = ["standalone", "host"]
 
 
 def _free_port():
@@ -126,17 +126,45 @@ def _create_patient(client, dataset_id, family="Doe", given="John", gender="male
 # Module-scoped fixture: one FHIR server for all tests in this file
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(scope="module")
-def fhir():
-    """Start the FHIR extension, launch the HTTP server, yield an FhirClient."""
+_FHIR_PARAMS = [(pool, mode) for pool in POOL_SIZES for mode in DB_MODES]
+_FHIR_IDS = [f"pool={pool}-{mode}" for pool, mode in _FHIR_PARAMS]
+
+
+@pytest.fixture(scope="module", params=_FHIR_PARAMS, ids=_FHIR_IDS)
+def fhir(request):
+    """Start the FHIR extension with a given pool size and DB mode, yield an FhirClient."""
+    import tempfile, shutil
+
+    pool_size, db_mode = request.param
+    os.environ["FHIR_POOL_SIZE"] = str(pool_size)
+    os.environ["FHIR_USE_HOST_DB"] = "true" if db_mode == "host" else "false"
+
     gp, fp, pp = alloc_ports()
     node = Node([FHIR_EXT], gp, fp, pp)
 
+    fhir_db_dir = None
     fhir_port = _free_port()
-    result = node.execute(f"SELECT trex_fhir_start('127.0.0.1', {fhir_port})")
+
+    if db_mode == "standalone":
+        # Standalone mode: FHIR server creates its own DuckDB file
+        fhir_db_dir = tempfile.mkdtemp(
+            dir=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tmp", "fhir-test-dbs"),
+        )
+        fhir_db_path = os.path.join(fhir_db_dir, "fhir.db")
+        result = node.execute(
+            f"SELECT trex_fhir_start('127.0.0.1', {fhir_port}, 'fhir', '{fhir_db_path}')"
+        )
+    else:
+        # Host mode: FHIR server uses the host DuckDB connection (catalog = 'fhir')
+        result = node.execute(
+            f"SELECT trex_fhir_start('127.0.0.1', {fhir_port}, 'fhir')"
+        )
+
     assert len(result) == 1 and "Started" in result[0][0], f"trex_fhir_start: {result}"
 
     client = FhirClient(f"http://127.0.0.1:{fhir_port}")
+    client.pool_size = pool_size  # expose for test introspection
+    client.db_mode = db_mode
 
     # Poll /health until server is ready (definition loading can take seconds)
     deadline = time.time() + 30
@@ -150,7 +178,9 @@ def fhir():
         time.sleep(0.5)
     else:
         node.close()
-        pytest.fail("FHIR server did not become healthy within 30 s")
+        if fhir_db_dir:
+            shutil.rmtree(fhir_db_dir, ignore_errors=True)
+        pytest.fail(f"FHIR server (pool={pool_size}, {db_mode}) did not become healthy within 30 s")
 
     yield client
 
@@ -159,6 +189,8 @@ def fhir():
     except Exception:
         pass
     node.close()
+    if fhir_db_dir:
+        shutil.rmtree(fhir_db_dir, ignore_errors=True)
 
 
 # ===================================================================
@@ -483,6 +515,24 @@ def test_transaction_reference_resolution(fhir):
     assert "201" in body["entry"][0]["response"]["status"]
     assert "201" in body["entry"][1]["response"]["status"]
 
+    # Extract IDs from response location (format: "/{dataset}/Patient/{id}")
+    pat_location = body["entry"][0]["response"]["location"]
+    obs_location = body["entry"][1]["response"]["location"]
+    pat_id = pat_location.split("/")[3]  # ['', did, 'Patient', id]
+    obs_id = obs_location.split("/")[3]  # ['', did, 'Observation', id]
+
+    # Verify Patient is persisted and retrievable
+    status, patient, _ = fhir.get(f"/{did}/Patient/{pat_id}")
+    assert status == 200, f"GET Patient/{pat_id} failed ({status}): {patient}"
+    assert patient["name"][0]["family"] == "RefTest"
+
+    # Verify Observation is persisted and urn:uuid reference was resolved
+    status, obs, _ = fhir.get(f"/{did}/Observation/{obs_id}")
+    assert status == 200, f"GET Observation/{obs_id} failed ({status}): {obs}"
+    assert obs["subject"]["reference"] == f"Patient/{pat_id}", (
+        f"urn:uuid reference not resolved: got {obs['subject']['reference']}"
+    )
+
 
 def test_batch_partial_failure(fhir):
     """Good Patient + bad ZZZFake in a batch -> first succeeds, second fails."""
@@ -508,6 +558,361 @@ def test_bundle_not_a_bundle(fhir):
     did = _create_dataset(fhir)
     status, body, _ = fhir.post(f"/{did}", {"resourceType": "Patient"})
     assert status == 400
+
+
+def test_transaction_put_resources_reachable_via_get(fhir):
+    """PUT entries in a transaction bundle must be retrievable via GET by their request URL ID."""
+    did = _create_dataset(fhir)
+    bundle = _make_bundle("transaction", [
+        {
+            "resource": {"resourceType": "Patient", "name": [{"family": "BundlePut"}]},
+            "request": {"method": "PUT", "url": "Patient/bp-pat-001"},
+        },
+        {
+            "resource": {
+                "resourceType": "Observation",
+                "status": "final",
+                "code": {"text": "test"},
+                "subject": {"reference": "Patient/bp-pat-001"},
+            },
+            "request": {"method": "PUT", "url": "Observation/bp-obs-001"},
+        },
+    ])
+    status, body, _ = fhir.post(f"/{did}", bundle)
+    assert status == 200, f"transaction failed: {body}"
+    assert len(body["entry"]) == 2
+    # First PUT of a new resource should be 201 Created
+    assert "201" in body["entry"][0]["response"]["status"]
+    assert "201" in body["entry"][1]["response"]["status"]
+
+    # GET each resource by the ID from request.url
+    status, patient, _ = fhir.get(f"/{did}/Patient/bp-pat-001")
+    assert status == 200, f"GET Patient/bp-pat-001 failed ({status}): {patient}"
+    assert patient["id"] == "bp-pat-001"
+    assert patient["name"][0]["family"] == "BundlePut"
+    assert patient["meta"]["versionId"] == "1"
+
+    status, obs, _ = fhir.get(f"/{did}/Observation/bp-obs-001")
+    assert status == 200, f"GET Observation/bp-obs-001 failed ({status}): {obs}"
+    assert obs["id"] == "bp-obs-001"
+    assert obs["subject"]["reference"] == "Patient/bp-pat-001"
+
+    # PUT the patient again via bundle — should increment version
+    bundle2 = _make_bundle("transaction", [
+        {
+            "resource": {"resourceType": "Patient", "name": [{"family": "BundlePutV2"}]},
+            "request": {"method": "PUT", "url": "Patient/bp-pat-001"},
+        },
+    ])
+    status, body2, _ = fhir.post(f"/{did}", bundle2)
+    assert status == 200, f"second transaction failed: {body2}"
+    assert "200" in body2["entry"][0]["response"]["status"]
+    assert '"2"' in body2["entry"][0]["response"]["etag"]
+
+    # Verify version incremented
+    status, patient2, _ = fhir.get(f"/{did}/Patient/bp-pat-001")
+    assert status == 200
+    assert patient2["meta"]["versionId"] == "2"
+    assert patient2["name"][0]["family"] == "BundlePutV2"
+
+    # Verify history has version 1
+    status, hist, _ = fhir.get(f"/{did}/Patient/bp-pat-001/_history")
+    assert status == 200
+    assert hist["total"] == 2
+
+
+def test_transaction_put_conditional_url_reachable_via_get(fhir):
+    """PUT entries with conditional URLs (Patient?identifier=xxx) use resource.id for storage."""
+    did = _create_dataset(fhir)
+    patient_id = "79dbcd3d-eb5f-4f3d-b7e1-7a73b77f26e7"
+    obs_id = "019b02f3-fea0-c489-b20d-a4904a80e613"
+    bundle = _make_bundle("transaction", [
+        {
+            "resource": {
+                "resourceType": "Patient",
+                "id": patient_id,
+                "name": [{"use": "anonymous", "given": [patient_id]}],
+            },
+            "request": {
+                "method": "PUT",
+                "url": f"Patient?identifier={patient_id}",
+            },
+        },
+        {
+            "resource": {
+                "resourceType": "Observation",
+                "id": obs_id,
+                "status": "final",
+                "code": {"text": "test"},
+                "subject": {"reference": f"Patient/{patient_id}"},
+            },
+            "request": {
+                "method": "PUT",
+                "url": f"Observation?identifier={obs_id}",
+            },
+        },
+    ])
+    status, body, _ = fhir.post(f"/{did}", bundle)
+    assert status == 200, f"transaction failed: {body}"
+    assert len(body["entry"]) == 2
+    # First PUT of new resources should be 201 Created
+    assert "201" in body["entry"][0]["response"]["status"]
+    assert "201" in body["entry"][1]["response"]["status"]
+
+    # GET each resource by resource.id (since conditional URLs fall back to it)
+    status, patient, _ = fhir.get(f"/{did}/Patient/{patient_id}")
+    assert status == 200, f"GET Patient/{patient_id} failed ({status}): {patient}"
+    assert patient["id"] == patient_id
+
+    status, obs, _ = fhir.get(f"/{did}/Observation/{obs_id}")
+    assert status == 200, f"GET Observation/{obs_id} failed ({status}): {obs}"
+    assert obs["id"] == obs_id
+    assert obs["subject"]["reference"] == f"Patient/{patient_id}"
+
+
+def test_transaction_put_nested_bundle_resource(fhir):
+    """PUT entries containing nested Bundle-type resources (document bundles)."""
+    did = _create_dataset(fhir)
+    bundle = _make_bundle("transaction", [
+        {
+            "resource": {
+                "resourceType": "Patient",
+                "id": "pat-nested-test",
+                "name": [{"family": "Nested"}],
+            },
+            "request": {"method": "PUT", "url": "Patient/pat-nested-test"},
+        },
+        {
+            "resource": {
+                "resourceType": "ResearchSubject",
+                "id": "rs-001",
+                "status": "active",
+                "individual": {"reference": "Patient/pat-nested-test"},
+            },
+            "request": {
+                "method": "PUT",
+                "url": "ResearchSubject?identifier=rs-001",
+            },
+        },
+        {
+            "resource": {
+                "resourceType": "Observation",
+                "id": "obs-score-001",
+                "status": "final",
+                "code": {"coding": [{"system": "http://example.com", "code": "score"}]},
+                "subject": {"reference": "Patient/pat-nested-test"},
+                "valueQuantity": {"value": 29},
+            },
+            "request": {
+                "method": "PUT",
+                "url": "Observation?identifier=obs-score-001",
+            },
+        },
+        {
+            "resource": {
+                "resourceType": "QuestionnaireResponse",
+                "id": "qr-001",
+                "status": "completed",
+                "subject": {"reference": "Patient/pat-nested-test"},
+                "authored": "2025-12-07T11:58:43Z",
+                "item": [{"linkId": "q1", "text": "Q1", "answer": [{"valueDate": "2025-12-09"}]}],
+            },
+            "request": {
+                "method": "PUT",
+                "url": "QuestionnaireResponse?identifier=qr-001",
+            },
+        },
+        {
+            "resource": {
+                "id": "doc-bundle-001",
+                "resourceType": "Bundle",
+                "type": "document",
+                "timestamp": "2025-12-09T11:51:43.522Z",
+                "entry": [
+                    {
+                        "fullUrl": "urn:uuid:comp-1",
+                        "resource": {
+                            "resourceType": "Composition",
+                            "status": "final",
+                            "type": {"coding": [{"system": "http://loinc.org", "code": "51855-5"}]},
+                            "subject": {"reference": "Patient/pat-nested-test"},
+                            "date": "2025-12-09T11:51:43.522Z",
+                            "author": [{"display": "unknown"}],
+                            "title": "Test recording",
+                        },
+                    },
+                ],
+            },
+            "request": {
+                "method": "PUT",
+                "url": "Bundle?identifier=doc-bundle-001",
+            },
+        },
+        {
+            "resource": {
+                "id": "comm-001",
+                "resourceType": "Communication",
+                "status": "completed",
+                "subject": {"reference": "Patient/pat-nested-test"},
+                "sent": "2025-12-07T08:00:00Z",
+                "payload": [{"contentAttachment": {"contentType": "text/plain", "data": "dGVzdA=="}}],
+            },
+            "request": {
+                "method": "PUT",
+                "url": "Communication?identifier=comm-001",
+            },
+        },
+    ])
+    status, body, _ = fhir.post(f"/{did}", bundle)
+    assert status == 200, f"transaction failed ({status}): {body}"
+    assert len(body["entry"]) == 6
+    # All should succeed
+    for i, entry in enumerate(body["entry"]):
+        resp_status = entry["response"]["status"]
+        assert "200" in resp_status or "201" in resp_status, (
+            f"entry {i} failed: {resp_status}"
+        )
+
+    # Verify key resources are GET-reachable
+    status, pat, _ = fhir.get(f"/{did}/Patient/pat-nested-test")
+    assert status == 200, f"GET Patient failed ({status}): {pat}"
+
+    status, obs, _ = fhir.get(f"/{did}/Observation/obs-score-001")
+    assert status == 200, f"GET Observation failed ({status}): {obs}"
+
+
+def test_transaction_delete_via_bundle(fhir):
+    """DELETE entry in a transaction bundle uses the ID from request.url."""
+    did = _create_dataset(fhir)
+    # First create a resource via PUT bundle
+    bundle = _make_bundle("transaction", [
+        {
+            "resource": {"resourceType": "Patient", "name": [{"family": "ToDelete"}]},
+            "request": {"method": "PUT", "url": "Patient/bp-del-001"},
+        },
+    ])
+    status, _, _ = fhir.post(f"/{did}", bundle)
+    assert status == 200
+
+    # Verify it exists
+    status, _, _ = fhir.get(f"/{did}/Patient/bp-del-001")
+    assert status == 200
+
+    # Delete via bundle
+    del_bundle = _make_bundle("transaction", [
+        {
+            "resource": {"resourceType": "Patient"},
+            "request": {"method": "DELETE", "url": "Patient/bp-del-001"},
+        },
+    ])
+    status, body, _ = fhir.post(f"/{did}", del_bundle)
+    assert status == 200
+    assert "204" in body["entry"][0]["response"]["status"]
+
+    # Verify it's gone
+    status, _, _ = fhir.get(f"/{did}/Patient/bp-del-001")
+    assert status == 410
+
+
+def test_transaction_delete_via_bundle_history(fhir):
+    """DELETE via bundle must write history so the create+delete lifecycle is tracked."""
+    did = _create_dataset(fhir)
+    # 1. Create a Patient via PUT bundle
+    bundle = _make_bundle("transaction", [
+        {
+            "resource": {"resourceType": "Patient", "name": [{"family": "HistDel"}]},
+            "request": {"method": "PUT", "url": "Patient/hist-del-001"},
+        },
+    ])
+    status, _, _ = fhir.post(f"/{did}", bundle)
+    assert status == 200
+
+    # 2. Delete via bundle
+    del_bundle = _make_bundle("transaction", [
+        {
+            "resource": {"resourceType": "Patient"},
+            "request": {"method": "DELETE", "url": "Patient/hist-del-001"},
+        },
+    ])
+    status, body, _ = fhir.post(f"/{did}", del_bundle)
+    assert status == 200
+    assert "204" in body["entry"][0]["response"]["status"]
+
+    # 3. History must have entries for both the create and delete
+    status, hist, _ = fhir.get(f"/{did}/Patient/hist-del-001/_history")
+    assert status == 200
+    assert hist["total"] >= 2, (
+        f"Expected at least 2 history entries (create + delete), got {hist['total']}"
+    )
+    methods = [e["request"]["method"] for e in hist["entry"]]
+    assert "DELETE" in methods, f"DELETE not found in history methods: {methods}"
+
+
+def test_large_bundle_all_resources_ingested(fhir):
+    """Load curl-bundle.json (19 entries, 6 resource types) and verify every resource is persisted."""
+    bundle_path = os.path.join(os.path.dirname(__file__), "fixtures", "transaction-bundle-19.json")
+    with open(bundle_path) as f:
+        bundle = json.load(f)
+
+    did = _create_dataset(fhir)
+    status, body, _ = fhir.post(f"/{did}", bundle)
+    assert status == 200, f"transaction failed ({status}): {body}"
+    assert body["type"] == "transaction-response"
+    assert len(body["entry"]) == len(bundle["entry"])
+
+    # All entries should succeed (201 Created or 200 OK for upserts)
+    for i, entry in enumerate(body["entry"]):
+        resp_status = entry["response"]["status"]
+        assert "200" in resp_status or "201" in resp_status, (
+            f"entry {i} ({bundle['entry'][i]['resource']['resourceType']}) "
+            f"failed: {resp_status}"
+        )
+
+    # Build expected resource map: {resourceType: [id, ...]}
+    from collections import defaultdict
+    expected = defaultdict(list)
+    for e in bundle["entry"]:
+        rt = e["resource"]["resourceType"]
+        rid = e["resource"].get("id")
+        if rid:
+            expected[rt].append(rid)
+
+    # Build a lookup of posted resources for content verification
+    posted = {}
+    for e in bundle["entry"]:
+        r = e["resource"]
+        posted[(r["resourceType"], r.get("id"))] = r
+
+    # GET each resource individually to verify it was persisted with correct content
+    for resource_type, ids in expected.items():
+        for rid in ids:
+            status, res, _ = fhir.get(f"/{did}/{resource_type}/{rid}")
+            assert status == 200, (
+                f"GET {resource_type}/{rid} failed ({status}): {res}"
+            )
+            assert res["resourceType"] == resource_type
+            assert res["id"] == rid
+
+            # Verify key fields from the original posted resource are preserved
+            original = posted.get((resource_type, rid))
+            if original:
+                for key in ("status", "name", "gender", "code", "subject"):
+                    if key in original:
+                        assert res.get(key) == original[key], (
+                            f"{resource_type}/{rid} field '{key}' mismatch: "
+                            f"expected {original[key]}, got {res.get(key)}"
+                        )
+
+    # Verify search counts match for each resource type
+    for resource_type, ids in expected.items():
+        status, search_body, _ = fhir.get(f"/{did}/{resource_type}?_count=100")
+        assert status == 200, (
+            f"Search {resource_type} failed ({status}): {search_body}"
+        )
+        assert search_body["total"] >= len(ids), (
+            f"{resource_type}: expected at least {len(ids)}, "
+            f"got {search_body['total']}"
+        )
 
 
 # ===================================================================
@@ -668,3 +1073,130 @@ def test_version_conflict(fhir):
         headers={"If-Match": 'W/"999"'},
     )
     assert status == 409
+
+
+# ===================================================================
+# $IMPORT (NDJSON)
+# ===================================================================
+
+def test_import_ndjson_mixed_types(fhir):
+    """POST NDJSON with Patient + Observation, verify success counts and GET."""
+    did = _create_dataset(fhir)
+    patient_id = str(uuid.uuid4())
+    obs_id = str(uuid.uuid4())
+    ndjson = "\n".join([
+        json.dumps({"resourceType": "Patient", "id": patient_id, "name": [{"family": "Import"}], "gender": "female"}),
+        json.dumps({"resourceType": "Observation", "id": obs_id, "status": "final", "code": {"text": "bp"}, "subject": {"reference": f"Patient/{patient_id}"}}),
+    ])
+    status, body, _ = fhir.post_raw(f"/{did}/$import", ndjson.encode("utf-8"), content_type="application/x-ndjson")
+    assert status == 200, f"$import failed ({status}): {body}"
+    assert body["outcome"] == "complete"
+    assert body["total"]["success"] == 2
+    assert body["total"]["errors"] == 0
+    assert body["success"]["Patient"] == 1
+    assert body["success"]["Observation"] == 1
+
+    # Verify resources are retrievable
+    status, patient, _ = fhir.get(f"/{did}/Patient/{patient_id}")
+    assert status == 200, f"GET Patient failed ({status}): {patient}"
+    assert patient["id"] == patient_id
+    assert patient["name"][0]["family"] == "Import"
+
+    status, obs, _ = fhir.get(f"/{did}/Observation/{obs_id}")
+    assert status == 200, f"GET Observation failed ({status}): {obs}"
+    assert obs["id"] == obs_id
+
+
+def test_import_ndjson_error_handling(fhir):
+    """NDJSON with bad lines: invalid JSON, missing resourceType, unknown type."""
+    did = _create_dataset(fhir)
+    ndjson = "\n".join([
+        json.dumps({"resourceType": "Patient", "id": "good-1", "name": [{"family": "Good"}]}),
+        "not valid json{{{",
+        json.dumps({"id": "no-rt"}),
+        json.dumps({"resourceType": "ZZZFake", "id": "fake-1"}),
+        json.dumps({"resourceType": "Patient", "id": "good-2", "name": [{"family": "Also Good"}]}),
+    ])
+    status, body, _ = fhir.post_raw(f"/{did}/$import", ndjson.encode("utf-8"), content_type="application/x-ndjson")
+    assert status == 200, f"$import failed ({status}): {body}"
+    assert body["outcome"] == "complete"
+    assert body["total"]["success"] == 2
+    assert body["total"]["errors"] == 3
+    assert body["success"]["Patient"] == 2
+    assert body["errors"]["_parse"] == 2  # invalid JSON + missing resourceType
+    assert body["errors"]["ZZZFake"] == 1
+    assert len(body["errorDetails"]) == 3
+
+    # Verify the good resources exist
+    status, _, _ = fhir.get(f"/{did}/Patient/good-1")
+    assert status == 200
+    status, _, _ = fhir.get(f"/{did}/Patient/good-2")
+    assert status == 200
+
+
+def test_import_ndjson_generates_id(fhir):
+    """Resources without id get a generated UUID."""
+    did = _create_dataset(fhir)
+    ndjson = json.dumps({"resourceType": "Patient", "name": [{"family": "NoId"}]})
+    status, body, _ = fhir.post_raw(f"/{did}/$import", ndjson.encode("utf-8"), content_type="application/x-ndjson")
+    assert status == 200
+    assert body["total"]["success"] == 1
+
+    # Search for the patient to verify it was stored
+    status, search, _ = fhir.get(f"/{did}/Patient?family=NoId")
+    assert status == 200
+    assert search["total"] == 1
+
+
+def test_import_ndjson_upsert(fhir):
+    """Importing the same resource twice should upsert (not duplicate)."""
+    did = _create_dataset(fhir)
+    pid = str(uuid.uuid4())
+    ndjson = json.dumps({"resourceType": "Patient", "id": pid, "name": [{"family": "First"}]})
+
+    status, _, _ = fhir.post_raw(f"/{did}/$import", ndjson.encode("utf-8"), content_type="application/x-ndjson")
+    assert status == 200
+
+    # Import again with updated name
+    ndjson2 = json.dumps({"resourceType": "Patient", "id": pid, "name": [{"family": "Second"}]})
+    status, body, _ = fhir.post_raw(f"/{did}/$import", ndjson2.encode("utf-8"), content_type="application/x-ndjson")
+    assert status == 200
+    assert body["total"]["success"] == 1
+
+    # Verify latest version has versionId 2
+    status, patient, _ = fhir.get(f"/{did}/Patient/{pid}")
+    assert status == 200
+    assert patient["name"][0]["family"] == "Second"
+    assert patient["meta"]["versionId"] == "2", f"expected versionId 2, got {patient['meta']['versionId']}"
+
+    # Verify history contains version 1
+    status, hist, _ = fhir.get(f"/{did}/Patient/{pid}/_history")
+    assert status == 200
+    assert hist["total"] == 2, f"expected 2 history entries, got {hist['total']}"
+    # Find the version 1 entry in history
+    v1_entries = [e for e in hist["entry"] if e["resource"]["meta"]["versionId"] == "1"]
+    assert len(v1_entries) == 1, "version 1 should be in history"
+    assert v1_entries[0]["resource"]["name"][0]["family"] == "First"
+
+
+def test_import_ndjson_nonexistent_dataset(fhir):
+    """$import to a non-existent dataset returns 404."""
+    ndjson = json.dumps({"resourceType": "Patient", "id": "x", "name": [{"family": "X"}]})
+    status, body, _ = fhir.post_raw("/nonexistent-ds-xyz/$import", ndjson.encode("utf-8"), content_type="application/x-ndjson")
+    assert status == 404
+    assert body["resourceType"] == "OperationOutcome"
+
+
+def test_import_ndjson_invalid_id(fhir):
+    """Resources with invalid FHIR ids are rejected per-line."""
+    did = _create_dataset(fhir)
+    ndjson = "\n".join([
+        json.dumps({"resourceType": "Patient", "id": "valid-id", "name": [{"family": "OK"}]}),
+        json.dumps({"resourceType": "Patient", "id": "bad;id!", "name": [{"family": "Bad"}]}),
+    ])
+    status, body, _ = fhir.post_raw(f"/{did}/$import", ndjson.encode("utf-8"), content_type="application/x-ndjson")
+    assert status == 200
+    assert body["total"]["success"] == 1
+    assert body["total"]["errors"] == 1
+    assert len(body["errorDetails"]) == 1
+    assert "invalid" in body["errorDetails"][0]["error"].lower()

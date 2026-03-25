@@ -25,7 +25,7 @@ pub fn load_search_parameters() -> Result<SearchParamRegistry, String> {
     SearchParamRegistry::load_from_json(FHIR_SEARCH_PARAMETERS)
 }
 
-pub fn start_fhir_server(host: String, port: u16) -> Result<String, String> {
+pub fn start_fhir_server(host: String, port: u16, db_name: String, db_path: String) -> Result<String, String> {
     if ServerRegistry::instance().is_server_running(&host, port) {
         return Err(format!("FHIR server already running on {}:{}", host, port));
     }
@@ -44,13 +44,28 @@ pub fn start_fhir_server(host: String, port: u16) -> Result<String, String> {
                 .build()?;
 
             let result = rt.block_on(async move {
-                let executor = get_query_executor().ok_or_else(|| {
-                    let msg = "No query executor available";
-                    eprintln!("[fhir] ERROR: {msg}");
-                    std::io::Error::new(std::io::ErrorKind::Other, msg)
-                })?;
+                let use_host_db = std::env::var("FHIR_USE_HOST_DB")
+                    .map(|v| v == "true" || v == "1")
+                    .unwrap_or(false);
 
-                init_fhir_meta(&executor).await;
+                let pool_size = crate::executor_pool_size();
+
+                let executor = if use_host_db {
+                    eprintln!("[fhir] Using host DuckDB connection");
+                    get_query_executor().ok_or_else(|| {
+                        let msg = "No query executor available";
+                        eprintln!("[fhir] ERROR: {msg}");
+                        std::io::Error::new(std::io::ErrorKind::Other, msg)
+                    })?
+                } else {
+                    eprintln!("[fhir] Opening standalone DuckDB at {db_path}");
+                    Arc::new(QueryExecutor::new_standalone(&db_path, pool_size).map_err(|e| {
+                        eprintln!("[fhir] ERROR: Failed to open standalone DB: {e}");
+                        std::io::Error::new(std::io::ErrorKind::Other, e)
+                    })?)
+                };
+
+                init_fhir_meta(&executor, &db_name).await;
 
                 eprintln!("[fhir] Loading FHIR R4 StructureDefinitions...");
                 let definitions = load_default_definitions().map_err(|e| {
@@ -80,7 +95,7 @@ pub fn start_fhir_server(host: String, port: u16) -> Result<String, String> {
                 let search_params = Arc::new(search_params);
                 eprintln!("[fhir] Search parameters loaded");
 
-                let state = Arc::new(AppState::new(executor, registry, search_params));
+                let state = Arc::new(AppState::new(executor, registry, search_params, db_name));
                 let app = build_router(state);
 
                 let addr = format!("{}:{}", server_host, server_port);
