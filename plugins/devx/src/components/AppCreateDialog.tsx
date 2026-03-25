@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -50,6 +50,7 @@ export function AppCreateDialog({ open, onOpenChange, onCreateApp }: AppCreateDi
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Create New App</DialogTitle>
+          <DialogDescription>Choose a name and template for your new app.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">

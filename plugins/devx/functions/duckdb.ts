@@ -15,8 +15,20 @@ export function escapeSql(value: string): string {
 function getMemoryConnection() {
   const dbm = globalThis.Trex?.databaseManager?.();
   if (dbm) {
-    const conn = dbm.getConnection("memory", "main", "main", "main", {});
-    return conn.connection; // TrexDB instance
+    // Suppress "Error getting dialect for memory" log from the runtime's
+    // getConnection() which tries to look up credentials for "memory" db.
+    // The error is harmless (dialect defaults to "duckdb") but spams logs.
+    const origError = console.error;
+    console.error = (...args: unknown[]) => {
+      if (typeof args[0] === "string" && args[0].includes("Error getting dialect for memory")) return;
+      origError.apply(console, args);
+    };
+    try {
+      const conn = dbm.getConnection("memory", "main", "main", "main", {});
+      return conn.connection; // TrexDB instance
+    } finally {
+      console.error = origError;
+    }
   }
   return null;
 }

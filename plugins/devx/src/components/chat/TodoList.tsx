@@ -13,12 +13,13 @@ const STATUS_ICON = {
 };
 
 export function TodoList({ todos }: TodoListProps) {
-  const [expanded, setExpanded] = useState(true);
+  const completed = todos.filter((t) => t.status === "completed").length;
+  const allDone = completed === todos.length;
+  const inProgress = todos.find((t) => t.status === "in_progress");
+  const [expanded, setExpanded] = useState(!allDone);
 
   if (todos.length === 0) return null;
-
-  const completed = todos.filter((t) => t.status === "completed").length;
-  const inProgress = todos.find((t) => t.status === "in_progress");
+  if (allDone) return null;
 
   return (
     <div className="mx-3 mb-2 rounded-lg border bg-muted/30 p-2">

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -62,6 +62,7 @@ export function GitHubRepoDialog({ open, onOpenChange, appId, appName }: GitHubR
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>GitHub Repository</DialogTitle>
+          <DialogDescription>Create a new GitHub repository or connect an existing one.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           {/* Mode toggle */}

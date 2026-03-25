@@ -1,6 +1,6 @@
 /**
  * DevX Component Tagger Vite Plugin
- * Injects data-devx-id and data-devx-name attributes into JSX elements at dev time.
+ * Injects data-devx-id and data-devx-name attributes into JSX/Vue elements at dev time.
  * This file runs in the user's Vite process — must be plain JS, no TypeScript.
  *
  * Usage in vite.config.ts:
@@ -14,68 +14,109 @@ export default function devxComponentTagger() {
     apply: "serve", // dev only
     enforce: "pre",
 
-    async transform(code, id) {
-      // Skip non-JSX/TSX files
-      if (!/\.[jt]sx$/.test(id)) return null;
+    transform(code, id) {
       // Skip node_modules
       if (/node_modules/.test(id)) return null;
 
-      try {
-        // Use magic-string for efficient source transformations with sourcemap
-        const { default: MagicString } = await import("magic-string");
-        const s = new MagicString(code);
-        const relPath = getRelativePath(id);
-
-        // Regex-based approach: find JSX opening tags like <ComponentName or <div
-        // Match: < followed by a letter (not </ or < followed by space/=)
-        // We look for patterns like <TagName and inject attributes
-        const jsxOpeningTagRegex = /<([A-Z][A-Za-z0-9_.]*|[a-z][a-z0-9-]*)\s/g;
-        let match;
-        let modified = false;
-
-        while ((match = jsxOpeningTagRegex.exec(code)) !== null) {
-          const tagName = match[1];
-          const insertPos = match.index + match[0].length;
-
-          // Skip TypeScript generics: if the < is preceded by a word char it's
-          // a generic type param (e.g. useState<Todo, Array<Item) not JSX.
-          if (match.index > 0 && /\w/.test(code[match.index - 1])) continue;
-
-          // Calculate line:col from offset
-          const lines = code.slice(0, match.index).split("\n");
-          const line = lines.length;
-          const col = lines[lines.length - 1].length + 1;
-
-          // Only tag user components (PascalCase) — skip intrinsic HTML elements
-          // for cleaner selection (HTML elements inherit from nearest component)
-          if (/^[A-Z]/.test(tagName)) {
-            const devxId = relPath + ":" + line + ":" + col;
-            const attrs =
-              'data-devx-id="' + devxId + '" data-devx-name="' + tagName + '" ';
-            s.appendLeft(insertPos, attrs);
-            modified = true;
-          }
-        }
-
-        if (!modified) return null;
-
-        return {
-          code: s.toString(),
-          map: s.generateMap({ hires: true }),
-        };
-      } catch (err) {
-        // Don't break the build if tagger fails
-        console.warn("[devx-tagger] Failed to process " + id + ":", err.message);
-        return null;
+      if (/\.[jt]sx$/.test(id)) {
+        return transformJsx(code, id);
       }
+      if (/\.vue$/.test(id)) {
+        return transformVue(code, id);
+      }
+      return null;
     },
   };
 }
 
+function transformJsx(code, id) {
+  try {
+    const relPath = getRelativePath(id);
+    const jsxOpeningTagRegex = /<([A-Z][A-Za-z0-9_.]*)\s/g;
+    let match;
+    const insertions = [];
+
+    while ((match = jsxOpeningTagRegex.exec(code)) !== null) {
+      const tagName = match[1];
+      const insertPos = match.index + match[0].length;
+
+      // Skip TypeScript generics
+      if (match.index > 0 && /\w/.test(code[match.index - 1])) continue;
+
+      const lines = code.slice(0, match.index).split("\n");
+      const line = lines.length;
+      const col = lines[lines.length - 1].length + 1;
+
+      const devxId = relPath + ":" + line + ":" + col;
+      insertions.push({
+        pos: insertPos,
+        text: 'data-devx-id="' + devxId + '" data-devx-name="' + tagName + '" ',
+      });
+    }
+
+    if (insertions.length === 0) return null;
+
+    // Apply insertions in reverse order so positions stay valid
+    let result = code;
+    for (let i = insertions.length - 1; i >= 0; i--) {
+      const { pos, text } = insertions[i];
+      result = result.slice(0, pos) + text + result.slice(pos);
+    }
+
+    return { code: result, map: null };
+  } catch (err) {
+    console.warn("[devx-tagger] Failed to process " + id + ":", err.message);
+    return null;
+  }
+}
+
+function transformVue(code, id) {
+  try {
+    const relPath = getRelativePath(id);
+
+    const templateMatch = code.match(/<template[^>]*>([\s\S]*)<\/template>/);
+    if (!templateMatch) return null;
+
+    const templateStart = code.indexOf(templateMatch[0]);
+    const templateContent = templateMatch[1];
+    const templateOffset = templateStart + templateMatch[0].indexOf(templateContent);
+
+    const vueTagRegex = /<([A-Z][A-Za-z0-9-]*|v-[a-z][a-z0-9-]*)\s/g;
+    let match;
+    const insertions = [];
+
+    while ((match = vueTagRegex.exec(templateContent)) !== null) {
+      const tagName = match[1];
+      const absPos = templateOffset + match.index;
+      const insertPos = absPos + match[0].length;
+
+      const lines = code.slice(0, absPos).split("\n");
+      const line = lines.length;
+      const col = lines[lines.length - 1].length + 1;
+
+      const devxId = relPath + ":" + line + ":" + col;
+      insertions.push({
+        pos: insertPos,
+        text: 'data-devx-id="' + devxId + '" data-devx-name="' + tagName + '" ',
+      });
+    }
+
+    if (insertions.length === 0) return null;
+
+    let result = code;
+    for (let i = insertions.length - 1; i >= 0; i--) {
+      const { pos, text } = insertions[i];
+      result = result.slice(0, pos) + text + result.slice(pos);
+    }
+
+    return { code: result, map: null };
+  } catch (err) {
+    console.warn("[devx-tagger] Failed to process " + id + ":", err.message);
+    return null;
+  }
+}
 
 function getRelativePath(id) {
-  // Strip the project root to get a relative path
-  // Vite provides absolute paths; we want src/components/Button.tsx
   const cwd = process.cwd().replace(/\\/g, "/");
   const normalized = id.replace(/\\/g, "/");
   if (normalized.startsWith(cwd + "/")) {

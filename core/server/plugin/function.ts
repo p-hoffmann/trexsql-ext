@@ -368,8 +368,12 @@ function _addFunction(
           res.end();
         };
         pump().catch(() => res.end());
+      } else if (contentType && !contentType.includes("text/") && !contentType.includes("application/json") && !contentType.includes("application/javascript")) {
+        // Binary responses (fonts, images, etc.): use arrayBuffer to preserve data
+        const responseBody = await workerResponse.arrayBuffer();
+        res.end(Buffer.from(responseBody));
       } else {
-        // Non-streaming responses: buffer as before
+        // Text responses: buffer as before
         const responseBody = await workerResponse.text();
         res.send(responseBody);
       }

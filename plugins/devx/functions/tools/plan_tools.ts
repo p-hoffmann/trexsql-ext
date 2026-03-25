@@ -1,33 +1,62 @@
 // @ts-nocheck - Deno edge function
 /**
  * Plan mode tools: questionnaire, write_plan, exit_plan.
- * Uses the same blocking-resolution pattern as the consent system.
+ *
+ * Questionnaire uses a DB-backed pending_responses table so that the
+ * answer POST (which may land on a different worker instance) can resolve
+ * the blocking poll in the SSE-stream worker.
  */
 import type { ToolDefinition } from "./types.ts";
 
-// In-memory map for pending questionnaire responses
-const pendingQuestionnaires = new Map();
+const POLL_INTERVAL_MS = 500;
+const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
-/** Resolve a pending questionnaire (called from plan_routes) */
-export function resolveQuestionnaire(requestId, answers, userId) {
-  const entry = pendingQuestionnaires.get(requestId);
-  if (entry) {
-    if (entry.userId && entry.userId !== userId) return false;
-    entry.resolve(answers);
-    pendingQuestionnaires.delete(requestId);
-    return true;
-  }
-  return false;
+/** Resolve a pending questionnaire by writing the answer to the DB */
+export async function resolveQuestionnaire(requestId, answers, userId, sql) {
+  const result = await sql(
+    `UPDATE devx.pending_responses
+     SET answer = $1
+     WHERE request_id = $2 AND user_id = $3 AND answer IS NULL
+     RETURNING request_id`,
+    [JSON.stringify(answers), requestId, userId],
+  );
+  return result.rows.length > 0;
 }
 
-/** Clean up questionnaires for a chat (called on stream abort) */
-export function clearPendingQuestionnaires(chatId) {
-  for (const [requestId, entry] of pendingQuestionnaires.entries()) {
-    if (entry.chatId === chatId) {
-      entry.resolve(null);
-      pendingQuestionnaires.delete(requestId);
-    }
+/** Clean up pending responses for a chat (called on stream abort) */
+export async function clearPendingResponses(chatId, sql) {
+  try {
+    await sql(
+      `DELETE FROM devx.pending_responses WHERE chat_id = $1`,
+      [chatId],
+    );
+  } catch {
+    // Best-effort cleanup
   }
+}
+
+/** Poll the DB for an answer to a pending response */
+async function pollForAnswer(requestId, sql, timeoutMs = TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await sql(
+      `SELECT answer FROM devx.pending_responses WHERE request_id = $1`,
+      [requestId],
+    );
+    if (result.rows.length === 0) {
+      // Row was deleted (stream aborted) — treat as no response
+      return null;
+    }
+    if (result.rows[0].answer !== null) {
+      // Answer received — clean up and return
+      await sql(`DELETE FROM devx.pending_responses WHERE request_id = $1`, [requestId]);
+      return result.rows[0].answer;
+    }
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+  }
+  // Timeout — clean up
+  await sql(`DELETE FROM devx.pending_responses WHERE request_id = $1`, [requestId]);
+  return null;
 }
 
 export const planningQuestionnaireTool: ToolDefinition<{
@@ -71,24 +100,18 @@ export const planningQuestionnaireTool: ToolDefinition<{
   async execute(args, ctx) {
     const requestId = crypto.randomUUID();
 
+    // Insert pending row (answer = NULL means waiting)
+    await ctx.sql(
+      `INSERT INTO devx.pending_responses (request_id, chat_id, user_id, kind)
+       VALUES ($1, $2, $3, 'questionnaire')`,
+      [requestId, ctx.chatId, ctx.userId],
+    );
+
     // Send questionnaire to client
     ctx.send({ type: "questionnaire", requestId, questions: args.questions });
 
-    // Block until user answers
-    const answers = await new Promise((resolve) => {
-      pendingQuestionnaires.set(requestId, {
-        resolve,
-        userId: ctx.userId,
-        chatId: ctx.chatId,
-      });
-      // Timeout after 10 minutes
-      setTimeout(() => {
-        if (pendingQuestionnaires.has(requestId)) {
-          pendingQuestionnaires.delete(requestId);
-          resolve(null);
-        }
-      }, 10 * 60 * 1000);
-    });
+    // Poll DB until answer arrives or timeout
+    const answers = await pollForAnswer(requestId, ctx.sql);
 
     if (!answers) {
       return "User did not respond to the questionnaire.";

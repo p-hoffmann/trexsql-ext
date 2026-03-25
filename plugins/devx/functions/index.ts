@@ -1,14 +1,14 @@
 // @ts-nocheck - Deno edge function, not compiled by tsc
 import { constructSystemPrompt, getMaxHistoryTurns } from "./prompts.ts";
 import { streamAgentChat, resolveConsent, clearPendingConsents } from "./agent.ts";
-import { clearPendingQuestionnaires } from "./tools/plan_tools.ts";
+import { clearPendingResponses } from "./tools/plan_tools.ts";
 import { ensureAppWorkspace, getAppWorkspacePath } from "./tools/workspace.ts";
 import { safeJoin, EXCLUDED_DIRS, EXCLUDED_FILES } from "./tools/path_safety.ts";
 import { parseBuildTags, stripBuildTags } from "./build_tag_parser.ts";
 import { executeBuildTags } from "./build_tag_executor.ts";
 import { devServerManager } from "./dev_server.ts";
 import { duckdb, escapeSql } from "./duckdb.ts";
-import { TEMPLATES, scaffoldTemplate } from "./templates.ts";
+import { TEMPLATES, scaffoldTemplate, injectComponentTagger } from "./templates.ts";
 import { relative } from "https://deno.land/std@0.224.0/path/mod.ts";
 // Phase 6: Extracted route handlers
 import { handleGitRoutes } from "./routes/git_routes.ts";
@@ -205,7 +205,7 @@ Deno.serve(async (req: Request) => {
         return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
       }
       const result = await sql(
-        `SELECT id, chat_id, role, content, model, created_at
+        `SELECT id, chat_id, role, content, model, tool_calls, created_at
          FROM devx.messages
          WHERE chat_id = $1
          ORDER BY created_at ASC`,
@@ -255,10 +255,24 @@ Deno.serve(async (req: Request) => {
         );
       }
 
+      // Augment prompt with visual edit / selected component context so the AI
+      // can reliably associate "the selected component" with actual code
+      let augmentedPrompt = prompt;
+      if (streamContext?.visualEdit) {
+        const { filePath, line, componentName } = streamContext.visualEdit;
+        augmentedPrompt = `[Visual edit target: <${componentName}> in ${filePath}:${line}]\n${prompt}`;
+      }
+      if (streamContext?.selectedComponents && streamContext.selectedComponents.length > 0) {
+        const compList = streamContext.selectedComponents
+          .map((c) => `<${c.devxName}> in ${c.filePath}:${c.line}`)
+          .join(", ");
+        augmentedPrompt = `[Selected components: ${compList}]\n${augmentedPrompt}`;
+      }
+
       // Save user message
       await sql(
         `INSERT INTO devx.messages (chat_id, role, content) VALUES ($1, 'user', $2)`,
-        [chatId, prompt],
+        [chatId, augmentedPrompt],
       );
 
       // Build system prompt based on chat mode
@@ -358,12 +372,18 @@ Deno.serve(async (req: Request) => {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
           };
 
+          // SSE heartbeat keeps the connection alive during long waits (e.g. questionnaires)
+          const heartbeat = setInterval(() => {
+            try { controller.enqueue(encoder.encode(": heartbeat\n\n")); } catch { /* stream closed */ }
+          }, 15000);
+
           try {
             let fullContent = "";
 
+            let savedToolCalls: any[] | null = null;
             if (chatMode === "agent" || chatMode === "plan") {
               // Agent/plan mode: use AI SDK with tool calling
-              fullContent = await streamAgentChat({
+              const agentResult = await streamAgentChat({
                 chatId,
                 userId,
                 appId: chatCheck.rows[0].app_id,
@@ -373,6 +393,8 @@ Deno.serve(async (req: Request) => {
                 send,
                 sqlFn: sql,
               });
+              fullContent = agentResult.content;
+              if (agentResult.toolCalls.length > 0) savedToolCalls = agentResult.toolCalls;
             } else if (settings.provider === "anthropic") {
               fullContent = await streamAnthropic(settings, history, send, systemPrompt);
             } else if (settings.provider === "google") {
@@ -395,18 +417,20 @@ Deno.serve(async (req: Request) => {
               }
             }
 
-            // Save assistant message
+            // Save assistant message (with tool calls if any)
             const saveResult = await sql(
-              `INSERT INTO devx.messages (chat_id, role, content, model)
-               VALUES ($1, 'assistant', $2, $3)
-               RETURNING id, chat_id, role, content, model, created_at`,
-              [chatId, fullContent, settings.model],
+              `INSERT INTO devx.messages (chat_id, role, content, model, tool_calls)
+               VALUES ($1, 'assistant', $2, $3, $4)
+               RETURNING id, chat_id, role, content, model, tool_calls, created_at`,
+              [chatId, fullContent, settings.model, savedToolCalls ? JSON.stringify(savedToolCalls) : null],
             );
 
             send({ type: "done", message: saveResult.rows[0] });
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            clearInterval(heartbeat);
             controller.close();
           } catch (err) {
+            clearInterval(heartbeat);
             console.error("Stream error:", err);
             const msg = err instanceof Error ? err.message : String(err);
             // Strip sensitive details from error messages
@@ -418,8 +442,9 @@ Deno.serve(async (req: Request) => {
           }
         },
         cancel() {
+          clearInterval(heartbeat);
           clearPendingConsents(chatId);
-          clearPendingQuestionnaires(chatId);
+          clearPendingResponses(chatId, sql);
         },
       });
 
@@ -558,9 +583,10 @@ Deno.serve(async (req: Request) => {
       await sql(`UPDATE devx.apps SET path = $1 WHERE id = $2`, [relPath, app.id]);
       app.path = relPath;
 
-      // Scaffold template files
+      // Scaffold template files and inject component tagger for inspect support
       try {
         await scaffoldTemplate(templateId, wsPath, app.id);
+        await injectComponentTagger(wsPath);
       } catch (err) {
         console.error("Template scaffold error:", err);
         // App is created even if scaffold fails — user can add files manually
@@ -843,6 +869,17 @@ Deno.serve(async (req: Request) => {
       }
 
       const status = await devServerManager.start(userId, appId, wsPath, app.dev_command, app.install_command);
+
+      // Register backend functions for this app (idempotent)
+      try {
+        const registerUrl = `http://localhost:8000${Deno.env.get("BASE_PATH") || "/trex"}/api/plugins/register`;
+        await fetch(registerUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: wsPath }),
+        });
+      } catch { /* best-effort */ }
+
       return Response.json(status, { headers: corsHeaders });
     }
 
@@ -873,6 +910,17 @@ Deno.serve(async (req: Request) => {
       const wsPath = getAppWorkspacePath(userId, appId);
       devServerManager.stop(userId, appId);
       const status = await devServerManager.start(userId, appId, wsPath, app.dev_command, app.install_command);
+
+      // Re-register backend functions after restart (picks up code changes)
+      try {
+        const registerUrl = `http://localhost:8000${Deno.env.get("BASE_PATH") || "/trex"}/api/plugins/register`;
+        await fetch(registerUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: wsPath }),
+        });
+      } catch { /* best-effort */ }
+
       return Response.json(status, { headers: corsHeaders });
     }
 

@@ -239,7 +239,8 @@ export const ChatMessage = memo(function ChatMessage({
     [useInlineTags, rawContent],
   );
   const content = useInlineTags ? "" : (isAssistant ? stripDevxTags(rawContent) : rawContent);
-  // Strip tool markers for display — tool calls render in their own block during streaming
+  const hasToolMarkers = TOOL_MARKER_RE.test(content);
+  // Strip tool markers for display — only when not rendering inline
   const contentWithoutMarkers = content.replace(TOOL_MARKER_RE_G, "").trim();
 
   const handleCopy = async () => {
@@ -310,9 +311,9 @@ export const ChatMessage = memo(function ChatMessage({
               <span className="inline-block h-4 w-1.5 animate-pulse bg-foreground/50 ml-0.5" />
             )}
           </>
-        ) : isAssistant && !isStreaming && hasToolCalls && TOOL_MARKER_RE.test(rawContent) ? (
+        ) : isAssistant && !isStreaming && hasToolCalls && hasToolMarkers ? (
           /* Completed messages: render tool calls inline at their marker positions */
-          <InlineToolCallContent content={rawContent} toolCalls={completedToolCalls!} />
+          <InlineToolCallContent content={content} toolCalls={completedToolCalls!} />
         ) : contentWithoutMarkers ? (
           <div className="prose prose-sm dark:prose-invert max-w-none break-words text-sm">
             {isAssistant ? (
@@ -330,9 +331,9 @@ export const ChatMessage = memo(function ChatMessage({
         {!contentWithoutMarkers && !useInlineTags && isStreaming && !hasToolCalls && (
           <StreamingLoader />
         )}
-        {/* During streaming: always show tool calls in dedicated block */}
-        {/* After streaming: show only if no inline markers (fallback) */}
-        {hasToolCalls && (isStreaming || !TOOL_MARKER_RE.test(rawContent)) && (
+        {/* During streaming: show tool calls below text as they complete */}
+        {/* After completion: show only if no inline markers (fallback for old messages) */}
+        {hasToolCalls && (isStreaming || !hasToolMarkers) && (
           <div className="space-y-1.5 my-2">
             {completedToolCalls!.map((tc) => (
               <ToolCallCard key={tc.callId} toolCall={tc} />

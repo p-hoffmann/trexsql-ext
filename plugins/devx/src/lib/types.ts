@@ -6,6 +6,7 @@ export interface Message {
   model?: string | null;
   tokens?: number | null;
   error?: string | null;
+  tool_calls?: ToolCall[] | null;
   created_at: string;
 }
 

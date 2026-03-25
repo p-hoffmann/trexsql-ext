@@ -20,7 +20,7 @@ export async function handlePlanRoutes(path, method, req, userId, sql, corsHeade
     return Response.json(result.rows[0], { headers: corsHeaders });
   }
 
-  // POST /chats/:id/plan/answer — resolve pending questionnaire
+  // POST /chats/:id/plan/answer — resolve pending questionnaire via DB
   const answerMatch = path.match(/\/chats\/([^/]+)\/plan\/answer$/);
   if (answerMatch && method === "POST") {
     const body = await req.json();
@@ -28,7 +28,7 @@ export async function handlePlanRoutes(path, method, req, userId, sql, corsHeade
     if (!requestId || !answers) {
       return Response.json({ error: "requestId and answers required" }, { status: 400, headers: corsHeaders });
     }
-    const resolved = resolveQuestionnaire(requestId, answers, userId);
+    const resolved = await resolveQuestionnaire(requestId, answers, userId, sql);
     if (!resolved) {
       return Response.json({ error: "Questionnaire not found or expired" }, { status: 404, headers: corsHeaders });
     }

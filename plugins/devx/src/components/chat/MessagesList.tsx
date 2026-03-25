@@ -52,7 +52,7 @@ export function MessagesList({ messages, streaming, streamingContent, toolCalls 
         </div>
       )}
       {messages.map((msg, index) => {
-        const msgToolCalls = completedToolCalls?.get(msg.id);
+        const msgToolCalls = completedToolCalls?.get(msg.id) || msg.tool_calls || undefined;
         const msgBuildTags = completedBuildTags?.get(msg.id);
         const isLastAssistantMessage = msg.role === "assistant" && !messages.slice(index + 1).some((m) => m.role === "assistant");
         const showActions = isLastAssistantMessage && !streaming && onAction;

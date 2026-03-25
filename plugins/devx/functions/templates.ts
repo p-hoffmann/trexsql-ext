@@ -1534,6 +1534,8 @@ button:hover {
 - Portal props available via PortalContext: getToken, username, datasetId, studyId, features, locale, containerId, appId, apiBase.
 - Always use PortalContext to access portal APIs (e.g. getToken() for auth headers).
 - Use apiBase from PortalContext as the base URL for all backend API calls (e.g. fetch(\`\${apiBase}/items\`)).
+- NEVER change apiBase in main.tsx — it must stay as '/plugins/trex/__APP_ID__/api'. The trex server routes requests to the backend functions.
+- NEVER change getToken in main.tsx — the preview passes the auth token via URL query parameter.
 - UPDATE src/pages/HomePage.tsx or add new pages. The App.tsx routes to pages.
 
 ## D2E Portal Styling Guidelines
@@ -2082,6 +2084,8 @@ export interface ErrorResponse {
 - This is an admin plugin: manages users, configuration, and infrastructure. Required role: SYSTEM_ADMIN.
 - Always use PortalContext to access portal APIs (e.g. getToken() for auth headers).
 - Use apiBase from PortalContext as the base URL for all backend API calls (e.g. fetch(\`\${apiBase}/users\`)).
+- NEVER change apiBase in main.tsx — it must stay as '/plugins/trex/__APP_ID__/api'. The trex server routes requests to the backend functions.
+- NEVER change getToken in main.tsx — the preview passes the auth token via URL query parameter.
 - UPDATE src/pages/HomePage.tsx or add new pages. The App.tsx routes to pages.
 
 ## D2E Portal Styling Guidelines
@@ -3675,6 +3679,7 @@ const isDev = computed(() => import.meta.env.DEV);
       "src/components/AtlasShell.vue": `<script setup lang="ts">
 /**
  * Dev-only Atlas host shell — mimics the Atlas3 NavBar for preview.
+ * Uses plain HTML to avoid Vuetify v-app-bar scope warnings in dev mode.
  * This component is NOT included in the production single-spa build.
  */
 const navItems = ['Data Sources', 'Concept Sets', 'Cohorts'];
@@ -3682,49 +3687,91 @@ const webapiUrl = import.meta.env.VITE_WEBAPI_URL || 'http://localhost:8080/WebA
 </script>
 
 <template>
-  <v-app-bar
-    color="white"
-    height="56"
-    flat
-    style="box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important"
-  >
-    <div class="d-flex align-center" style="padding-left: 1rem">
-      <span
-        class="text-primary"
-        style="font-size: 1.5rem; font-weight: 300; letter-spacing: 0.2em"
-      >
-        ATLAS
-      </span>
-      <v-chip size="x-small" variant="outlined" class="ml-3" color="accent">
-        DEV PREVIEW
-      </v-chip>
+  <header class="atlas-shell-nav">
+    <div class="atlas-shell-nav__left">
+      <span class="atlas-shell-nav__logo">ATLAS</span>
+      <span class="atlas-shell-nav__badge">DEV PREVIEW</span>
     </div>
-    <v-spacer />
-    <div class="d-none d-md-flex align-center" style="gap: 0.5rem">
-      <v-btn
+    <nav class="atlas-shell-nav__links">
+      <a
         v-for="item in navItems"
         :key="item"
-        variant="text"
-        color="primary"
-        size="small"
-        style="text-transform: none; font-size: 14px"
+        href="#"
+        class="atlas-shell-nav__link"
+        @click.prevent
       >
         {{ item }}
-      </v-btn>
+      </a>
+    </nav>
+    <div class="atlas-shell-nav__right">
+      <span class="atlas-shell-nav__api">{{ webapiUrl }}</span>
     </div>
-    <v-spacer />
-    <v-chip size="small" variant="tonal" color="info" class="mr-2">
-      <v-icon start size="small">mdi-api</v-icon>
-      {{ webapiUrl }}
-    </v-chip>
-    <v-btn icon size="small" variant="text">
-      <v-icon>mdi-cog</v-icon>
-    </v-btn>
-    <v-btn icon size="small" variant="text">
-      <v-icon>mdi-account-circle</v-icon>
-    </v-btn>
-  </v-app-bar>
-</template>`,
+  </header>
+</template>
+
+<style scoped>
+.atlas-shell-nav {
+  width: 100%;
+  height: 56px;
+  background-color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  padding: 0 1rem;
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+}
+.atlas-shell-nav__left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.atlas-shell-nav__logo {
+  font-size: 1.5rem;
+  font-weight: 300;
+  letter-spacing: 0.2em;
+  color: rgb(var(--v-theme-primary));
+}
+.atlas-shell-nav__badge {
+  font-size: 0.625rem;
+  padding: 2px 6px;
+  border: 1px solid rgb(var(--v-theme-accent));
+  border-radius: 4px;
+  color: rgb(var(--v-theme-accent));
+}
+.atlas-shell-nav__links {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: 1.5rem;
+}
+.atlas-shell-nav__link {
+  padding: 18px 12px;
+  color: rgb(var(--v-theme-primary));
+  font-size: 14px;
+  text-decoration: none;
+  transition: color 0.15s ease-in-out;
+}
+.atlas-shell-nav__link:hover {
+  color: rgb(var(--v-theme-accent));
+}
+.atlas-shell-nav__right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+.atlas-shell-nav__api {
+  font-size: 0.75rem;
+  color: rgb(var(--v-theme-info));
+  background: rgba(var(--v-theme-info), 0.08);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+@media (max-width: 959px) {
+  .atlas-shell-nav__links { display: none; }
+}
+</style>`,
       "src/views/HomeView.vue": `<script setup lang="ts">
 import { ref } from 'vue';
 
@@ -3897,7 +3944,7 @@ async function registerAppFunctions(appDir: string): Promise<void> {
 /**
  * Inject the DevX component tagger Vite plugin into a scaffolded project.
  */
-async function injectComponentTagger(targetDir: string): Promise<void> {
+export async function injectComponentTagger(targetDir: string): Promise<void> {
   // Create .devx directory
   await Deno.mkdir(`${targetDir}/.devx`, { recursive: true });
 

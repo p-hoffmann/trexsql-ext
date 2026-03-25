@@ -311,6 +311,24 @@ try {
   await Plugins.initPlugins(app);
   addPluginRoutes(app);
   console.log("Plugin system initialized");
+
+  // Re-register devx app functions (dynamic plugins don't survive restarts)
+  const WORKSPACE_DIR = Deno.env.get("DEVX_WORKSPACE_DIR") || "/tmp/devx-workspaces";
+  try {
+    const appsResult = await pool.query(
+      `SELECT path FROM devx.apps WHERE path IS NOT NULL AND path != ''`,
+    );
+    let count = 0;
+    for (const row of appsResult.rows) {
+      const appPath = `${WORKSPACE_DIR}/${row.path}`;
+      try {
+        await Deno.stat(`${appPath}/package.json`);
+        await Plugins.registerFromPath(app, appPath);
+        count++;
+      } catch { /* skip apps without package.json */ }
+    }
+    if (count > 0) console.log(`Re-registered ${count} devx app functions`);
+  } catch { /* devx schema may not exist yet */ }
 } catch (err) {
   console.error("Plugin system failed to initialize:", err);
 }

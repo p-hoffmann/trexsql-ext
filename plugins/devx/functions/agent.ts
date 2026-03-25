@@ -170,8 +170,8 @@ export async function streamAgentChat({
     const schema = { type: "object", ...def.parameters };
     aiTools[name] = tool({
       description: def.description,
-      inputSchema: jsonSchema(schema),
-      execute: async (args) => {
+      inputSchema: jsonSchema(schema, { validate: (value) => ({ success: true, value }) }),
+      execute: async (args, { toolCallId }) => {
         const toolDef = getToolByName(name);
         if (!toolDef) return `Error: tool ${name} not found`;
 
@@ -233,10 +233,11 @@ export async function streamAgentChat({
           return `Tool call denied by user.`;
         }
 
-        const callId = crypto.randomUUID();
+        const callId = toolCallId;
         send({ type: "tool_call_start", callId, name, args });
         try {
           const result = await toolDef.execute(args, ctx);
+          collectedToolCalls.push({ callId, name, args, result: result.slice(0, 500) });
           send({ type: "tool_call_end", callId, name, result: result.slice(0, 500) });
           const MAX_RESULT = 20_000;
           if (result.length > MAX_RESULT) {
@@ -245,6 +246,7 @@ export async function streamAgentChat({
           return result;
         } catch (err) {
           const errMsg = `Tool error: ${err.message || String(err)}`;
+          collectedToolCalls.push({ callId, name, args, result: errMsg, error: true });
           send({ type: "tool_call_end", callId, name, result: errMsg, error: true });
           return errMsg;
         }
@@ -335,6 +337,7 @@ export async function streamAgentChat({
   const model = createModel(settings);
   let fullContent = "";
   let stepCount = 0;
+  const collectedToolCalls: { callId: string; name: string; args: any; result?: string; error?: boolean }[] = [];
 
   try {
     const result = streamText({
@@ -357,6 +360,14 @@ export async function streamAgentChat({
         if (text) {
           fullContent += text;
           send({ type: "chunk", content: text });
+        }
+      } else if (part.type === "tool-call") {
+        // Inject marker at tool invocation position (before tool executes)
+        const callId = (part as any).toolCallId;
+        if (callId) {
+          const marker = `\n<!--tool:${callId}-->\n`;
+          fullContent += marker;
+          send({ type: "chunk", content: marker });
         }
       }
     }
@@ -383,5 +394,5 @@ export async function streamAgentChat({
     throw new Error(safeMsg);
   }
 
-  return fullContent;
+  return { content: fullContent, toolCalls: collectedToolCalls };
 }

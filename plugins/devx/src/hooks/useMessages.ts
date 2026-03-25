@@ -54,6 +54,14 @@ export function useMessages(chatId: string | null, options?: { onAppCommand?: (c
       if (chatIdRef.current === chatId) {
         setMessages(msgs);
         setTodos(chatTodos);
+        // Restore tool calls from persisted message data
+        const tcMap = new Map<string, ToolCall[]>();
+        for (const msg of msgs) {
+          if (msg.tool_calls && msg.tool_calls.length > 0) {
+            tcMap.set(msg.id, msg.tool_calls);
+          }
+        }
+        if (tcMap.size > 0) setCompletedToolCalls(tcMap);
       }
       setLoading(false);
     }).catch((err) => {
@@ -153,11 +161,7 @@ export function useMessages(chatId: string | null, options?: { onAppCommand?: (c
           setError(null); // Clear top-level error since it's now inline
         },
         onToolCall(toolCall) {
-          // Inject a position marker into the streaming content so tool calls
-          // render inline at the point they were invoked, not at the end.
-          const marker = `\n<!--tool:${toolCall.callId}-->\n`;
-          streamingContentRef.current += marker;
-          setStreamingContent((prev) => prev + marker);
+          // Marker is now injected server-side into the content stream
           setToolCalls((prev) => {
             const next = [...prev, toolCall];
             toolCallsRef.current = next;
