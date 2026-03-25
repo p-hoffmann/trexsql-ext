@@ -97,8 +97,8 @@ def test_ai_generate_no_model_error(node_factory):
 @pytest.fixture(scope="module")
 def ai_node():
     """Module-scoped node with ai loaded (shared across download tests)."""
-    gossip_port, flight_port, pgwire_port = alloc_ports()
-    node = Node([AI_EXT], gossip_port, flight_port, pgwire_port)
+    gossip_port, flight_port, pgwire_port, trexas_port = alloc_ports()
+    node = Node([AI_EXT], gossip_port, flight_port, pgwire_port, trexas_port)
     yield node
     node.close()
 
