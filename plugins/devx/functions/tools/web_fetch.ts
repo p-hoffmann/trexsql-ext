@@ -33,8 +33,8 @@ export const webFetchTool: ToolDefinition = {
         while (result !== prev) {
           prev = result;
           result = result
-            .replace(/<script[\s>][\s\S]*?<\/script\s*>/gi, "")
-            .replace(/<style[\s>][\s\S]*?<\/style\s*>/gi, "");
+            .replace(/<script[\s\S]*?<\/script[^>]*>/gi, "")
+            .replace(/<style[\s\S]*?<\/style[^>]*>/gi, "");
         }
         return result.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
       }

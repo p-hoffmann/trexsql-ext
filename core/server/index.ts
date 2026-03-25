@@ -17,6 +17,7 @@ import { addPluginRoutes } from "./routes/plugin.ts";
 import { functionsRouter } from "./routes/functions.ts";
 import { cliLoginRouter } from "./routes/cli-login.ts";
 import { fnmap } from "./plugin/function.ts";
+import rateLimit from "express-rate-limit";
 import { apiLimiter } from "./middleware/rate-limit.ts";
 
 console.log("main function started");
@@ -215,7 +216,7 @@ app.post(`${BASE_PATH}/api/plugins/register`, apiLimiter, express.json(), async 
 });
 
 // Admin-only: get auth keys
-app.get(`${BASE_PATH}/api/settings/auth-keys`, apiLimiter, async (req, res) => {
+app.get(`${BASE_PATH}/api/settings/auth-keys`, rateLimit({ windowMs: 15 * 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false }), async (req, res) => {
   try {
     const user = await getAuthUser(req);
     if (!user || user.role !== "admin") {

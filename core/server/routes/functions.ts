@@ -1017,7 +1017,10 @@ router.get(`${BASE_PATH}/v1/projects/:ref/types/typescript`, apiLimiter, async (
     return;
   }
 
-  const includedSchemas = ((req.query.included_schemas as string) || "public").split(",").map(s => s.trim()).filter(Boolean);
+  const includedSchemas = ((req.query.included_schemas as string) || "public")
+    .split(",")
+    .map(s => s.trim().replace(/[^a-zA-Z0-9_]/g, ""))
+    .filter(Boolean);
 
   try {
     const { pool } = await import("../db.ts");
