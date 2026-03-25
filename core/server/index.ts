@@ -214,15 +214,16 @@ app.post(`${BASE_PATH}/api/plugins/register`, apiLimiter, express.json(), async 
   }
 });
 
-// Admin-only: get auth keys
-async function handleGetAuthKeys(req: any, res: any) {
+// Admin-only: get auth keys (auth check via getAuthUser, rate-limited via apiLimiter)
+app.get(`${BASE_PATH}/api/settings/auth-keys`, apiLimiter, async (req, res) => {
   try {
     const user = await getAuthUser(req);
     if (!user || user.role !== "admin") {
       res.status(401).json({ error: "Admin authentication required" });
       return;
     }
-    const result = await pool.query(
+    const { pool: dbPool } = await import("./db.ts");
+    const result = await dbPool.query(
       `SELECT key, value FROM trex.setting WHERE key IN ('auth.anonKey', 'auth.serviceRoleKey')`,
     );
     const keys: Record<string, string> = {};
@@ -234,8 +235,7 @@ async function handleGetAuthKeys(req: any, res: any) {
     console.error("Auth keys error:", err);
     res.status(500).json({ error: "Internal server error" });
   }
-}
-app.get(`${BASE_PATH}/api/settings/auth-keys`, apiLimiter, handleGetAuthKeys);
+});
 
 // PostgREST proxy — before authContext since PostgREST handles its own JWT verification
 const POSTGREST_HOST = Deno.env.get("POSTGREST_HOST") || "postgrest";
