@@ -23,6 +23,10 @@ from conftest import Node, FHIR_EXT, alloc_ports
 # Each parametrized value starts a separate FHIR server instance.
 POOL_SIZES = [1, 4]
 
+# DB modes: "standalone" = FHIR server owns its own DuckDB (default),
+#            "host" = FHIR server uses the host DuckDB connection.
+DB_MODES = ["standalone", "host"]
+
 
 def _free_port():
     """Ask the OS for a free TCP port."""
@@ -122,21 +126,45 @@ def _create_patient(client, dataset_id, family="Doe", given="John", gender="male
 # Module-scoped fixture: one FHIR server for all tests in this file
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(scope="module", params=POOL_SIZES, ids=[f"pool={n}" for n in POOL_SIZES])
+_FHIR_PARAMS = [(pool, mode) for pool in POOL_SIZES for mode in DB_MODES]
+_FHIR_IDS = [f"pool={pool}-{mode}" for pool, mode in _FHIR_PARAMS]
+
+
+@pytest.fixture(scope="module", params=_FHIR_PARAMS, ids=_FHIR_IDS)
 def fhir(request):
-    """Start the FHIR extension with a given pool size, yield an FhirClient."""
-    pool_size = request.param
+    """Start the FHIR extension with a given pool size and DB mode, yield an FhirClient."""
+    import tempfile, shutil
+
+    pool_size, db_mode = request.param
     os.environ["FHIR_POOL_SIZE"] = str(pool_size)
+    os.environ["FHIR_USE_HOST_DB"] = "true" if db_mode == "host" else "false"
 
     gp, fp, pp = alloc_ports()
     node = Node([FHIR_EXT], gp, fp, pp)
 
+    fhir_db_dir = None
     fhir_port = _free_port()
-    result = node.execute(f"SELECT trex_fhir_start('127.0.0.1', {fhir_port}, 'fhir')")
+
+    if db_mode == "standalone":
+        # Standalone mode: FHIR server creates its own DuckDB file
+        fhir_db_dir = tempfile.mkdtemp(
+            dir=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tmp", "fhir-test-dbs"),
+        )
+        fhir_db_path = os.path.join(fhir_db_dir, "fhir.db")
+        result = node.execute(
+            f"SELECT trex_fhir_start('127.0.0.1', {fhir_port}, 'fhir', '{fhir_db_path}')"
+        )
+    else:
+        # Host mode: FHIR server uses the host DuckDB connection (catalog = 'fhir')
+        result = node.execute(
+            f"SELECT trex_fhir_start('127.0.0.1', {fhir_port}, 'fhir')"
+        )
+
     assert len(result) == 1 and "Started" in result[0][0], f"trex_fhir_start: {result}"
 
     client = FhirClient(f"http://127.0.0.1:{fhir_port}")
     client.pool_size = pool_size  # expose for test introspection
+    client.db_mode = db_mode
 
     # Poll /health until server is ready (definition loading can take seconds)
     deadline = time.time() + 30
@@ -150,7 +178,9 @@ def fhir(request):
         time.sleep(0.5)
     else:
         node.close()
-        pytest.fail(f"FHIR server (pool={pool_size}) did not become healthy within 30 s")
+        if fhir_db_dir:
+            shutil.rmtree(fhir_db_dir, ignore_errors=True)
+        pytest.fail(f"FHIR server (pool={pool_size}, {db_mode}) did not become healthy within 30 s")
 
     yield client
 
@@ -159,6 +189,8 @@ def fhir(request):
     except Exception:
         pass
     node.close()
+    if fhir_db_dir:
+        shutil.rmtree(fhir_db_dir, ignore_errors=True)
 
 
 # ===================================================================
