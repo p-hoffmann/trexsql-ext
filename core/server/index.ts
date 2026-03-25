@@ -17,6 +17,7 @@ import { addPluginRoutes } from "./routes/plugin.ts";
 import { functionsRouter } from "./routes/functions.ts";
 import { cliLoginRouter } from "./routes/cli-login.ts";
 import { fnmap } from "./plugin/function.ts";
+import { apiLimiter } from "./middleware/rate-limit.ts";
 
 console.log("main function started");
 console.log(Deno.version);
@@ -120,7 +121,7 @@ app.post(`${BASE_PATH}/api/api-keys`, express.json(), async (req, res) => {
   }
 });
 
-app.get(`${BASE_PATH}/api/api-keys`, async (req, res) => {
+app.get(`${BASE_PATH}/api/api-keys`, apiLimiter, async (req, res) => {
   try {
     const user = await getAuthUser(req);
     if (!user || user.role !== "admin") {
@@ -138,7 +139,7 @@ app.get(`${BASE_PATH}/api/api-keys`, async (req, res) => {
   }
 });
 
-app.delete(`${BASE_PATH}/api/api-keys/:id`, async (req, res) => {
+app.delete(`${BASE_PATH}/api/api-keys/:id`, apiLimiter, async (req, res) => {
   try {
     const user = await getAuthUser(req);
     if (!user || user.role !== "admin") {
@@ -193,7 +194,10 @@ app.post(`${BASE_PATH}/api/plugins/register`, express.json(), async (req, res) =
       Deno.env.get("DEVX_WORKSPACE_DIR") || "/tmp/devx-workspaces",
       "/var/devx-workspaces",
     ];
-    const normalized = dirPath.replace(/\/+$/, "");
+    let normalized = dirPath;
+    while (normalized.endsWith("/")) {
+      normalized = normalized.slice(0, -1);
+    }
     if (!allowedPrefixes.some((p) => normalized.startsWith(p + "/"))) {
       res.status(403).json({ error: "Path not in allowed workspace directory" });
       return;
@@ -787,8 +791,8 @@ async function invokeEdgeFunction(req: any, res: any) {
   res.status(STATUS_CODE.InternalServerError).json({ msg: "Worker unavailable after retries" });
 }
 
-app.all(`${BASE_PATH}/functions/v1/:function_name`, invokeEdgeFunction);
-app.all(`${BASE_PATH}/functions/v1/:function_name/*`, invokeEdgeFunction);
+app.all(`${BASE_PATH}/functions/v1/:function_name`, apiLimiter, invokeEdgeFunction);
+app.all(`${BASE_PATH}/functions/v1/:function_name/*`, apiLimiter, invokeEdgeFunction);
 
 // Function management API (Supabase CLI compatible)
 app.use(functionsRouter);

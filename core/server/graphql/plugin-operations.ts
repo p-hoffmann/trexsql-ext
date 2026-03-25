@@ -616,7 +616,7 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
                   migrations,
                 });
               } catch (err: any) {
-                console.error(`Plugin ${plugin.pluginName} migration status error:`, err);
+                console.error("Plugin migration status error:", plugin.pluginName, err);
               }
             }
 

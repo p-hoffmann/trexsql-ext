@@ -5,6 +5,7 @@ import { authContext } from "../middleware/auth-context.ts";
 import { pluginAuthz } from "../middleware/plugin-authz.ts";
 import { scopeUrlPrefix, waitfor } from "./utils.ts";
 import { PLUGINS_BASE_PATH } from "../config.ts";
+import { apiLimiter } from "../middleware/rate-limit.ts";
 
 export const ROLE_SCOPES: Record<string, string[]> = {};
 export const REQUIRED_URL_SCOPES: Array<{ path: string; scopes: string[] }> = [];
@@ -290,7 +291,7 @@ function _addFunction(
     _callWorker(req, path, imports, fncfg, dir, xenv);
 
   const scopePrefix = scopeUrlPrefix(name);
-  app.all(PLUGINS_BASE_PATH + scopePrefix + url + "/*", authContext, pluginAuthz, async (req: Request, res: Response) => {
+  app.all(PLUGINS_BASE_PATH + scopePrefix + url + "/*", apiLimiter, authContext, pluginAuthz, async (req: Request, res: Response) => {
     try {
       const host = req.get("host") || "localhost";
       const protocol = req.protocol || "http";

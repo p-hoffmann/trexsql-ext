@@ -3,6 +3,7 @@ import express from "express";
 import { join } from "jsr:@std/path@^1.0";
 import { BASE_PATH } from "../config.ts";
 import { verifyAccessToken } from "../auth/jwt.ts";
+import { apiLimiter } from "../middleware/rate-limit.ts";
 
 const router = Router();
 router.use(express.json({ limit: "10mb" }));
@@ -338,7 +339,7 @@ router.delete(`${BASE_PATH}/v1/projects/:ref/functions/:slug`, async (req, res) 
     console.log(`[functions] Deleted ${slug}`);
     res.json({ ok: true });
   } catch (err) {
-    console.error(`[functions] Delete error for ${slug}:`, err);
+    console.error("[functions] Delete error for:", slug, err);
     res.status(500).json({ error: "Delete failed", details: String(err) });
   }
 });
@@ -361,7 +362,7 @@ router.get(`${BASE_PATH}/v1/organizations`, async (req, res) => {
 });
 
 // GET /v1/projects — list projects (used by `supabase login` to validate token)
-router.get(`${BASE_PATH}/v1/projects`, async (req, res) => {
+router.get(`${BASE_PATH}/v1/projects`, apiLimiter, async (req, res) => {
   const user = await requireAdmin(req);
   if (!user) {
     res.status(401).json({ message: "Unauthorized" });
@@ -398,7 +399,7 @@ router.get(`${BASE_PATH}/v1/projects`, async (req, res) => {
 });
 
 // POST /v1/projects/:ref/cli/login-role — create temporary DB login role (used by CLI for db connections)
-router.post(`${BASE_PATH}/v1/projects/:ref/cli/login-role`, async (req, res) => {
+router.post(`${BASE_PATH}/v1/projects/:ref/cli/login-role`, apiLimiter, async (req, res) => {
   const user = await requireAdmin(req);
   if (!user) {
     res.status(401).json({ message: "Unauthorized" });
@@ -431,7 +432,7 @@ router.post(`${BASE_PATH}/v1/projects/:ref/cli/login-role`, async (req, res) => 
 });
 
 // GET /v1/projects/:ref — project info
-router.get(`${BASE_PATH}/v1/projects/:ref`, async (req, res) => {
+router.get(`${BASE_PATH}/v1/projects/:ref`, apiLimiter, async (req, res) => {
   const user = await requireAdmin(req);
   if (!user) {
     res.status(401).json({ message: "Unauthorized" });
@@ -470,7 +471,7 @@ router.get(`${BASE_PATH}/v1/projects/:ref`, async (req, res) => {
 });
 
 // GET /v1/projects/:ref/api-keys — anon & service_role keys
-router.get(`${BASE_PATH}/v1/projects/:ref/api-keys`, async (req, res) => {
+router.get(`${BASE_PATH}/v1/projects/:ref/api-keys`, apiLimiter, async (req, res) => {
   const user = await requireAdmin(req);
   if (!user) {
     res.status(401).json({ message: "Unauthorized" });
@@ -692,7 +693,7 @@ router.get(`${BASE_PATH}/v1/projects/:ref/billing/addons`, async (req, res) => {
 // ── Secrets endpoints (Supabase CLI: supabase secrets list/set/unset) ────────
 
 // GET /v1/projects/:ref/secrets — list secrets (name + hash, no plaintext)
-router.get(`${BASE_PATH}/v1/projects/:ref/secrets`, async (req, res) => {
+router.get(`${BASE_PATH}/v1/projects/:ref/secrets`, apiLimiter, async (req, res) => {
   const user = await requireAdmin(req);
   if (!user) {
     res.status(401).json({ message: "Unauthorized" });

@@ -59,7 +59,7 @@ export class Plugins {
         registeredAt: new Date(),
       });
     } catch (e) {
-      console.error(`Failed to register plugin ${fullName}:`, e);
+      console.error("Failed to register plugin:", fullName, e);
     }
   }
 
@@ -129,7 +129,7 @@ export class Plugins {
       return { ok: true, name: shortName };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.error(`Dynamic plugin registration failed for ${dir}:`, msg);
+      console.error("Dynamic plugin registration failed for:", dir, msg);
       return { ok: false, error: msg };
     }
   }

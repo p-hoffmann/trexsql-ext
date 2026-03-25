@@ -8,6 +8,7 @@ import {
   hashRefreshToken,
 } from "./jwt.ts";
 import { hashPassword, verifyPassword } from "./password.ts";
+import { authLimiter, apiLimiter } from "../middleware/rate-limit.ts";
 
 const router = Router();
 router.use(express.json());
@@ -144,7 +145,7 @@ async function migratePasswordHash(userId: string, newHash: string) {
 
 // ── POST /signup ─────────────────────────────────────────────────────────────
 
-router.post("/signup", async (req, res) => {
+router.post("/signup", authLimiter, async (req, res) => {
   try {
     const { email, password, data } = req.body;
 
@@ -227,7 +228,7 @@ router.post("/signup", async (req, res) => {
 
 // ── POST /token ──────────────────────────────────────────────────────────────
 
-router.post("/token", async (req, res) => {
+router.post("/token", authLimiter, async (req, res) => {
   const grantType = req.query.grant_type;
 
   if (grantType === "password") {
@@ -334,7 +335,7 @@ async function handleRefreshGrant(req: any, res: any) {
 
 // ── POST /logout ─────────────────────────────────────────────────────────────
 
-router.post("/logout", async (req, res) => {
+router.post("/logout", apiLimiter, async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
@@ -362,7 +363,7 @@ router.post("/logout", async (req, res) => {
 
 // ── GET /user ────────────────────────────────────────────────────────────────
 
-router.get("/user", async (req, res) => {
+router.get("/user", apiLimiter, async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
@@ -392,7 +393,7 @@ router.get("/user", async (req, res) => {
 
 // ── PUT /user ────────────────────────────────────────────────────────────────
 
-router.put("/user", async (req, res) => {
+router.put("/user", apiLimiter, async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
@@ -484,7 +485,7 @@ router.post("/recover", async (req, res) => {
 
 // ── Custom: POST /password-changed ──────────────────────────────────────────
 
-router.post("/password-changed", async (req, res) => {
+router.post("/password-changed", apiLimiter, async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
@@ -512,7 +513,7 @@ router.post("/password-changed", async (req, res) => {
 
 // ── Custom: POST /change-password ───────────────────────────────────────────
 
-router.post("/change-password", async (req, res) => {
+router.post("/change-password", apiLimiter, async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
@@ -578,7 +579,7 @@ router.post("/change-password", async (req, res) => {
 
 // ── Custom: GET /sessions ───────────────────────────────────────────────────
 
-router.get("/sessions", async (req, res) => {
+router.get("/sessions", apiLimiter, async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
@@ -623,7 +624,7 @@ router.get("/sessions", async (req, res) => {
 
 // ── Custom: POST /revoke-session ────────────────────────────────────────────
 
-router.post("/revoke-session", async (req, res) => {
+router.post("/revoke-session", apiLimiter, async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
@@ -659,7 +660,7 @@ router.post("/revoke-session", async (req, res) => {
 
 // ── Custom: GET /accounts (linked accounts) ─────────────────────────────────
 
-router.get("/accounts", async (req, res) => {
+router.get("/accounts", apiLimiter, async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
@@ -689,7 +690,7 @@ router.get("/accounts", async (req, res) => {
 
 // ── GET /settings ────────────────────────────────────────────────────────────
 
-router.get("/settings", async (_req, res) => {
+router.get("/settings", apiLimiter, async (_req, res) => {
   try {
     // Check which SSO providers are enabled
     let providers: Record<string, boolean> = {};
@@ -742,7 +743,7 @@ router.get("/health", (_req, res) => {
 
 // ── Custom: POST /admin/create-user (admin-only user creation) ──────────────
 
-router.post("/admin/create-user", async (req, res) => {
+router.post("/admin/create-user", apiLimiter, async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
