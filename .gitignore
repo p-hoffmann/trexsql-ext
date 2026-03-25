@@ -1,7 +1,7 @@
 /.*
 !.github
 node_modules
-/target
+target/
 /specs
 /extensions/*.trex
 /extensions/*.duckdb_extension
@@ -9,4 +9,6 @@ core/docs/build/
 core/docs/.docusaurus/
 shinylive/
 plugins/atlas/cmake_build/release/
+plugins/devx-ext/build/
+plugins/devx-ext/configure/venv/
 

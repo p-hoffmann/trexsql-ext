@@ -1,4 +1,4 @@
-import { pool } from "../auth.ts";
+import { pool } from "../db.ts";
 
 const encoder = new TextEncoder();
 
@@ -17,6 +17,9 @@ function randomHex(bytes: number): string {
     .join("");
 }
 
+// Valid key prefixes: trex_ (MCP keys) and sbp_ (Supabase CLI keys)
+const KEY_PREFIXES = ["trex_", "sbp_"];
+
 export interface ApiKeyResult {
   id: string;
   key: string;
@@ -26,10 +29,13 @@ export async function generateApiKey(
   userId: string,
   name: string,
   expiresAt?: Date,
+  prefix: string = "trex_",
 ): Promise<ApiKeyResult> {
-  const raw = "trex_" + randomHex(24); // trex_ + 48 hex chars
+  // sbp_ keys need exactly 40 hex chars after prefix to match Supabase CLI pattern
+  const hexLen = prefix === "sbp_" ? 20 : 24;
+  const raw = prefix + randomHex(hexLen);
   const keyHash = await sha256hex(raw);
-  const keyPrefix = raw.slice(0, 13); // "trex_" + first 8 hex
+  const keyPrefix = raw.slice(0, 13);
 
   const result = await pool.query(
     `INSERT INTO trex.api_key (name, key_hash, key_prefix, "userId", "expiresAt")
@@ -51,7 +57,7 @@ export interface ValidatedUser {
 export async function validateApiKey(
   key: string,
 ): Promise<ValidatedUser | null> {
-  if (!key.startsWith("trex_")) return null;
+  if (!KEY_PREFIXES.some((p) => key.startsWith(p))) return null;
 
   const keyHash = await sha256hex(key);
 

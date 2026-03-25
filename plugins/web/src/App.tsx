@@ -28,6 +28,7 @@ import { TrexDB } from "@/pages/admin/TrexDB";
 import { Extensions } from "@/pages/admin/Extensions";
 import { Migrations } from "@/pages/admin/Migrations";
 import { ChangePassword } from "@/pages/ChangePassword";
+import { CliLogin } from "@/pages/CliLogin";
 import { EtlPipelines } from "@/pages/admin/EtlPipelines";
 import { AuthSettings } from "@/pages/admin/AuthSettings";
 import { RuntimeSettings } from "@/pages/admin/RuntimeSettings";
@@ -39,6 +40,7 @@ import { Logs } from "@/pages/admin/Logs";
 import { Subscriptions } from "@/pages/admin/Subscriptions";
 import { Analytics } from "@/pages/admin/Analytics";
 import { AnalyticsDetail } from "@/pages/admin/AnalyticsDetail";
+import { EmbedPage } from "@/pages/EmbedPage";
 
 function HomeRedirect() {
   const { data: session, isPending } = useSession();
@@ -57,10 +59,13 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/verify-email" element={<VerifyEmail />} />
         <Route path="/consent" element={<Consent />} />
+        <Route path="/cli/login" element={<CliLogin />} />
         <Route path="/change-password" element={<ChangePassword />} />
 
         <Route element={<Layout />}>
           <Route path="/profile" element={<Profile />} />
+          <Route path="/docs" element={<EmbedPage plugin="docs" />} />
+          <Route path="/devx" element={<EmbedPage plugin="devx" />} />
 
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<Navigate to="users" replace />} />

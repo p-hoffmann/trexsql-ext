@@ -3,7 +3,7 @@ import { Plugins } from "../plugin/plugin.ts";
 import { getMigrationPlugins } from "../plugin/migration.ts";
 import { getTransformPlugins, registerTransformEndpoints, upsertTransformDeployment } from "../plugin/transform.ts";
 import { scanDiskPlugins } from "../routes/plugin.ts";
-import { reloadAuthProviders, pool as authPool } from "../auth.ts";
+import { pool as authPool } from "../db.ts";
 import { REGISTERED_FUNCTIONS, ROLE_SCOPES, REQUIRED_URL_SCOPES } from "../plugin/function.ts";
 import { REGISTERED_UI_ROUTES, getPluginsJson } from "../plugin/ui.ts";
 import { REGISTERED_FLOWS } from "../plugin/flow.ts";
@@ -616,7 +616,7 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
                   migrations,
                 });
               } catch (err: any) {
-                console.error(`Plugin ${plugin.pluginName} migration status error:`, err);
+                console.error("Plugin migration status error:", plugin.pluginName, err);
               }
             }
 
@@ -989,7 +989,7 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
           assertAdmin(context);
 
           try {
-            await reloadAuthProviders();
+            // SSO providers are loaded from DB on each request; no reload needed
             return true;
           } catch (err: any) {
             console.error("SSO reload error:", err);

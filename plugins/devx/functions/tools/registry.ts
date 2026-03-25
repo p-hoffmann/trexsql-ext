@@ -1,0 +1,159 @@
+// @ts-nocheck - Deno edge function
+import type { ToolDefinition } from "./types.ts";
+import { setChatSummaryTool } from "./set_chat_summary.ts";
+import { updateTodosTool } from "./update_todos.ts";
+// File operations
+import { writeFileTool } from "./write_file.ts";
+import { editFileTool } from "./edit_file.ts";
+import { searchReplaceTool } from "./search_replace.ts";
+import { deleteFileTool } from "./delete_file.ts";
+import { copyFileTool } from "./copy_file.ts";
+import { renameFileTool } from "./rename_file.ts";
+import { addDependencyTool } from "./add_dependency.ts";
+// Code intelligence
+import { readFileTool } from "./read_file.ts";
+import { listFilesTool } from "./list_files.ts";
+import { grepTool } from "./grep.ts";
+import { codeSearchTool } from "./code_search.ts";
+// System
+import { runTypeChecksTool } from "./run_type_checks.ts";
+import { readLogsTool } from "./read_logs.ts";
+// Git
+import {
+  gitInitTool, gitCommitTool, gitStatusTool, gitLogTool, gitDiffTool,
+  gitBranchListTool, gitBranchCreateTool, gitBranchSwitchTool, gitRevertTool,
+} from "./git.ts";
+// GitHub
+import { gitPushTool, gitPullTool } from "./github.ts";
+// Trex
+import { executeSqlTool } from "./execute_sql.ts";
+// Plan mode
+import { planningQuestionnaireTool, writePlanTool, exitPlanTool } from "./plan_tools.ts";
+// Context compaction
+import { compactContextTool } from "./compact_context.ts";
+// Web tools
+import { webSearchTool } from "./web_search.ts";
+import { webFetchTool } from "./web_fetch.ts";
+import { webCrawlTool } from "./web_crawl.ts";
+// Image generation
+import { generateImageTool } from "./generate_image.ts";
+// App commands
+import { restartAppTool } from "./restart_app.ts";
+import { refreshAppPreviewTool } from "./refresh_app_preview.ts";
+// Database introspection
+import { getDatabaseSchemaTool } from "./get_database_schema.ts";
+import { getTableDataTool } from "./get_table_data.ts";
+// Knowledge base
+import {
+  kbListReposTool, kbInitTool, kbUpdateTool, kbReadTool, kbSearchTool,
+  kbListFilesTool, kbOverviewTool, kbFindSymbolsTool,
+} from "./knowledge_base.ts";
+
+/** All registered tools */
+export const TOOL_DEFINITIONS: ToolDefinition[] = [
+  setChatSummaryTool,
+  updateTodosTool,
+  // File operations
+  writeFileTool,
+  editFileTool,
+  searchReplaceTool,
+  deleteFileTool,
+  copyFileTool,
+  renameFileTool,
+  addDependencyTool,
+  // Code intelligence
+  readFileTool,
+  listFilesTool,
+  grepTool,
+  codeSearchTool,
+  // System
+  runTypeChecksTool,
+  readLogsTool,
+  // Git
+  gitInitTool,
+  gitCommitTool,
+  gitStatusTool,
+  gitLogTool,
+  gitDiffTool,
+  gitBranchListTool,
+  gitBranchCreateTool,
+  gitBranchSwitchTool,
+  gitRevertTool,
+  // GitHub
+  gitPushTool,
+  gitPullTool,
+  // Trex
+  executeSqlTool,
+  // Plan mode
+  planningQuestionnaireTool,
+  writePlanTool,
+  exitPlanTool,
+  // Context compaction
+  compactContextTool,
+  // Web tools
+  webSearchTool,
+  webFetchTool,
+  webCrawlTool,
+  // Image generation
+  generateImageTool,
+  // App commands
+  restartAppTool,
+  refreshAppPreviewTool,
+  // Database introspection
+  getDatabaseSchemaTool,
+  getTableDataTool,
+  // Knowledge base
+  kbListReposTool,
+  kbInitTool,
+  kbUpdateTool,
+  kbReadTool,
+  kbSearchTool,
+  kbListFilesTool,
+  kbOverviewTool,
+  kbFindSymbolsTool,
+];
+
+/**
+ * Build a tool set filtered by chat mode and user consent preferences.
+ * Returns an object suitable for the AI SDK's `tools` parameter.
+ */
+export function buildToolSet(
+  mode: string,
+  consents: Record<string, string>,
+) {
+  const tools: Record<string, any> = {};
+
+  for (const tool of TOOL_DEFINITIONS) {
+    // Skip tools the user has set to "never"
+    const userConsent = consents[tool.name];
+    if (userConsent === "never") continue;
+
+    // In ask mode, skip state-modifying tools
+    if (mode === "ask" && tool.modifiesState) continue;
+
+    // Plan mode: only read-only tools + plan-specific tools
+    const PLAN_MODE_TOOLS = new Set([
+      "read_file", "list_files", "grep", "code_search",
+      "git_status", "git_log", "git_branch_list",
+      "planning_questionnaire", "write_plan", "exit_plan",
+      "kb_list_repos", "kb_init", "kb_update", "kb_read", "kb_search",
+      "kb_list_files", "kb_overview", "kb_find_symbols",
+    ]);
+    if (mode === "plan" && !PLAN_MODE_TOOLS.has(tool.name)) continue;
+
+    // Build mode doesn't use tools (uses raw streaming)
+    if (mode === "build") continue;
+
+    tools[tool.name] = {
+      description: tool.description,
+      parameters: tool.parameters,
+    };
+  }
+
+  return tools;
+}
+
+/** Get a tool definition by name */
+export function getToolByName(name: string): ToolDefinition | undefined {
+  return TOOL_DEFINITIONS.find((t) => t.name === name);
+}

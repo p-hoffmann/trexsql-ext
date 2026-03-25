@@ -1,5 +1,5 @@
 import { useState, useEffect, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
 import { BASE_PATH } from "@/lib/config";
@@ -18,6 +18,7 @@ import { ProviderButtons } from "@/components/ProviderButtons";
 
 export function Login() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -25,7 +26,7 @@ export function Login() {
   const [registrationEnabled, setRegistrationEnabled] = useState<boolean | null>(null);
 
   useEffect(() => {
-    fetch(`${BASE_PATH}/api/settings/public`, { credentials: "include" })
+    fetch(`${BASE_PATH}/api/settings/public`)
       .then((r) => r.json())
       .then((data) => setRegistrationEnabled(data["auth.selfRegistration"] === true))
       .catch(() => setRegistrationEnabled(false));
@@ -46,7 +47,8 @@ export function Login() {
         setError(result.error.message || "Invalid email or password.");
       } else {
         toast.success("Signed in successfully.");
-        navigate("/");
+        const redirect = searchParams.get("redirect");
+        navigate(redirect || "/");
       }
     } catch {
       setError("An unexpected error occurred. Please try again.");

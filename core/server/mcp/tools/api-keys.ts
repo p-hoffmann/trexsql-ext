@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { pool } from "../../auth.ts";
+import { pool } from "../../db.ts";
 import { generateApiKey } from "../auth.ts";
 
 export function registerApiKeyTools(server: McpServer) {

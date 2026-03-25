@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { pool } from "../../auth.ts";
+import { pool } from "../../db.ts";
 
 export function registerRoleTools(server: McpServer) {
   server.tool(

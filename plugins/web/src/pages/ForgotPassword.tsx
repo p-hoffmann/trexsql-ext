@@ -25,8 +25,7 @@ export function ForgotPassword() {
     setLoading(true);
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await (authClient as any).forgetPassword({
+      const result = await authClient.forgetPassword({
         email,
         redirectTo: "/reset-password",
       });

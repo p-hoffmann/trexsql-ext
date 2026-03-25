@@ -1,0 +1,373 @@
+export interface Message {
+  id: string;
+  chat_id: string;
+  role: "user" | "assistant";
+  content: string;
+  model?: string | null;
+  tokens?: number | null;
+  error?: string | null;
+  tool_calls?: ToolCall[] | null;
+  created_at: string;
+}
+
+export interface Chat {
+  id: string;
+  user_id: string;
+  title: string;
+  mode: ChatMode;
+  app_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ChatMode = "build" | "ask" | "agent" | "plan";
+
+export const CHAT_MODES: { id: ChatMode; label: string; description: string }[] = [
+  { id: "agent", label: "Agent", description: "Autonomous coding agent" },
+  { id: "plan", label: "Plan", description: "Plan before building" },
+  { id: "ask", label: "Chat", description: "Chat without code changes" },
+];
+
+export interface DevxSettings {
+  id: string;
+  user_id: string;
+  provider: string;
+  model: string;
+  api_key?: string;
+  base_url?: string;
+  ai_rules?: string;
+  auto_approve?: boolean;
+  max_steps?: number;
+  max_tool_steps?: number;
+  auto_fix_problems?: boolean;
+}
+
+// Agent types
+
+export interface AgentTodo {
+  id: string;
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+}
+
+export interface ToolCall {
+  callId: string;
+  name: string;
+  args: Record<string, unknown>;
+  result?: string;
+  error?: boolean;
+}
+
+export interface ConsentRequest {
+  requestId: string;
+  toolName: string;
+  inputPreview?: string;
+}
+
+// App types
+
+export interface App {
+  id: string;
+  user_id: string;
+  name: string;
+  path: string;
+  tech_stack?: string | null;
+  dev_command: string;
+  install_command: string;
+  build_command: string;
+  dev_port?: number | null;
+  supabase_target?: string | null;
+  supabase_project_id?: string | null;
+  config?: Record<string, string> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Template-specific configurable fields shown in the preview settings bar */
+export interface TemplateConfigField {
+  key: string;
+  label: string;
+  placeholder: string;
+  type?: "text" | "url";
+}
+
+export const TEMPLATE_CONFIG_FIELDS: Record<string, TemplateConfigField[]> = {
+  "atlas-vue": [
+    { key: "VITE_WEBAPI_URL", label: "WebAPI URL", placeholder: "http://localhost:8080/WebAPI", type: "url" },
+  ],
+  "d2e-react": [
+    { key: "datasetId", label: "Dataset ID", placeholder: "dataset-uuid" },
+    { key: "studyId", label: "Study ID", placeholder: "study-uuid" },
+  ],
+};
+
+// Supabase deploy types
+
+export interface SupabaseDeployConfig {
+  target: "local" | "cloud";
+  project_id: string | null;
+}
+
+export interface SupabaseStatus {
+  connected: boolean;
+}
+
+export interface SupabaseProject {
+  id: string;
+  name: string;
+  region: string;
+  status: string;
+}
+
+export interface DeployStep {
+  name: string;
+  status: "pending" | "running" | "success" | "failed" | "skipped";
+  message?: string;
+}
+
+export interface Deployment {
+  id: string;
+  target: string;
+  target_project_id?: string | null;
+  status: "pending" | "running" | "success" | "failed";
+  steps: DeployStep[];
+  error?: string;
+  created_at: string;
+  completed_at?: string;
+}
+
+// Security review types
+
+export interface SecurityFinding {
+  title: string;
+  level: "critical" | "high" | "medium" | "low";
+  description: string;
+}
+
+export interface SecurityReview {
+  id: string;
+  findings: SecurityFinding[];
+  created_at: string;
+}
+
+// Code review types
+
+export interface CodeReviewFinding {
+  title: string;
+  level: "critical" | "high" | "medium" | "low";
+  description: string;
+}
+
+export interface CodeReview {
+  id: string;
+  findings: CodeReviewFinding[];
+  created_at: string;
+}
+
+export interface DevServerStatus {
+  status: "stopped" | "starting" | "running" | "error";
+  port?: number;
+  pid?: number;
+  url?: string;
+  error?: string;
+}
+
+export interface FileTreeEntry {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  children?: FileTreeEntry[];
+}
+
+export interface ServerOutputEvent {
+  type: "stdout" | "stderr" | "status_change";
+  data: string;
+  timestamp: number;
+}
+
+export interface Problem {
+  file: string;
+  line: number;
+  col: number;
+  message: string;
+  severity: "error" | "warning";
+}
+
+// Git types
+export interface GitFile {
+  path: string;
+  status: string;
+}
+
+export interface GitCommit {
+  hash: string;
+  message: string;
+  author: string;
+  date: string;
+}
+
+export interface GitBranches {
+  current: string;
+  branches: string[];
+}
+
+// GitHub types
+export interface GitHubStatus {
+  connected: boolean;
+  username?: string;
+}
+
+export interface GitHubDeviceCode {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  interval: number;
+  expires_in: number;
+}
+
+export interface GitHubRepo {
+  name: string;
+  url: string;
+  clone_url: string;
+  private: boolean;
+  default_branch: string;
+}
+
+// MCP types
+export interface McpServer {
+  id: string;
+  user_id: string;
+  name: string;
+  transport: "stdio" | "http";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface McpTool {
+  serverName: string;
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+// Plan types
+export interface Plan {
+  id: string;
+  chat_id: string;
+  content: string;
+  status: "draft" | "accepted" | "rejected";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlanQuestion {
+  id: string;
+  type: "text" | "radio" | "checkbox";
+  label: string;
+  options?: string[];
+}
+
+export interface QuestionnaireRequest {
+  requestId: string;
+  questions: PlanQuestion[];
+}
+
+// Build action types
+export interface BuildAction {
+  action: string;
+  path?: string;
+  error?: string;
+}
+
+// Prompt templates
+export interface PromptTemplate {
+  id: string;
+  user_id: string;
+  name: string;
+  content: string;
+  category: string;
+  created_at: string;
+}
+
+// Attachment types
+export interface Attachment {
+  id: string;
+  message_id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+}
+
+export type Provider = "anthropic" | "openai" | "google" | "openai-compatible" | "bedrock";
+
+export interface ProviderConfig {
+  id: Provider;
+  name: string;
+  models: string[];
+  requiresApiKey: boolean;
+  requiresBaseUrl: boolean;
+}
+
+export const PROVIDERS: ProviderConfig[] = [
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    models: [
+      "claude-sonnet-4-6-20250627",
+      "claude-sonnet-4-20250514",
+      "claude-opus-4-20250514",
+      "claude-haiku-4-20250514",
+      "claude-3-5-sonnet-20241022",
+    ],
+    requiresApiKey: true,
+    requiresBaseUrl: false,
+  },
+  {
+    id: "openai",
+    name: "OpenAI",
+    models: [
+      "gpt-4o",
+      "gpt-4o-mini",
+      "gpt-4-turbo",
+      "o1",
+      "o1-mini",
+    ],
+    requiresApiKey: true,
+    requiresBaseUrl: false,
+  },
+  {
+    id: "google",
+    name: "Google",
+    models: [
+      "gemini-2.5-pro-preview-06-05",
+      "gemini-2.5-flash-preview-05-20",
+      "gemini-2.0-flash",
+    ],
+    requiresApiKey: true,
+    requiresBaseUrl: false,
+  },
+  {
+    id: "openai-compatible",
+    name: "OpenAI Compatible",
+    models: [],
+    requiresApiKey: true,
+    requiresBaseUrl: true,
+  },
+  {
+    id: "bedrock",
+    name: "AWS Bedrock",
+    models: [
+      "us.anthropic.claude-sonnet-4-6",
+      "us.anthropic.claude-sonnet-4",
+      "us.anthropic.claude-opus-4",
+      "us.anthropic.claude-haiku-4",
+    ],
+    requiresApiKey: false,
+    requiresBaseUrl: false,
+  },
+];

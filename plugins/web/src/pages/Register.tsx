@@ -24,7 +24,7 @@ export function Register() {
   const [registrationEnabled, setRegistrationEnabled] = useState<boolean | null>(null);
 
   useEffect(() => {
-    fetch(`${BASE_PATH}/api/settings/public`, { credentials: "include" })
+    fetch(`${BASE_PATH}/api/settings/public`)
       .then((r) => r.json())
       .then((data) => setRegistrationEnabled(data["auth.selfRegistration"] === true))
       .catch(() => setRegistrationEnabled(false));
