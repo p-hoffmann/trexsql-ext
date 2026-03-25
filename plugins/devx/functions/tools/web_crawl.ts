@@ -18,6 +18,19 @@ export const webCrawlTool: ToolDefinition = {
     const maxPages = Math.min(args.max_pages || 3, 5);
     const results: string[] = [];
 
+    function stripHtml(html: string): string {
+      // Loop to handle nested/malformed tags like <scr<script>ipt>
+      let result = html;
+      let prev = "";
+      while (result !== prev) {
+        prev = result;
+        result = result
+          .replace(/<script[\s>][\s\S]*?<\/script\s*>/gi, "")
+          .replace(/<style[\s>][\s\S]*?<\/style\s*>/gi, "");
+      }
+      return result.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    }
+
     async function fetchPage(pageUrl: string): Promise<{ text: string; links: string[] }> {
       const res = await fetch(pageUrl, {
         headers: { "User-Agent": "Mozilla/5.0 (compatible; DevX/1.0)" },
@@ -39,14 +52,7 @@ export const webCrawlTool: ToolDefinition = {
         }
       }
 
-      const text = html
-        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-        .replace(/<[^>]+>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-
-      return { text: text.substring(0, 3000), links: [...new Set(links)].slice(0, 10) };
+      return { text: stripHtml(html).substring(0, 3000), links: [...new Set(links)].slice(0, 10) };
     }
 
     try {

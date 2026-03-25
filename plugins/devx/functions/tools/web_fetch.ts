@@ -25,13 +25,22 @@ export const webFetchTool: ToolDefinition = {
         return `Fetch failed: HTTP ${res.status}`;
       }
       const html = await res.text();
+
+      function stripHtml(raw: string): string {
+        // Loop to handle nested/malformed tags like <scr<script>ipt>
+        let result = raw;
+        let prev = "";
+        while (result !== prev) {
+          prev = result;
+          result = result
+            .replace(/<script[\s>][\s\S]*?<\/script\s*>/gi, "")
+            .replace(/<style[\s>][\s\S]*?<\/style\s*>/gi, "");
+        }
+        return result.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      }
+
       // Strip HTML tags and normalize whitespace
-      const text = html
-        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-        .replace(/<[^>]+>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
+      const text = stripHtml(html);
 
       if (text.length > maxLen) {
         return text.substring(0, maxLen) + `\n\n[truncated — ${text.length - maxLen} chars omitted]`;

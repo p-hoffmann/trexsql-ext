@@ -3,6 +3,7 @@ import { Plugins } from "../plugin/plugin.ts";
 import { getPluginsJson } from "../plugin/ui.ts";
 import { scanPluginDirectory } from "../plugin/utils.ts";
 import { authContext } from "../middleware/auth-context.ts";
+import { apiLimiter } from "../middleware/rate-limit.ts";
 import { PLUGINS_BASE_PATH } from "../config.ts";
 
 function checkSemver(version: string, sver: string): boolean {
@@ -49,7 +50,7 @@ export async function scanDiskPlugins(): Promise<
 }
 
 export function addPluginRoutes(app: Express) {
-  app.get(`${PLUGINS_BASE_PATH}`, authContext, async (req: Request, res: Response) => {
+  app.get(`${PLUGINS_BASE_PATH}`, apiLimiter, authContext, async (req: Request, res: Response) => {
     const pgSettings = (req as any).pgSettings || {};
     if (pgSettings["app.user_role"] !== "admin") {
       res.status(403).json({ error: "Forbidden" });

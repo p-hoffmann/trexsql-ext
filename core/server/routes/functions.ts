@@ -720,7 +720,7 @@ router.get(`${BASE_PATH}/v1/projects/:ref/secrets`, apiLimiter, async (req, res)
 });
 
 // POST /v1/projects/:ref/secrets — create/update secrets
-router.post(`${BASE_PATH}/v1/projects/:ref/secrets`, async (req, res) => {
+router.post(`${BASE_PATH}/v1/projects/:ref/secrets`, apiLimiter, async (req, res) => {
   const user = await requireAdmin(req);
   if (!user) {
     res.status(401).json({ message: "Unauthorized" });
@@ -761,7 +761,7 @@ router.post(`${BASE_PATH}/v1/projects/:ref/secrets`, async (req, res) => {
 });
 
 // DELETE /v1/projects/:ref/secrets — delete secrets by name
-router.delete(`${BASE_PATH}/v1/projects/:ref/secrets`, async (req, res) => {
+router.delete(`${BASE_PATH}/v1/projects/:ref/secrets`, apiLimiter, async (req, res) => {
   const user = await requireAdmin(req);
   if (!user) {
     res.status(401).json({ message: "Unauthorized" });
@@ -1010,7 +1010,7 @@ function pgTypeToTs(udtName: string, isNullable: boolean, enumTypes: Set<string>
   return isNullable ? `${tsType} | null` : tsType;
 }
 
-router.get(`${BASE_PATH}/v1/projects/:ref/types/typescript`, async (req, res) => {
+router.get(`${BASE_PATH}/v1/projects/:ref/types/typescript`, apiLimiter, async (req, res) => {
   const user = await requireAdmin(req);
   if (!user) {
     res.status(401).json({ message: "Unauthorized" });
@@ -1178,7 +1178,7 @@ router.get(`${BASE_PATH}/v1/projects/:ref/types/typescript`, async (req, res) =>
     lines.push(`}`);
     lines.push(``);
 
-    res.type("text/plain").send(lines.join("\n"));
+    res.type("text/plain").header("X-Content-Type-Options", "nosniff").send(lines.join("\n"));
   } catch (err) {
     console.error("[types] Generation error:", err);
     res.status(500).json({ message: "Failed to generate types", details: String(err) });

@@ -3,13 +3,21 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use tokio::sync::oneshot;
 
-#[derive(Debug)]
 pub struct ServerHandle {
     #[allow(dead_code)] // Kept for potential graceful shutdown
     pub thread_handle: JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>,
     pub shutdown_tx: oneshot::Sender<()>,
     pub start_time: std::time::SystemTime,
     pub db_credentials: String,
+}
+
+impl std::fmt::Debug for ServerHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServerHandle")
+            .field("start_time", &self.start_time)
+            .field("db_credentials", &"[REDACTED]")
+            .finish()
+    }
 }
 
 pub struct ServerRegistry {

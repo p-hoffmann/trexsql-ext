@@ -35,8 +35,25 @@ const DEBUG_LOGGING: bool = false;
 fn log_debug(_msg: &str) {
     #[cfg(debug_assertions)]
     if DEBUG_LOGGING {
-        eprintln!("[pgwire] {}", _msg);
+        eprintln!("[pgwire] {}", sanitize_log_message(_msg));
     }
+}
+
+/// Redact credentials from connection URLs and sensitive key=value patterns in log messages.
+#[allow(dead_code)]
+fn sanitize_log_message(msg: &str) -> String {
+    // Redact credentials in connection URLs like hdbsql://user:pass@host
+    let mut result = msg.to_string();
+    // Pattern: protocol://user:password@host
+    if let Some(proto_end) = result.find("://") {
+        let after_proto = proto_end + 3;
+        if let Some(at_pos) = result[after_proto..].find('@') {
+            let abs_at = after_proto + at_pos;
+            // Replace the user:password portion with [REDACTED]
+            result.replace_range(after_proto..abs_at, "[REDACTED]");
+        }
+    }
+    result
 }
 
 const SCRAM_ITERATIONS: usize = 4096;

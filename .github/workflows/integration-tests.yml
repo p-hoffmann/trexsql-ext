@@ -9,6 +9,8 @@ on:
   merge_group:
   workflow_dispatch:
 
+permissions: read-all
+
 concurrency:
   group: integration-tests-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true

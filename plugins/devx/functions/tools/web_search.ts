@@ -46,7 +46,13 @@ export const webSearchTool: ToolDefinition = {
       let snippetMatch;
       const snippets: string[] = [];
       while ((snippetMatch = snippetRegex.exec(html)) !== null) {
-        snippets.push(snippetMatch[1].replace(/<[^>]*>/g, "").trim());
+        let snippet = snippetMatch[1];
+        let prevSnippet = "";
+        while (snippet !== prevSnippet) {
+          prevSnippet = snippet;
+          snippet = snippet.replace(/<[^>]*>/g, "");
+        }
+        snippets.push(snippet.trim());
       }
 
       for (let i = 0; i < Math.min(links.length, numResults); i++) {

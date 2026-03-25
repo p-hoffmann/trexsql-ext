@@ -43,7 +43,7 @@ app.use(cors({
 // Public settings endpoint — no auth required, only whitelisted keys
 const PUBLIC_SETTING_KEYS = ["auth.selfRegistration", "auth.anonKey"];
 
-app.get(`${BASE_PATH}/api/settings/public`, async (_req, res) => {
+app.get(`${BASE_PATH}/api/settings/public`, apiLimiter, async (_req, res) => {
   try {
     const result = await pool.query(
       `SELECT key, value FROM trex.setting WHERE key = ANY($1)`,
@@ -88,7 +88,7 @@ async function getAuthUser(req: any): Promise<{ id: string; role: string } | nul
 }
 
 // API key management endpoint (Bearer-token authenticated)
-app.post(`${BASE_PATH}/api/api-keys`, express.json(), async (req, res) => {
+app.post(`${BASE_PATH}/api/api-keys`, apiLimiter, express.json(), async (req, res) => {
   try {
     const user = await getAuthUser(req);
     if (!user || user.role !== "admin") {
@@ -162,7 +162,7 @@ app.delete(`${BASE_PATH}/api/api-keys/:id`, apiLimiter, async (req, res) => {
 });
 
 // Generate Supabase CLI compatible access token (sbp_ format)
-app.post(`${BASE_PATH}/api/cli-token`, express.json(), async (req, res) => {
+app.post(`${BASE_PATH}/api/cli-token`, apiLimiter, express.json(), async (req, res) => {
   try {
     const user = await getAuthUser(req);
     if (!user || user.role !== "admin") {
@@ -182,7 +182,7 @@ app.post(`${BASE_PATH}/api/cli-token`, express.json(), async (req, res) => {
 // Dynamic plugin registration — register functions from a given directory.
 // Internal endpoint: called by devx edge function to register D2E app functions.
 // Security: only allows paths within known workspace directories.
-app.post(`${BASE_PATH}/api/plugins/register`, express.json(), async (req, res) => {
+app.post(`${BASE_PATH}/api/plugins/register`, apiLimiter, express.json(), async (req, res) => {
   try {
     const { path: dirPath } = req.body || {};
     if (!dirPath || typeof dirPath !== "string") {
@@ -215,7 +215,7 @@ app.post(`${BASE_PATH}/api/plugins/register`, express.json(), async (req, res) =
 });
 
 // Admin-only: get auth keys
-app.get(`${BASE_PATH}/api/settings/auth-keys`, async (req, res) => {
+app.get(`${BASE_PATH}/api/settings/auth-keys`, apiLimiter, async (req, res) => {
   try {
     const user = await getAuthUser(req);
     if (!user || user.role !== "admin") {
@@ -285,7 +285,7 @@ app.all(`${BASE_PATH}/rest/v1/*`, (req, res) => {
   proxyReq.on("error", (err) => {
     console.error("[postgrest-proxy] Error:", err.message);
     if (!res.headersSent) {
-      res.status(502).json({ error: "PostgREST unavailable", details: err.message });
+      res.status(502).json({ error: "PostgREST unavailable" });
     }
   });
 
@@ -389,7 +389,7 @@ app.all(`${BASE_PATH}/storage/v1/*`, express.raw({ type: "*/*", limit: "50mb" })
     res.send(responseBody);
   } catch (err) {
     console.error("[storage-proxy] Error:", err);
-    res.status(500).json({ error: String(err) });
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -568,7 +568,8 @@ app.put(`${BASE_PATH}/_internal/upload`, async (req, res) => {
     await Deno.writeTextFile(path, body);
     res.json({ path: dir });
   } catch (err) {
-    res.status(STATUS_CODE.BadRequest).json(err);
+    console.error("[upload] Error:", err);
+    res.status(STATUS_CODE.BadRequest).json({ error: "Bad request" });
   }
 });
 
@@ -615,7 +616,8 @@ async function invokeEdgeFunction(req: any, res: any) {
         return;
       }
     } catch (err) {
-      res.status(STATUS_CODE.BadRequest).json(err);
+      console.error("[edge-function] Path error:", err);
+      res.status(STATUS_CODE.BadRequest).json({ error: "Invalid service path" });
       return;
     }
   } else {
@@ -784,7 +786,8 @@ async function invokeEdgeFunction(req: any, res: any) {
       if (e instanceof Deno.errors.WorkerAlreadyRetired && attempt < MAX_RETRIES - 1) {
         continue;
       }
-      res.status(STATUS_CODE.InternalServerError).json({ msg: String(e) });
+      console.error("[edge-function] Error:", e);
+      res.status(STATUS_CODE.InternalServerError).json({ msg: "Internal server error" });
       return;
     }
   }

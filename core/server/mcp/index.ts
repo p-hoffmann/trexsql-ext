@@ -3,6 +3,7 @@ import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { BASE_PATH } from "../config.ts";
+import { apiLimiter } from "../middleware/rate-limit.ts";
 import { validateApiKey, type ValidatedUser } from "./auth.ts";
 import { registerClusterTools } from "./tools/cluster.ts";
 import { registerTrexdbTools } from "./tools/trexdb.ts";
@@ -72,7 +73,7 @@ async function authenticateRequest(req: Request): Promise<ValidatedUser | null> 
 export function mountMcpServer(app: Express) {
   const mcpPath = `${BASE_PATH}/mcp`;
 
-  app.post(mcpPath, express.json(), async (req: Request, res: Response) => {
+  app.post(mcpPath, apiLimiter, express.json(), async (req: Request, res: Response) => {
     const user = await authenticateRequest(req);
     if (!user) {
       res.status(401).json({ error: "Invalid or missing API key" });
@@ -110,7 +111,7 @@ export function mountMcpServer(app: Express) {
     await transport.handleRequest(req, res, req.body);
   });
 
-  app.get(mcpPath, async (req: Request, res: Response) => {
+  app.get(mcpPath, apiLimiter, async (req: Request, res: Response) => {
     const user = await authenticateRequest(req);
     if (!user) {
       res.status(401).json({ error: "Invalid or missing API key" });
@@ -132,7 +133,7 @@ export function mountMcpServer(app: Express) {
     await entry.transport.handleRequest(req, res);
   });
 
-  app.delete(mcpPath, async (req: Request, res: Response) => {
+  app.delete(mcpPath, apiLimiter, async (req: Request, res: Response) => {
     const user = await authenticateRequest(req);
     if (!user) {
       res.status(401).json({ error: "Invalid or missing API key" });
