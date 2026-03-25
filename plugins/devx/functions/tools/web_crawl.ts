@@ -19,16 +19,16 @@ export const webCrawlTool: ToolDefinition = {
     const results: string[] = [];
 
     function stripHtml(html: string): string {
-      // Loop to handle nested/malformed tags like <scr<script>ipt>
-      let result = html;
-      let prev = "";
-      while (result !== prev) {
-        prev = result;
-        result = result
-          .replace(/<script[\s\S]*?<\/script[^>]*>/gi, "")
-          .replace(/<style[\s\S]*?<\/style[^>]*>/gi, "");
+      // Use DOMParser to safely extract text content, avoiding regex-based HTML sanitization
+      // which cannot reliably handle nested/malformed tags
+      try {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        for (const el of doc.querySelectorAll("script, style")) el.remove();
+        return (doc.body?.textContent || "").replace(/\s+/g, " ").trim();
+      } catch {
+        // Fallback: strip all angle-bracket sequences
+        return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
       }
-      return result.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
     }
 
     async function fetchPage(pageUrl: string): Promise<{ text: string; links: string[] }> {
