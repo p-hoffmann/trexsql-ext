@@ -214,7 +214,7 @@ app.post(`${BASE_PATH}/api/plugins/register`, apiLimiter, express.json(), async 
   }
 });
 
-// Admin-only: get auth keys (auth check via getAuthUser, rate-limited via apiLimiter)
+// Admin-only: get auth keys
 app.get(`${BASE_PATH}/api/settings/auth-keys`, apiLimiter, async (req, res) => {
   try {
     const user = await getAuthUser(req);
@@ -222,8 +222,7 @@ app.get(`${BASE_PATH}/api/settings/auth-keys`, apiLimiter, async (req, res) => {
       res.status(401).json({ error: "Admin authentication required" });
       return;
     }
-    const { pool: dbPool } = await import("./db.ts");
-    const result = await dbPool.query(
+    const result = await pool.query(
       `SELECT key, value FROM trex.setting WHERE key IN ('auth.anonKey', 'auth.serviceRoleKey')`,
     );
     const keys: Record<string, string> = {};
@@ -310,6 +309,7 @@ if (BASE_PATH && BASE_PATH !== "/") {
 // CLI login polling endpoint — no auth required (before authContext)
 app.use(cliLoginRouter);
 
+app.use(apiLimiter);
 app.use(authContext);
 
 try {
