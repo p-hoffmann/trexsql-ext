@@ -20,7 +20,7 @@ libduckdb-sys = { version = "1.4.4", features = ["loadable-extension"] }
 deno_facade = { path = "./trex-runtime/crates/deno_facade" }
 deno = { path = "./trex-runtime/deno" }
 ext_workers = { path = "./trex-runtime/ext/workers" }
-trex_core = { version = "0.1.0", path = "./trex-runtime/ext/trex" }
+trex_core = { version = "0.1.0", path = "./ext/trex" }
 base = { version = "0.1.0", path = "./trex-runtime/crates/base", features = ["trex"] }
 
 # explicit versions (were workspace = true)
@@ -39,6 +39,9 @@ default = []
 # All [patch.crates-io] entries from the trex-runtime workspace Cargo.toml.
 # Patches only apply at the top-level crate, so they must be duplicated here.
 [patch.crates-io]
+# trex_core — resolved from local ext/trex for base's optional dep
+trex_core = { path = "./ext/trex" }
+
 # DuckDB Rust bindings fork
 duckdb = { git = "https://github.com/p-hoffmann/trexsql-rs", tag = "v1.4.4-trex" }
 libduckdb-sys = { git = "https://github.com/p-hoffmann/trexsql-rs", tag = "v1.4.4-trex" }

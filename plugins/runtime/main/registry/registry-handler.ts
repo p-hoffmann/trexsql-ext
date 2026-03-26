@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import assign from "npm:object-assign";
 
 import mock from "./mock.ts";
 
@@ -68,15 +69,15 @@ function generatePackageResponse(
   sum: string,
 ) {
   const port = Deno.env.get("EDGE_RUNTIME_PORT") || "9998";
-  const tpl = Object.assign({}, RESPONSE_TEMPLATE.default, {
+  const tpl = assign({}, RESPONSE_TEMPLATE.default, {
     _id: PKG_NAME,
     name: PKG_NAME,
   });
 
-  tpl.versions["1.0.0"] = Object.assign({}, tpl.versions["1.0.0"], {
+  tpl.versions["1.0.0"] = assign({}, tpl.versions["1.0.0"], {
     _id: PKG_NAME + "@1.0.0",
     name: PKG_NAME,
-    dist: Object.assign({}, tpl.versions["1.0.0"].dist, {
+    dist: assign({}, tpl.versions["1.0.0"].dist, {
       shasum: sum,
       tarball: [
         "http://" + hostname + ":" + port + prefix,
