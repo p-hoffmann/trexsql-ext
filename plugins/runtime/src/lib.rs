@@ -13,7 +13,6 @@ use duckdb_loadable_macros::duckdb_entrypoint_c_api;
 use std::{
   error::Error,
   ffi::CString,
-  path::Path,
   sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex, OnceLock as OnceCell,
@@ -26,8 +25,25 @@ static SHARED_CONNECTION: OnceCell<Arc<Mutex<Connection>>> = OnceCell::new();
 fn store_shared_connection(
   connection: &Connection,
 ) -> Result<(), Box<dyn Error>> {
-  if let Err(e) = trex_core::connection::init_query_executor(connection) {
-    warn!(error = %e, "query executor init failed (may already exist)");
+  let pool_size: usize = match std::env::var("TREX_CONNECTION_POOL_SIZE") {
+    Ok(v) => v.parse().unwrap_or_else(|_| {
+      warn!(value = %v, "invalid TREX_CONNECTION_POOL_SIZE, defaulting to 0");
+      0
+    }),
+    Err(_) => 0,
+  };
+
+  if pool_size > 0 {
+    if let Err(e) =
+      trex_core::connection::init_query_executor(connection, pool_size)
+    {
+      warn!(error = %e, "query executor init failed (may already exist)");
+    }
+    if let Err(e) =
+      trex_core::connection::init_streaming_pool(connection, pool_size)
+    {
+      warn!(error = %e, "streaming pool init failed (may already exist)");
+    }
   }
 
   let cloned = connection
@@ -50,34 +66,6 @@ mod trex_server;
 
 use bundle::{create_bundle_sync, BundleOptions};
 use trex_server::{TrexServerConfig, TREX_MANAGER};
-
-fn normalize_path(path: &str) -> String {
-  if path.starts_with("file://") {
-    return path.to_string();
-  }
-
-  let path_obj = Path::new(path);
-  let abs_path = if path_obj.is_absolute() {
-    path_obj.to_path_buf()
-  } else {
-    std::env::current_dir()
-      .ok()
-      .map(|cwd| cwd.join(path_obj))
-      .unwrap_or_else(|| path_obj.to_path_buf())
-  };
-
-  if path.ends_with(".eszip") {
-    return abs_path.display().to_string();
-  }
-
-  let final_path = if abs_path.is_dir() {
-    abs_path.join("index.ts")
-  } else {
-    abs_path
-  };
-
-  format!("file://{}", final_path.display())
-}
 
 struct TrexVersionScalar;
 
@@ -149,12 +137,13 @@ impl VScalar for StartTrexServerScalar {
       .parse()
       .unwrap_or_else(|_| "127.0.0.1:8000".parse().unwrap());
 
-    let main_service_path_normalized = normalize_path(&main_service_path);
+    let main_service_path_normalized =
+      trex_server::normalize_path(&main_service_path);
 
     let event_worker_opt = if event_worker_path.is_empty() {
       None
     } else {
-      Some(normalize_path(&event_worker_path))
+      Some(trex_server::normalize_path(&event_worker_path))
     };
 
     let config = trex_server::ServerConfig {
