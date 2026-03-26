@@ -11,7 +11,7 @@ path = "lib.rs"
 [dependencies]
 deno_core = "0.363.0"
 deno_error = "=0.7.0"
-duckdb = { git = "https://github.com/p-hoffmann/trexsql-rs", tag = "v1.4.4-trex", features = ["vtab-loadable", "vtab-arrow"] }
+duckdb = { version = "1.4.4", features = ["vtab-arrow"] }
 chrono = { version = "0.4.40", features = ["serde"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "tracing-log"] }
 thiserror = "1.0"

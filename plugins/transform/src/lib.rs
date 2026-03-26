@@ -28,25 +28,41 @@ pub struct QueryRow {
 }
 
 pub fn query_sql(sql: &str) -> Result<Vec<QueryRow>, Box<dyn Error>> {
-    let json_str = trex_pool_client::read(sql).map_err(|e| -> Box<dyn Error> { e.into() })?;
-    let parsed: Vec<serde_json::Value> =
-        serde_json::from_str(&json_str).map_err(|e| -> Box<dyn Error> { e.into() })?;
+    let (_schema, batches) =
+        trex_pool_client::read_arrow(sql).map_err(|e| -> Box<dyn Error> { e.into() })?;
 
     let mut rows = Vec::new();
-    for obj in parsed {
-        if let serde_json::Value::Object(map) = obj {
-            let columns: Vec<String> = map
-                .values()
-                .map(|v| match v {
-                    serde_json::Value::String(s) => s.clone(),
-                    serde_json::Value::Null => String::new(),
-                    other => other.to_string(),
-                })
-                .collect();
+    for batch in &batches {
+        for r in 0..batch.num_rows() {
+            let mut columns = Vec::new();
+            for c in 0..batch.num_columns() {
+                let col = batch.column(c);
+                let val = if col.is_null(r) {
+                    String::new()
+                } else {
+                    arrow_value_to_string(col.as_ref(), r)
+                };
+                columns.push(val);
+            }
             rows.push(QueryRow { columns });
         }
     }
     Ok(rows)
+}
+
+fn arrow_value_to_string(array: &dyn trex_pool_client::arrow_array::Array, row: usize) -> String {
+    use trex_pool_client::arrow_array::*;
+    use trex_pool_client::arrow_schema::DataType;
+
+    match array.data_type() {
+        DataType::Utf8 => array.as_any().downcast_ref::<StringArray>().unwrap().value(row).to_string(),
+        DataType::LargeUtf8 => array.as_any().downcast_ref::<LargeStringArray>().unwrap().value(row).to_string(),
+        DataType::Int32 => array.as_any().downcast_ref::<Int32Array>().unwrap().value(row).to_string(),
+        DataType::Int64 => array.as_any().downcast_ref::<Int64Array>().unwrap().value(row).to_string(),
+        DataType::UInt64 => array.as_any().downcast_ref::<UInt64Array>().unwrap().value(row).to_string(),
+        DataType::Boolean => array.as_any().downcast_ref::<BooleanArray>().unwrap().value(row).to_string(),
+        _ => format!("{:?}", array.data_type()),
+    }
 }
 
 pub fn escape_sql_ident(s: &str) -> String {
