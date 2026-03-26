@@ -26,7 +26,7 @@ use tokio::sync::oneshot;
 
 use arrow_pg::datatypes::{encode_recordbatch, into_pg_type};
 
-use crate::{get_query_executor, get_describe_connection, QueryExecutor, QueryResult};
+use crate::get_describe_connection;
 use crate::server_registry::{ServerHandle, ServerRegistry};
 
 const DEBUG_LOGGING: bool = false;
@@ -240,16 +240,14 @@ impl AuthSource for SimpleAuthSource {
 
 #[derive(Clone)]
 pub struct TrexQueryHandler {
-    executor: Arc<QueryExecutor>,
     server_host: String,
     server_port: u16,
     worker_id: usize,
 }
 
 impl TrexQueryHandler {
-    pub fn new(executor: Arc<QueryExecutor>, host: String, port: u16, worker_id: usize) -> Self {
+    pub fn new(host: String, port: u16, worker_id: usize) -> Self {
         Self {
-            executor,
             server_host: host,
             server_port: port,
             worker_id,
@@ -323,8 +321,8 @@ impl SimpleQueryHandler for TrexQueryHandler {
         if let Some(db) = login_info.database() {
             if let Some(db_credentials) = ServerRegistry::instance().get_db_credentials(&self.server_host, self.server_port) {
                 if matches!(check_database_action(db, &db_credentials), DatabaseAction::SetDatabase) {
-                    let use_rx = self.executor.submit_to(self.worker_id, format!("USE \"{}\"", db.replace('"', "\"\"")));
-                    if let Ok(QueryResult::Error(err)) = use_rx.await {
+                    let use_sql = format!("USE \"{}\"", db.replace('"', "\"\""));
+                    if let Err(err) = tokio::task::spawn_blocking(move || trex_pool_client::write(&use_sql)).await.unwrap_or(Err("spawn error".into())) {
                         return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                             "ERROR".to_owned(),
                             "XX000".to_owned(),
@@ -355,19 +353,26 @@ impl SimpleQueryHandler for TrexQueryHandler {
                 .replace("SELECT c.oid,c.*,t.relname as tabrelname,rt.relnamespace as refnamespace,d.description, null as consrc_copy",
                 "SELECT c.oid,t.relname  as tabrelname,rt.relnamespace as refnamespace,d.description, null as consrc_copy");
 
-            log_debug(&format!("Submitting to worker {}: {}", self.worker_id, sql));
-            let result_rx = self.executor.submit_to(self.worker_id, sql.clone());
-
-            let query_result = result_rx.await.map_err(|_| {
+            log_debug(&format!("Submitting query: {}", sql));
+            let sql_owned = sql.clone();
+            let query_result = tokio::task::spawn_blocking(move || {
+                trex_pool_client::execute_arrow(&sql_owned)
+            }).await.map_err(|e| {
                 PgWireError::UserError(Box::new(ErrorInfo::new(
                     "ERROR".to_owned(),
                     "XX000".to_owned(),
-                    "Query execution channel closed".to_owned(),
+                    format!("Query execution failed: {}", e),
+                )))
+            })?.map_err(|e| {
+                PgWireError::UserError(Box::new(ErrorInfo::new(
+                    "ERROR".to_owned(),
+                    "XX000".to_owned(),
+                    e,
                 )))
             })?;
 
             match query_result {
-                QueryResult::Select { schema, batches } => {
+                trex_pool_client::ArrowExecuteResult::Rows { schema, batches } => {
                     log_debug(&format!("Got SELECT result: {} batches", batches.len()));
                     let header = Arc::new(schema_to_field_info(&schema, &Format::UnifiedText)?);
                     let header_ref = header.clone();
@@ -381,17 +386,9 @@ impl SimpleQueryHandler for TrexQueryHandler {
                         stream::iter(data.into_iter()),
                     )));
                 }
-                QueryResult::Execute { rows_affected } => {
-                    log_debug(&format!("Got EXECUTE result: {} rows", rows_affected));
-                    responses.push(Response::Execution(Tag::new("OK").with_rows(rows_affected)));
-                }
-                QueryResult::Error(err) => {
-                    log_debug(&format!("Got ERROR: {}", err));
-                    return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
-                        "ERROR".to_owned(),
-                        "XX000".to_owned(),
-                        err,
-                    ))));
+                trex_pool_client::ArrowExecuteResult::Executed => {
+                    log_debug("Got EXECUTE result");
+                    responses.push(Response::Execution(Tag::new("OK").with_rows(0)));
                 }
             }
         }
@@ -429,8 +426,8 @@ impl ExtendedQueryHandler for TrexQueryHandler {
         if let Some(db) = login_info.database() {
             if let Some(db_credentials) = ServerRegistry::instance().get_db_credentials(&self.server_host, self.server_port) {
                 if matches!(check_database_action(db, &db_credentials), DatabaseAction::SetDatabase) {
-                    let use_rx = self.executor.submit_to(self.worker_id, format!("USE \"{}\"", db.replace('"', "\"\"")));
-                    if let Ok(QueryResult::Error(err)) = use_rx.await {
+                    let use_sql = format!("USE \"{}\"", db.replace('"', "\"\""));
+                    if let Err(err) = tokio::task::spawn_blocking(move || trex_pool_client::write(&use_sql)).await.unwrap_or(Err("spawn error".into())) {
                         return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                             "ERROR".to_owned(),
                             "XX000".to_owned(),
@@ -441,19 +438,25 @@ impl ExtendedQueryHandler for TrexQueryHandler {
             }
         }
 
-        let result_rx = self.executor.submit_to(self.worker_id, query);
-
-        let query_result = result_rx.await.map_err(|_| {
+        let query_result = tokio::task::spawn_blocking(move || {
+            trex_pool_client::execute_arrow(&query)
+        }).await.map_err(|e| {
             PgWireError::UserError(Box::new(ErrorInfo::new(
                 "ERROR".to_owned(),
                 "XX000".to_owned(),
-                "Query execution channel closed".to_owned(),
+                format!("Query execution failed: {}", e),
+            )))
+        })?.map_err(|e| {
+            PgWireError::UserError(Box::new(ErrorInfo::new(
+                "ERROR".to_owned(),
+                "XX000".to_owned(),
+                e,
             )))
         })?;
 
-        // Convert QueryResult to pgwire Response
+        // Convert ExecuteResult to pgwire Response
         match query_result {
-            QueryResult::Select { schema, batches } => {
+            trex_pool_client::ArrowExecuteResult::Rows { schema, batches } => {
                 let header = Arc::new(schema_to_field_info(&schema, &Format::UnifiedText)?);
                 let header_ref = header.clone();
 
@@ -466,15 +469,8 @@ impl ExtendedQueryHandler for TrexQueryHandler {
                     stream::iter(data.into_iter()),
                 )))
             }
-            QueryResult::Execute { rows_affected } => {
-                Ok(Response::Execution(Tag::new("OK").with_rows(rows_affected)))
-            }
-            QueryResult::Error(err) => {
-                Err(PgWireError::UserError(Box::new(ErrorInfo::new(
-                    "ERROR".to_owned(),
-                    "XX000".to_owned(),
-                    err,
-                ))))
+            trex_pool_client::ArrowExecuteResult::Executed => {
+                Ok(Response::Execution(Tag::new("OK").with_rows(0)))
             }
         }
     }
@@ -618,9 +614,9 @@ pub struct TrexPgWireServerFactory {
 }
 
 impl TrexPgWireServerFactory {
-    pub fn new(executor: Arc<QueryExecutor>, host: String, port: u16, worker_id: usize) -> Self {
+    pub fn new(host: String, port: u16, worker_id: usize) -> Self {
         Self {
-            query_handler: Arc::new(TrexQueryHandler::new(executor, host, port, worker_id)),
+            query_handler: Arc::new(TrexQueryHandler::new(host, port, worker_id)),
         }
     }
 }
@@ -646,14 +642,13 @@ pub struct TrexPgWireServerWithAuth {
 
 impl TrexPgWireServerWithAuth {
     pub fn new(
-        executor: Arc<QueryExecutor>,
         password: String,
         host: String,
         port: u16,
         worker_id: usize,
     ) -> Self {
         Self {
-            query_handler: Arc::new(TrexQueryHandler::new(executor, host, port, worker_id)),
+            query_handler: Arc::new(TrexQueryHandler::new(host, port, worker_id)),
             password,
         }
     }
@@ -707,11 +702,12 @@ pub fn start_pgwire_server_capi(
                 let listener = TcpListener::bind(format!("{}:{}", server_host, server_port)).await?;
                 log_debug(&format!("Bound to {}:{}", server_host, server_port));
 
-                let executor = get_query_executor().ok_or_else(|| {
-                    log_debug("No query executor available");
-                    std::io::Error::new(std::io::ErrorKind::Other, "No query executor available")
+                let pool_size = trex_pool_client::read_pool_size().map_err(|e| {
+                    log_debug(&format!("Pool not available: {}", e));
+                    std::io::Error::new(std::io::ErrorKind::Other, "Connection pool not available")
                 })?;
-                log_debug(&format!("Using query executor with {} workers", executor.pool_size()));
+                log_debug(&format!("Using shared trex_pool with {} read workers", pool_size));
+                let worker_counter = std::sync::atomic::AtomicUsize::new(0);
 
                 // Treat empty password as no authentication
                 if let Some(required_password) = password_opt.filter(|p| !p.is_empty()) {
@@ -721,8 +717,8 @@ pub fn start_pgwire_server_capi(
                             result = listener.accept() => {
                                 match result {
                                     Ok((socket, _addr)) => {
-                                        let worker_id = executor.next_worker_id();
-                                        let handlers = Arc::new(TrexPgWireServerWithAuth::new(executor.clone(), required_password.to_string(), server_host.clone(), server_port, worker_id));
+                                        let worker_id = worker_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % pool_size;
+                                        let handlers = Arc::new(TrexPgWireServerWithAuth::new(required_password.to_string(), server_host.clone(), server_port, worker_id));
                                         tokio::spawn(async move {
                                             let _ = process_socket(socket, None, handlers).await;
                                         });
@@ -746,8 +742,8 @@ pub fn start_pgwire_server_capi(
                                 match result {
                                     Ok((socket, addr)) => {
                                         log_debug(&format!("New connection from {:?}", addr));
-                                        let worker_id = executor.next_worker_id();
-                                        let handlers = Arc::new(TrexPgWireServerFactory::new(executor.clone(), server_host.clone(), server_port, worker_id));
+                                        let worker_id = worker_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % pool_size;
+                                        let handlers = Arc::new(TrexPgWireServerFactory::new(server_host.clone(), server_port, worker_id));
                                         tokio::spawn(async move {
                                             log_debug("Processing socket...");
                                             let result = process_socket(socket, None, handlers).await;

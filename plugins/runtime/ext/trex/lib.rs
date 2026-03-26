@@ -77,12 +77,8 @@ static TREX_DB: LazyLock<Arc<Mutex<Connection>>> = LazyLock::new(|| {
 
   if pool_size > 0 {
     let _ = connection::init_query_executor(&conn, pool_size);
-    if let Err(e) = connection::init_streaming_pool(&conn, pool_size) {
-      warn!(error = %e, "failed to initialize streaming pool");
-    }
   }
   let conn_arc = Arc::new(Mutex::new(conn));
-  let _ = connection::init_owned_connection(conn_arc.clone());
   conn_arc
 });
 static DB_CREDENTIALS: LazyLock<Arc<Mutex<String>>> = LazyLock::new(|| {
@@ -579,6 +575,16 @@ fn execute_query(
   params: Vec<TrexType>,
   worker_id: i32,
 ) -> Result<String, TrexError> {
+  // Route write operations through the shared trex_pool write queue
+  // to ensure cross-plugin write serialization.
+  if !trex_pool_client::is_result_returning_query(&sql) {
+    return match trex_pool_client::write(&sql) {
+      Ok(()) => Ok("[]".to_string()),
+      Err(e) => Err(TrexError::Generic(e)),
+    };
+  }
+
+  // Reads go through the local executor (supports params + database switching)
   if let Some(executor) = connection::get_query_executor() {
     let params_json = serde_json::to_string(&params)
       .map_err(|e| TrexError::Generic(format!("param serialize: {e}")))?;

@@ -17,7 +17,6 @@ use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig};
 use tonic::{Request, Response, Status, Streaming};
 use tokio::sync::oneshot;
 
-use crate::connection_pool::{ConnectionPool, PoolResult};
 use crate::logging::SwarmLogger;
 use crate::server_registry::ServerRegistry;
 use crate::shuffle_descriptor::ShuffleDescriptor;
@@ -27,18 +26,16 @@ fn escape_identifier(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
-/// Arrow Flight service backed by a connection pool.
+/// Arrow Flight service backed by the shared trex_pool.
 #[derive(Clone)]
 pub struct DuckDBFlightService {
-    pool: Arc<ConnectionPool>,
     host: String,
     port: u16,
 }
 
 impl DuckDBFlightService {
-    pub fn new(pool: Arc<ConnectionPool>, host: String, port: u16) -> Self {
+    pub fn new(host: String, port: u16) -> Self {
         Self {
-            pool,
             host,
             port,
         }
@@ -67,28 +64,17 @@ impl DuckDBFlightService {
     }
 
     fn execute_query_pooled(
-        pool: &Arc<ConnectionPool>,
         sql: &str,
     ) -> Result<(arrow::datatypes::SchemaRef, Vec<arrow::array::RecordBatch>), Status> {
-        let rx = pool.submit(sql.to_string());
-        match rx.blocking_recv() {
-            Ok(PoolResult::Rows { schema, batches }) => Ok((schema, batches)),
-            Ok(PoolResult::Executed) => Ok((
-                Arc::new(arrow::datatypes::Schema::empty()),
-                vec![],
-            )),
-            Ok(PoolResult::Error(e)) => Err(Status::internal(format!(
-                "Failed to execute '{}': {}", sql, e
-            ))),
-            Err(e) => Err(Status::internal(format!("Pool channel closed: {}", e))),
-        }
+        trex_pool_client::read_arrow(sql).map_err(|e| {
+            Status::internal(format!("Failed to execute '{}': {}", sql, e))
+        })
     }
 
     fn execute_query(
-        pool: &Arc<ConnectionPool>,
         sql: &str,
     ) -> Result<(arrow::datatypes::SchemaRef, Vec<arrow::array::RecordBatch>), Status> {
-        Self::execute_query_pooled(pool, sql)
+        Self::execute_query_pooled(sql)
     }
 
     /// Extract a SQL query from a FlightDescriptor (CMD or PATH).
@@ -158,12 +144,11 @@ impl FlightService for DuckDBFlightService {
         _request: Request<Criteria>,
     ) -> Result<Response<Self::ListFlightsStream>, Status> {
         SwarmLogger::debug("list_flights", &format!("Listing tables on {}:{}", self.host, self.port));
-        let pool = self.pool.clone();
         let host = self.host.clone();
         let port = self.port;
 
         let flights = tokio::task::spawn_blocking(move || -> Result<Vec<FlightInfo>, Status> {
-            pool.with_connection(|conn| {
+            crate::local_connections::with_connection(|conn| {
                 let mut stmt = conn.prepare("SHOW TABLES").map_err(|e| {
                     format!("Failed to list tables: {}", e)
                 })?;
@@ -250,12 +235,11 @@ impl FlightService for DuckDBFlightService {
     ) -> Result<Response<FlightInfo>, Status> {
         let descriptor = request.into_inner();
         let sql = Self::descriptor_to_query(&descriptor)?;
-        let pool = self.pool.clone();
         let host = self.host.clone();
         let port = self.port;
 
         let info = tokio::task::spawn_blocking(move || -> Result<FlightInfo, Status> {
-            let (schema, batches) = Self::execute_query(&pool, &sql)?;
+            let (schema, batches) = Self::execute_query(&sql)?;
 
             let total_records: i64 = batches.iter().map(|b| b.num_rows() as i64).sum();
 
@@ -290,7 +274,6 @@ impl FlightService for DuckDBFlightService {
     ) -> Result<Response<SchemaResult>, Status> {
         let descriptor = request.into_inner();
         let sql = Self::descriptor_to_query(&descriptor)?;
-        let pool = self.pool.clone();
 
         let schema_result =
             tokio::task::spawn_blocking(move || -> Result<SchemaResult, Status> {
@@ -302,7 +285,7 @@ impl FlightService for DuckDBFlightService {
                     sql.clone()
                 };
 
-                let (schema, _) = Self::execute_query(&pool, &schema_sql)?;
+                let (schema, _) = Self::execute_query(&schema_sql)?;
 
                 let ipc_options = IpcWriteOptions::default();
                 let schema_result: SchemaResult = SchemaAsIpc::new(&schema, &ipc_options)
@@ -328,10 +311,9 @@ impl FlightService for DuckDBFlightService {
         let sql = Self::parse_ticket_query(&ticket)?;
         SwarmLogger::info("do_get", &format!("Executing query on {}:{}", self.host, self.port));
         SwarmLogger::debug("do_get", &format!("SQL: {sql}"));
-        let pool = self.pool.clone();
 
         let (schema, batches) =
-            tokio::task::spawn_blocking(move || Self::execute_query(&pool, &sql))
+            tokio::task::spawn_blocking(move || Self::execute_query(&sql))
                 .await
                 .map_err(|e| Status::internal(format!("Task join error: {}", e)))??;
 
@@ -384,19 +366,10 @@ impl FlightService for DuckDBFlightService {
                     })?
                     .to_string();
 
-                let pool = self.pool.clone();
-
                 let result_msg = tokio::task::spawn_blocking(move || -> Result<String, Status> {
-                    let rx = pool.submit(sql);
-                    match rx.blocking_recv() {
-                        Ok(PoolResult::Rows { .. }) | Ok(PoolResult::Executed) => {
-                            Ok(serde_json::json!({"status": "ok"}).to_string())
-                        }
-                        Ok(PoolResult::Error(e)) => {
-                            Err(Status::internal(format!("Failed to execute statement: {}", e)))
-                        }
-                        Err(e) => Err(Status::internal(format!("Pool channel closed: {}", e))),
-                    }
+                    trex_pool_client::execute(&sql)
+                        .map(|_| serde_json::json!({"status": "ok"}).to_string())
+                        .map_err(|e| Status::internal(format!("Failed to execute statement: {}", e)))
                 })
                 .await
                 .map_err(|e| Status::internal(format!("Task join error: {}", e)))??;
@@ -525,12 +498,11 @@ impl FlightService for DuckDBFlightService {
         );
 
         if let Some(ref target_table) = desc.target_table {
-            let pool = self.pool.clone();
             let table_name = target_table.clone();
             let batch_count = batches.len();
 
             tokio::task::spawn_blocking(move || -> Result<(), Status> {
-                pool.with_connection(|conn| {
+                crate::local_connections::with_connection(|conn| {
                     let mut app = conn
                         .appender(&table_name)
                         .map_err(|e| format!("Appender for '{}': {}", table_name, e))?;
@@ -600,7 +572,8 @@ pub fn start_flight_server(
                 .build()?;
 
             rt.block_on(async move {
-                let pool = crate::connection_pool::get_pool().map_err(|e| {
+                // Verify pool is initialized
+                trex_pool_client::read_pool_size().map_err(|e| {
                     Box::new(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         format!("Connection pool not available: {}", e),
@@ -608,7 +581,6 @@ pub fn start_flight_server(
                 })?;
 
                 let service = DuckDBFlightService::new(
-                    pool,
                     server_host.clone(),
                     server_port,
                 );
@@ -694,7 +666,8 @@ pub fn start_flight_server_with_tls(
                 .build()?;
 
             rt.block_on(async move {
-                let pool = crate::connection_pool::get_pool().map_err(|e| {
+                // Verify pool is initialized
+                trex_pool_client::read_pool_size().map_err(|e| {
                     Box::new(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         format!("Connection pool not available: {}", e),
@@ -702,7 +675,6 @@ pub fn start_flight_server_with_tls(
                 })?;
 
                 let service = DuckDBFlightService::new(
-                    pool,
                     server_host.clone(),
                     server_port,
                 );

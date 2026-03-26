@@ -98,11 +98,7 @@ fn execute_on_connection(
     let merged = concat_batches(schema, &batches)
         .map_err(|e| format!("Failed to concatenate record batches: {e}"))?;
 
-    let pool = crate::connection_pool::get_pool().map_err(|e| {
-        format!("Connection pool not available (extension not initialised?): {e}")
-    })?;
-
-    pool.with_connection(|conn| {
+    crate::local_connections::with_connection(|conn| {
         let _ = conn.register_table_function::<ArrowVTab>("arrow");
 
         let params = arrow_recordbatch_to_query_params(merged);

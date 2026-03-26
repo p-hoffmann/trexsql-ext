@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use duckdb::Connection;
 use etl_lib::destination::Destination;
 use etl_lib::error::EtlResult;
 use etl_lib::types::{Event, TableId, TableRow};
@@ -13,35 +12,27 @@ use crate::type_mapping::{cell_to_sql_literal, pg_type_to_duckdb};
 /// trexsql destination for the Supabase ETL pipeline.
 ///
 /// Implements the ETL `Destination` trait, writing CDC events and table rows
-/// into the local trexsql database via `execute_batch()`.
+/// into the local trexsql database via the shared trex_pool write queue.
 #[derive(Clone)]
 pub struct DuckDbDestination {
-    connection: Arc<Mutex<Connection>>,
     pipeline_name: String,
     schemas: Arc<Mutex<HashMap<TableId, TableSchema>>>,
 }
 
 impl DuckDbDestination {
     pub fn new(
-        connection: Arc<Mutex<Connection>>,
         pipeline_name: String,
         schemas: Arc<Mutex<HashMap<TableId, TableSchema>>>,
     ) -> Self {
         Self {
-            connection,
             pipeline_name,
             schemas,
         }
     }
 
     fn execute_sql(&self, sql: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let conn = self
-            .connection
-            .lock()
-            .map_err(|e| format!("connection lock: {}", e))?;
-        conn.execute_batch(sql)
-            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
-        Ok(())
+        trex_pool_client::write(sql)
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })
     }
 
     fn ensure_schema(&self, schema_name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

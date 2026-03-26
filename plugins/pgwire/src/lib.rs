@@ -3,10 +3,7 @@ extern crate duckdb_loadable_macros;
 extern crate libduckdb_sys;
 
 mod pgwire_server;
-mod query_executor;
 mod server_registry;
-
-pub use query_executor::{QueryExecutor, QueryResult};
 
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
@@ -23,16 +20,15 @@ use std::{
 };
 
 static DESCRIBE_CONNECTIONS: OnceCell<Vec<Arc<Mutex<Connection>>>> = OnceCell::new();
-static QUERY_EXECUTOR: OnceCell<Arc<QueryExecutor>> = OnceCell::new();
 
-const EXECUTOR_POOL_SIZE: usize = 4;
+const DESCRIBE_POOL_SIZE: usize = 4;
 
 fn store_shared_connection(connection: &Connection) -> Result<(), Box<dyn Error>> {
     // Create one describe connection per worker so each pgwire session gets its
     // own connection for DESCRIBE operations, preventing USE DATABASE state from
     // leaking between sessions that share the same worker_id.
-    let mut describe_conns = Vec::with_capacity(EXECUTOR_POOL_SIZE);
-    for i in 0..EXECUTOR_POOL_SIZE {
+    let mut describe_conns = Vec::with_capacity(DESCRIBE_POOL_SIZE);
+    for i in 0..DESCRIBE_POOL_SIZE {
         let cloned = connection
             .try_clone()
             .map_err(|e| format!("describe connection clone {i}: {e}"))?;
@@ -43,11 +39,6 @@ fn store_shared_connection(connection: &Connection) -> Result<(), Box<dyn Error>
         .set(describe_conns)
         .map_err(|_| "describe connections already stored")?;
 
-    let executor = QueryExecutor::new(connection, EXECUTOR_POOL_SIZE)?;
-    QUERY_EXECUTOR
-        .set(Arc::new(executor))
-        .map_err(|_| "executor already created")?;
-
     Ok(())
 }
 
@@ -57,10 +48,6 @@ pub fn get_describe_connection(worker_id: usize) -> Option<Arc<Mutex<Connection>
     DESCRIBE_CONNECTIONS.get().and_then(|conns| {
         conns.get(worker_id % conns.len()).cloned()
     })
-}
-
-pub fn get_query_executor() -> Option<Arc<QueryExecutor>> {
-    QUERY_EXECUTOR.get().cloned()
 }
 
 struct PgwireVersionScalar;

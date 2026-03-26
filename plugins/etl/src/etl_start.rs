@@ -267,8 +267,9 @@ fn start_pipeline(
         )
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
-    let shared_conn = crate::get_shared_connection()
-        .ok_or("Extension connection not initialized")?;
+    // Verify pool is available
+    trex_pool_client::read_pool_size()
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     let name = pipeline_name.to_string();
     let name_for_thread = pipeline_name.to_string();
@@ -279,7 +280,6 @@ fn start_pipeline(
             &name_for_thread,
             connection_string,
             &schema_name,
-            shared_conn,
             shutdown_rx,
         );
     }
@@ -301,8 +301,8 @@ fn start_pipeline(
 
                 let schemas = Arc::new(Mutex::new(HashMap::new()));
                 let destination =
-                    DuckDbDestination::new(shared_conn.clone(), name.clone(), schemas.clone());
-                let store = DuckDbStore::new(shared_conn.clone(), name.clone(), schemas);
+                    DuckDbDestination::new(name.clone(), schemas.clone());
+                let store = DuckDbStore::new(name.clone(), schemas);
 
                 let pg_config = etl_lib::config::PgConnectionConfig {
                     host,
@@ -383,7 +383,6 @@ fn start_copy_only_pipeline(
     name_for_thread: &str,
     connection_string: &str,
     schema_name: &str,
-    shared_conn: Arc<Mutex<duckdb::Connection>>,
     shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let pipeline_name = name.to_string();
@@ -401,10 +400,7 @@ fn start_copy_only_pipeline(
                 .update_state(&pipeline_name, PipelineState::Starting);
 
             {
-                let conn = shared_conn
-                    .lock()
-                    .map_err(|e| format!("connection lock: {}", e))?;
-                conn.execute_batch("LOAD postgres")
+                trex_pool_client::write("LOAD postgres")
                     .map_err(|e| format!("Failed to load postgres scanner: {}", e))?;
 
                 let escaped_conn = conn_str.replace('\'', "''");
@@ -412,7 +408,7 @@ fn start_copy_only_pipeline(
                     "ATTACH IF NOT EXISTS '{}' AS \"{}\" (TYPE postgres, READ_ONLY)",
                     escaped_conn, attach_name
                 );
-                conn.execute_batch(&attach_sql)
+                trex_pool_client::write(&attach_sql)
                     .map_err(|e| format!("Failed to attach source: {}", e))?;
             }
 
@@ -420,20 +416,18 @@ fn start_copy_only_pipeline(
                 .update_state(&pipeline_name, PipelineState::Snapshotting);
 
             let tables: Vec<String> = {
-                let conn = shared_conn
-                    .lock()
-                    .map_err(|e| format!("connection lock: {}", e))?;
                 let escaped_schema = schema.replace('\'', "''");
                 let sql = format!(
                     "SELECT table_name FROM \"{}\".information_schema.tables WHERE table_schema = '{}'",
                     attach_name, escaped_schema
                 );
-                let mut stmt = conn.prepare(&sql)
+                let json_str = trex_pool_client::read(&sql)
                     .map_err(|e| format!("Failed to query tables: {}", e))?;
-                let rows = stmt
-                    .query_map([], |row| row.get::<_, String>(0))
-                    .map_err(|e| format!("Failed to query tables: {}", e))?;
-                rows.filter_map(|r| r.ok()).collect()
+                let parsed: Vec<serde_json::Value> = serde_json::from_str(&json_str)
+                    .unwrap_or_default();
+                parsed.iter()
+                    .filter_map(|v| v.get("table_name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+                    .collect()
             };
 
             let mut had_error = false;
@@ -442,9 +436,7 @@ fn start_copy_only_pipeline(
                     Ok(_) | Err(oneshot::error::TryRecvError::Closed) => {
                         pipeline_registry::registry()
                             .update_state(&pipeline_name, PipelineState::Stopping);
-                        if let Ok(conn) = shared_conn.lock() {
-                            let _ = conn.execute_batch(&format!("DETACH \"{}\"", attach_name));
-                        }
+                        let _ = trex_pool_client::write(&format!("DETACH \"{}\"", attach_name));
                         return Ok(());
                     }
                     Err(oneshot::error::TryRecvError::Empty) => {}
@@ -467,45 +459,39 @@ fn start_copy_only_pipeline(
                     escaped_schema
                 );
 
-                match shared_conn.lock() {
-                    Ok(conn) => {
-                        if let Err(e) = conn.execute_batch(&ensure_schema_sql) {
-                            eprintln!("etl: create schema error for '{}': {}", schema, e);
-                        }
-                        match conn.execute_batch(&copy_sql) {
-                            Ok(_) => {
-                                let count_sql = format!(
-                                    "SELECT COUNT(*) FROM \"{}\".\"{}\"",
-                                    escaped_schema, escaped_table
-                                );
-                                let row_count = conn
-                                    .prepare(&count_sql)
-                                    .and_then(|mut stmt| {
-                                        stmt.query_row([], |row| row.get::<_, i64>(0))
-                                    })
-                                    .unwrap_or(0) as u64;
-                                pipeline_registry::registry()
-                                    .update_stats(&pipeline_name, row_count);
-                            }
-                            Err(e) => {
-                                eprintln!(
-                                    "etl: copy error for table '{}.{}': {}",
-                                    schema, table, e
-                                );
-                                had_error = true;
-                            }
-                        }
+                if let Err(e) = trex_pool_client::write(&ensure_schema_sql) {
+                    eprintln!("etl: create schema error for '{}': {}", schema, e);
+                }
+                match trex_pool_client::write(&copy_sql) {
+                    Ok(_) => {
+                        let count_sql = format!(
+                            "SELECT COUNT(*) FROM \"{}\".\"{}\"",
+                            escaped_schema, escaped_table
+                        );
+                        let row_count = trex_pool_client::read(&count_sql)
+                            .ok()
+                            .and_then(|json| serde_json::from_str::<Vec<serde_json::Value>>(&json).ok())
+                            .and_then(|rows| rows.first().cloned())
+                            .and_then(|row| {
+                                row.as_object()
+                                    .and_then(|m| m.values().next().cloned())
+                                    .and_then(|v| v.as_i64())
+                            })
+                            .unwrap_or(0) as u64;
+                        pipeline_registry::registry()
+                            .update_stats(&pipeline_name, row_count);
                     }
                     Err(e) => {
-                        eprintln!("etl: connection lock error: {}", e);
+                        eprintln!(
+                            "etl: copy error for table '{}.{}': {}",
+                            schema, table, e
+                        );
                         had_error = true;
                     }
                 }
             }
 
-            if let Ok(conn) = shared_conn.lock() {
-                let _ = conn.execute_batch(&format!("DETACH \"{}\"", attach_name));
-            }
+            let _ = trex_pool_client::write(&format!("DETACH \"{}\"", attach_name));
 
             if had_error {
                 pipeline_registry::registry()

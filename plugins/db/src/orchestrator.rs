@@ -5,16 +5,13 @@ use crate::service_functions::get_start_service_sql;
 
 /// Load extensions, start their services, and publish endpoints to gossip.
 pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
-    let _pool = match crate::connection_pool::get_pool() {
-        Ok(p) => p,
-        Err(_) => {
-            SwarmLogger::error("orchestrator", "Connection pool is not available");
-            return extensions
-                .iter()
-                .map(|ext| format!("{}: error — no shared connection", ext.name))
-                .collect();
-        }
-    };
+    if trex_pool_client::read_pool_size().is_err() {
+        SwarmLogger::error("orchestrator", "Connection pool is not available");
+        return extensions
+            .iter()
+            .map(|ext| format!("{}: error — no shared connection", ext.name))
+            .collect();
+    }
 
     let mut statuses: Vec<String> = Vec::with_capacity(extensions.len());
 
@@ -28,7 +25,7 @@ pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
         let load_sql = format!("LOAD '{}.trex'", ext.name);
         SwarmLogger::info("orchestrator", &format!("Loading extension: {}", ext.name));
 
-        if let Err(e) = crate::connection_pool::submit_exec_blocking(&load_sql) {
+        if let Err(e) = trex_pool_client::write(&load_sql) {
             let msg = format!("{}: load failed — {}", ext.name, e);
             SwarmLogger::error("orchestrator", &msg);
             statuses.push(msg);
@@ -76,7 +73,7 @@ pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
             &format!("Starting service: {} on {}:{}", ext.name, host, port),
         );
 
-        if let Err(e) = crate::connection_pool::submit_exec_blocking(&start_sql) {
+        if let Err(e) = trex_pool_client::write(&start_sql) {
             let msg = format!("{}: start failed — {}", ext.name, e);
             SwarmLogger::error("orchestrator", &msg);
             statuses.push(msg);

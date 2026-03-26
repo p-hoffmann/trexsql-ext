@@ -248,7 +248,7 @@ pub fn execute_distributed_query(
 
 /// Execute locally for queries without a FROM clause.
 fn execute_local_query(sql: &str) -> Result<QueryResult, String> {
-    let (_schema, batches) = crate::connection_pool::submit_query_blocking(sql)?;
+    let (_schema, batches) = trex_pool_client::read_arrow(sql)?;
 
     let schema = if let Some(first) = batches.first() {
         first.schema()
@@ -377,16 +377,12 @@ fn merge_with_duckdb(
     let merged_batch = concat_batches(schema, &batches)
         .map_err(|e| format!("Failed to concatenate record batches: {e}"))?;
 
-    let pool = crate::connection_pool::get_pool().map_err(|e| {
-        format!("Connection pool not available (extension not initialised?): {e}")
-    })?;
-
     let rewritten_sql = merge_sql.replace(
         "FROM _merged",
         "FROM (SELECT * FROM arrow(?, ?)) AS _merged",
     );
 
-    pool.with_connection(|conn| {
+    crate::local_connections::with_connection(|conn| {
         let _ = conn.register_table_function::<ArrowVTab>("arrow");
 
         let params = arrow_recordbatch_to_query_params(merged_batch);

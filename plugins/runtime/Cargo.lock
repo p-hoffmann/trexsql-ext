@@ -10144,6 +10144,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "trex-pool"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "crossbeam-channel",
+ "duckdb",
+ "libduckdb-sys",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "trex_core"
 version = "0.1.0"
 dependencies = [
@@ -10164,6 +10176,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "trex-pool",
  "uuid",
 ]
 
