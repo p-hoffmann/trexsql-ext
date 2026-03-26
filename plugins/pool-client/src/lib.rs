@@ -75,10 +75,61 @@ fn get_fns() -> Result<&'static PoolFns, String> {
 }
 
 unsafe fn discover_pool_fns() -> Option<PoolFns> {
+    // DuckDB loads extensions with RTLD_LOCAL, so symbols aren't visible via
+    // RTLD_DEFAULT. We need to find the pool.trex handle and promote it to
+    // RTLD_GLOBAL, or search for symbols in all loaded libraries.
+    //
+    // Strategy: try RTLD_DEFAULT first (works if pool was loaded with RTLD_GLOBAL).
+    // If that fails, try to dlopen the pool library with RTLD_NOLOAD to get its
+    // handle, then look up symbols from that handle.
+    let handle = {
+        let test = libc::dlsym(
+            libc::RTLD_DEFAULT,
+            b"trex_pool_read\0".as_ptr() as *const _,
+        );
+        if !test.is_null() {
+            libc::RTLD_DEFAULT
+        } else {
+            // DuckDB loads extensions with RTLD_LOCAL using the full path,
+            // so we can't find them by short name. Scan /proc/self/maps to
+            // find the loaded pool library, then dlopen it with RTLD_NOLOAD.
+            let mut found = std::ptr::null_mut();
+            if let Ok(maps) = std::fs::read_to_string("/proc/self/maps") {
+                for line in maps.lines() {
+                    // Look for any loaded library containing "pool" in its path
+                    // that ends with .trex or .so
+                    if let Some(path_start) = line.find('/') {
+                        let path = &line[path_start..];
+                        let basename = path.rsplit('/').next().unwrap_or("");
+                        if (basename.starts_with("pool.") || basename.starts_with("libpool."))
+                            && (basename.ends_with(".trex") || basename.ends_with(".so"))
+                        {
+                            let c_path = std::ffi::CString::new(path).ok();
+                            if let Some(ref cp) = c_path {
+                                let h = libc::dlopen(
+                                    cp.as_ptr(),
+                                    libc::RTLD_NOLOAD | libc::RTLD_NOW,
+                                );
+                                if !h.is_null() {
+                                    found = h;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if found.is_null() {
+                return None;
+            }
+            found
+        }
+    };
+
     macro_rules! sym {
         ($name:expr) => {{
             let name = concat!($name, "\0");
-            let ptr = libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr() as *const _);
+            let ptr = libc::dlsym(handle, name.as_ptr() as *const _);
             if ptr.is_null() {
                 return None;
             }
