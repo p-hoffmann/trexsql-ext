@@ -66,6 +66,10 @@ impl QueryExecutor {
         }
         let conn = Connection::open(db_path)
             .map_err(|e| format!("open standalone db {db_path}: {e}"))?;
+
+        conn.execute_batch("INSTALL json; LOAD json; INSTALL icu; LOAD icu;")
+            .map_err(|e| format!("load extensions on {db_path}: {e}"))?;
+
         let mut connections = Vec::with_capacity(pool_size);
         for i in 0..pool_size {
             connections.push(
