@@ -1,5 +1,5 @@
 use anyhow::{bail, Result};
-use base::server::{RequestIdleTimeout, ServerFlags};
+use base::server::{RequestIdleTimeout, ServerFlags, WorkerEntrypoints};
 use base::worker::pool::{SupervisorPolicy, WorkerPoolPolicy};
 use base::InspectorOption;
 use serde::{Deserialize, Serialize};
@@ -149,6 +149,13 @@ impl ServerConfig {
       restrict_host_fs: self.restrict_host_fs,
     }
   }
+
+  pub fn to_worker_entrypoints(&self) -> WorkerEntrypoints {
+    WorkerEntrypoints {
+      main: Some(self.main_service_path.clone()),
+      events: self.event_worker_path.clone(),
+    }
+  }
 }
 
 pub struct ServerManager {
@@ -263,8 +270,8 @@ fn init_logging() {
 }
 
 pub(crate) fn normalize_path(path: &str) -> String {
-  if let Some(file_path) = path.strip_prefix("file://") {
-    return file_path.to_string();
+  if path.starts_with("file://") {
+    return path.to_string();
   }
 
   let path_obj = Path::new(path);
@@ -277,7 +284,17 @@ pub(crate) fn normalize_path(path: &str) -> String {
       .unwrap_or_else(|| path_obj.to_path_buf())
   };
 
-  abs_path.display().to_string()
+  if path.ends_with(".eszip") {
+    return abs_path.display().to_string();
+  }
+
+  let final_path = if abs_path.is_dir() {
+    abs_path.join("index.ts")
+  } else {
+    abs_path
+  };
+
+  format!("file://{}", final_path.display())
 }
 
 fn parse_inspector_option(s: &str) -> Result<InspectorOption> {
@@ -395,6 +412,11 @@ impl TrexServerManagerWrapper {
         let mut flags = config_clone.to_server_flags();
         flags.no_module_cache = true;
         *builder.flags_mut() = flags;
+
+        if !config_clone.main_service_path.ends_with(".eszip") {
+          let entrypoints = config_clone.to_worker_entrypoints();
+          *builder.entrypoints_mut() = entrypoints;
+        }
 
         get_global_server_manager()
           .register_server(server_id_clone.clone(), config_clone.clone())?;
