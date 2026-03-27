@@ -52,8 +52,8 @@ def main():
     log("Microbenchmark: Normal Query vs trex_db_query() — Single Node")
     log("=" * 80)
 
-    gp, fp, pp = alloc_ports()
-    node = Node([DB_EXT], gp, fp, pp)
+    gp, fp, pp, tp = alloc_ports()
+    node = Node([DB_EXT], gp, fp, pp, tp)
 
     # Create table BEFORE starting gossip so first catalog scan picks it up
     node.execute(

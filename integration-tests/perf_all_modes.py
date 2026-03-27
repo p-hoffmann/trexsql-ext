@@ -52,8 +52,8 @@ def setup_cluster(node_count, total_rows, cluster_id):
     nodes = []
 
     for i in range(node_count):
-        gp, fp, pp = alloc_ports()
-        node = Node([DB_EXT], gp, fp, pp)
+        gp, fp, pp, tp = alloc_ports()
+        node = Node([DB_EXT], gp, fp, pp, tp)
         start = i * chunk
         end = start + chunk if i < node_count - 1 else total_rows
         node.execute(TABLE_SQL.format(start=start, end=end))

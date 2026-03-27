@@ -12,6 +12,7 @@ except RuntimeError:
     pass  # already set
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+POOL_EXT_TREX = f"{REPO_ROOT}/plugins/pool/build/debug/extension/pool/pool.trex"
 DB_EXT_TREX = f"{REPO_ROOT}/plugins/db/build/debug/extension/db/db.trex"
 PGWIRE_EXT_TREX = f"{REPO_ROOT}/plugins/pgwire/build/debug/extension/pgwire/pgwire.trex"
 ATLAS_EXT_TREX = f"{REPO_ROOT}/plugins/atlas/build/release/extension/circe/circe.trex"
@@ -26,6 +27,7 @@ FHIR_EXT_TREX = f"{REPO_ROOT}/plugins/fhir/build/debug/extension/fhir/fhir.trex"
 TREXAS_EXT_TREX = f"{REPO_ROOT}/plugins/runtime/build/debug/extension/trexas/trexas.trex"
 
 # trexsql Python API requires .duckdb_extension suffix for LOAD.
+POOL_EXT = f"{REPO_ROOT}/plugins/pool/build/debug/extension/pool/pool.duckdb_extension"
 DB_EXT = f"{REPO_ROOT}/plugins/db/build/debug/extension/db/db.duckdb_extension"
 PGWIRE_EXT = f"{REPO_ROOT}/plugins/pgwire/build/debug/extension/pgwire/pgwire.duckdb_extension"
 ATLAS_EXT = f"{REPO_ROOT}/plugins/atlas/build/release/extension/circe/circe.duckdb_extension"
@@ -40,6 +42,7 @@ FHIR_EXT = f"{REPO_ROOT}/plugins/fhir/build/debug/extension/fhir/fhir.duckdb_ext
 TREXAS_EXT = f"{REPO_ROOT}/plugins/runtime/build/debug/extension/trexas/trexas.duckdb_extension"
 
 for src, dst in [
+    (POOL_EXT_TREX, POOL_EXT),
     (DB_EXT_TREX, DB_EXT),
     (PGWIRE_EXT_TREX, PGWIRE_EXT),
     (ATLAS_EXT_TREX, ATLAS_EXT),
@@ -196,7 +199,7 @@ def node_factory():
                      load_etl=False, load_migration=False, load_fhir=False,
                      load_trexas=False, load_flight=None, load_swarm=None):
         # load_flight and load_swarm are accepted but ignored (both merged into db)
-        ext_paths = []
+        ext_paths = [POOL_EXT]  # pool must always load first
         if load_db:
             ext_paths.append(DB_EXT)
         if load_pgwire:

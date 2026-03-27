@@ -13,14 +13,9 @@ use duckdb_loadable_macros::duckdb_entrypoint_c_api;
 use std::{
   error::Error,
   ffi::CString,
-  sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Mutex, OnceLock as OnceCell,
-  },
+  sync::atomic::{AtomicBool, Ordering},
 };
 use tracing::warn;
-
-static SHARED_CONNECTION: OnceCell<Arc<Mutex<Connection>>> = OnceCell::new();
 
 fn store_shared_connection(
   connection: &Connection,
@@ -46,19 +41,11 @@ fn store_shared_connection(
     }
   }
 
-  let cloned = connection
-    .try_clone()
-    .map_err(|e| format!("connection clone: {e}"))?;
-
-  SHARED_CONNECTION
-    .set(Arc::new(Mutex::new(cloned)))
-    .map_err(|_| "connection already stored")?;
+  if let Err(e) = trex_core::connection::init_connection(connection) {
+    warn!(error = %e, "shared connection init failed (may already exist)");
+  }
 
   Ok(())
-}
-
-fn get_shared_connection() -> Option<Arc<Mutex<Connection>>> {
-  SHARED_CONNECTION.get().cloned()
 }
 
 mod bundle;
@@ -542,12 +529,6 @@ pub unsafe fn extension_entrypoint(
   con: Connection,
 ) -> Result<(), Box<dyn Error>> {
   store_shared_connection(&con)?;
-
-  if let Some(shared_conn) = get_shared_connection() {
-    if let Err(e) = trex_core::connection::init_shared_connection(shared_conn) {
-      warn!(error = %e, "trex shared connection init failed");
-    }
-  }
 
   con.register_scalar_function::<TrexVersionScalar>("trex_runtime_version")?;
   con.register_scalar_function::<TrexVersionScalar>("trex_version")?;

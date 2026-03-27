@@ -161,6 +161,7 @@ def test_concurrent_writes_visible_across_workers(node_factory):
     def reader():
         conn = _connect(node.pgwire_port)
         try:
+            conn.autocommit = True
             cur = conn.cursor()
             barrier.wait()
             while not writer_done.is_set():

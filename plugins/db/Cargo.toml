@@ -41,6 +41,7 @@ uuid = { version = "1", features = ["v4"] }
 ahash = "0.8"
 sqlparser = { version = "0.53", features = ["visitor"] }
 crossbeam-channel = "0.5"
+trex-pool-client = { path = "../pool-client" }
 futures = "0.3"
 async-trait = "0.1"
 

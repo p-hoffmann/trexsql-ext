@@ -2,7 +2,7 @@ extern crate duckdb;
 extern crate duckdb_loadable_macros;
 extern crate libduckdb_sys;
 
-pub mod connection_pool;
+pub mod local_connections;
 pub mod logging;
 pub mod config;
 pub mod gossip;
@@ -32,6 +32,7 @@ pub mod flight_server;
 pub mod flight_functions;
 pub mod server_registry;
 pub mod partition;
+pub mod pool;
 
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
@@ -1361,7 +1362,12 @@ impl VTab for DbPartitionsTable {
 
 #[duckdb_entrypoint_c_api()]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
-    connection_pool::init_pool(&con, 4)
+    // Pool is initialized by the pool.trex extension (loaded before db).
+    trex_pool_client::read_pool_size()
+        .map_err(|e| -> Box<dyn Error> { format!("trex_pool not loaded: {e}").into() })?;
+
+    // Local connections for closure-based operations (ArrowVTab, appender)
+    local_connections::init(&con, 4)
         .map_err(|e| -> Box<dyn Error> { e.into() })?;
 
     con.register_scalar_function::<DbStartScalar>("trex_db_start")

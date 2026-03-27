@@ -20,30 +20,11 @@ pub mod type_mapping;
 
 use duckdb::Connection;
 use std::error::Error;
-use std::sync::{Arc, Mutex, OnceLock};
-
-static SHARED_CONNECTION: OnceLock<Arc<Mutex<Connection>>> = OnceLock::new();
-
-pub fn store_shared_connection(connection: &Connection) -> Result<(), Box<dyn Error>> {
-    let cloned = connection
-        .try_clone()
-        .map_err(|e| format!("Failed to clone connection: {}", e))?;
-
-    SHARED_CONNECTION
-        .set(Arc::new(Mutex::new(cloned)))
-        .map_err(|_| "Connection already stored")?;
-
-    Ok(())
-}
-
-pub fn get_shared_connection() -> Option<Arc<Mutex<Connection>>> {
-    SHARED_CONNECTION.get().cloned()
-}
 
 #[cfg(feature = "loadable-extension")]
 #[duckdb_loadable_macros::duckdb_entrypoint_c_api()]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
-    store_shared_connection(&con)?;
+    // Pool already initialized by db plugin
 
     con.register_scalar_function::<etl_start::EtlStartScalar>("trex_etl_start")
         .expect("Failed to register trex_etl_start scalar function");

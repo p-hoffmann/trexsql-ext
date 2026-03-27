@@ -28,6 +28,8 @@ struct Worker {
 }
 
 pub struct QueryExecutor {
+    /// When true, delegates to the shared trex_pool instead of local workers.
+    use_pool: bool,
     senders: Vec<Sender<QueryRequest>>,
     workers: Vec<Worker>,
     next_worker: AtomicUsize,
@@ -45,6 +47,17 @@ impl Drop for QueryExecutor {
 }
 
 impl QueryExecutor {
+    /// Create an executor backed by the shared trex_pool.
+    /// No local worker threads are created.
+    pub fn from_pool() -> Self {
+        Self {
+            use_pool: true,
+            senders: Vec::new(),
+            workers: Vec::new(),
+            next_worker: AtomicUsize::new(0),
+        }
+    }
+
     pub fn new(connection: &Connection, pool_size: usize) -> Result<Self, String> {
         if pool_size == 0 {
             return Err("pool_size must be > 0".into());
@@ -96,6 +109,7 @@ impl QueryExecutor {
         }
 
         Ok(Self {
+            use_pool: false,
             senders,
             workers,
             next_worker: AtomicUsize::new(0),
@@ -103,7 +117,19 @@ impl QueryExecutor {
     }
 
     pub fn next_worker_id(&self) -> usize {
+        if self.use_pool {
+            // In pool mode, worker_id is actually a session_id.
+            return trex_pool_client::create_session().unwrap_or(0) as usize;
+        }
         self.next_worker.fetch_add(1, Ordering::Relaxed) % self.senders.len()
+    }
+
+    /// Destroy a pool session. Call after COMMIT/ROLLBACK to release the
+    /// direct connection back to the pool.
+    pub fn destroy_session(&self, session_id: usize) {
+        if self.use_pool {
+            let _ = trex_pool_client::destroy_session(session_id as u64);
+        }
     }
 
     pub fn submit_to(
@@ -128,11 +154,23 @@ impl QueryExecutor {
     }
 
     pub async fn submit(&self, query: String) -> QueryResult {
+        if self.use_pool {
+            // Create a short-lived session for non-transactional queries.
+            let session_id = trex_pool_client::create_session().unwrap_or(0);
+            let result = Self::pool_session_execute(session_id as u64, query).await;
+            let _ = trex_pool_client::destroy_session(session_id as u64);
+            return result;
+        }
         let worker_id = self.next_worker_id();
         self.submit_on(worker_id, query).await
     }
 
     pub async fn submit_on(&self, worker_id: usize, query: String) -> QueryResult {
+        if self.use_pool {
+            // worker_id is a session_id in pool mode. The session auto-detects
+            // BEGIN/COMMIT/ROLLBACK and pins to a direct connection.
+            return Self::pool_session_execute(worker_id as u64, query).await;
+        }
         let rx = self.submit_to(worker_id, query);
         rx.await.unwrap_or(QueryResult::Error(
             "Query execution channel closed".to_string(),
@@ -140,6 +178,12 @@ impl QueryExecutor {
     }
 
     pub async fn submit_params(&self, query: String, params: Vec<String>) -> QueryResult {
+        if self.use_pool {
+            let session_id = trex_pool_client::create_session().unwrap_or(0);
+            let result = Self::pool_session_execute_params(session_id as u64, query, params).await;
+            let _ = trex_pool_client::destroy_session(session_id as u64);
+            return result;
+        }
         let rx = self.submit_with_params(query, params);
         rx.await.unwrap_or(QueryResult::Error(
             "Query execution channel closed".to_string(),
@@ -147,6 +191,9 @@ impl QueryExecutor {
     }
 
     pub async fn submit_params_on(&self, worker_id: usize, query: String, params: Vec<String>) -> QueryResult {
+        if self.use_pool {
+            return Self::pool_session_execute_params(worker_id as u64, query, params).await;
+        }
         let sender = &self.senders[worker_id % self.senders.len()];
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
@@ -186,11 +233,18 @@ impl QueryExecutor {
     }
 
     pub fn pool_size(&self) -> usize {
+        if self.use_pool {
+            return trex_pool_client::read_pool_size().unwrap_or(1);
+        }
         self.workers.len()
     }
 
     /// Run a trivial query on every worker to force catalog refresh after DDL.
     pub async fn sync_all(&self) {
+        if self.use_pool {
+            let _ = tokio::task::spawn_blocking(|| trex_pool_client::sync_all()).await;
+            return;
+        }
         let mut rxs = Vec::new();
         for i in 0..self.senders.len() {
             rxs.push(self.submit_to(i, "SELECT 1".to_string()));
@@ -198,6 +252,44 @@ impl QueryExecutor {
         for rx in rxs {
             let _ = rx.await;
         }
+    }
+
+    /// Execute a parameterized query via a pool session.
+    async fn pool_session_execute_params(session_id: u64, query: String, params: Vec<String>) -> QueryResult {
+        let result = tokio::task::spawn_blocking(move || {
+            match trex_pool_client::session_execute_params(session_id, &query, &params) {
+                Ok((_schema, batches)) => {
+                    if batches.is_empty() {
+                        QueryResult::Execute { rows_affected: 0 }
+                    } else {
+                        arrow_batches_to_query_result(&batches)
+                    }
+                }
+                Err(e) => QueryResult::Error(e),
+            }
+        })
+        .await;
+
+        result.unwrap_or(QueryResult::Error("pool task failed".to_string()))
+    }
+
+    /// Execute a query via a pool session, converting the Arrow result to QueryResult.
+    async fn pool_session_execute(session_id: u64, query: String) -> QueryResult {
+        let result = tokio::task::spawn_blocking(move || {
+            match trex_pool_client::session_execute(session_id, &query) {
+                Ok((_schema, batches)) => {
+                    if batches.is_empty() {
+                        QueryResult::Execute { rows_affected: 0 }
+                    } else {
+                        arrow_batches_to_query_result(&batches)
+                    }
+                }
+                Err(e) => QueryResult::Error(e),
+            }
+        })
+        .await;
+
+        result.unwrap_or(QueryResult::Error("pool task failed".to_string()))
     }
 }
 
@@ -228,6 +320,77 @@ fn extract_panic_message(err: Box<dyn std::any::Any + Send>) -> String {
     } else {
         "unknown panic".to_string()
     }
+}
+
+/// Convert Arrow RecordBatches (from pool-client Arrow IPC) to fhir QueryResult.
+fn arrow_batches_to_query_result(
+    batches: &[trex_pool_client::arrow_array::RecordBatch],
+) -> QueryResult {
+    use trex_pool_client::arrow_array::*;
+    use trex_pool_client::arrow_schema::DataType;
+
+    if batches.is_empty() {
+        return QueryResult::Select {
+            rows: vec![],
+            columns: vec![],
+        };
+    }
+
+    let schema = batches[0].schema();
+    let columns: Vec<String> = schema
+        .fields()
+        .iter()
+        .map(|f| f.name().clone())
+        .collect();
+
+    let mut rows = Vec::new();
+    for batch in batches {
+        for r in 0..batch.num_rows() {
+            let mut row_values = Vec::new();
+            for i in 0..batch.num_columns() {
+                let col = batch.column(i);
+                let val: serde_json::Value = if col.is_null(r) {
+                    serde_json::Value::Null
+                } else {
+                    match col.data_type() {
+                        DataType::Utf8 => {
+                            let a = col.as_any().downcast_ref::<StringArray>().unwrap();
+                            serde_json::Value::String(a.value(r).to_string())
+                        }
+                        DataType::LargeUtf8 => {
+                            let a = col.as_any().downcast_ref::<LargeStringArray>().unwrap();
+                            serde_json::Value::String(a.value(r).to_string())
+                        }
+                        DataType::Int32 => {
+                            let a = col.as_any().downcast_ref::<Int32Array>().unwrap();
+                            serde_json::Value::from(a.value(r) as i64)
+                        }
+                        DataType::Int64 => {
+                            let a = col.as_any().downcast_ref::<Int64Array>().unwrap();
+                            serde_json::Value::from(a.value(r))
+                        }
+                        DataType::UInt64 => {
+                            let a = col.as_any().downcast_ref::<UInt64Array>().unwrap();
+                            serde_json::Value::from(a.value(r))
+                        }
+                        DataType::Float64 => {
+                            let a = col.as_any().downcast_ref::<Float64Array>().unwrap();
+                            serde_json::Value::from(a.value(r))
+                        }
+                        DataType::Boolean => {
+                            let a = col.as_any().downcast_ref::<BooleanArray>().unwrap();
+                            serde_json::Value::from(a.value(r))
+                        }
+                        _ => serde_json::Value::Null,
+                    }
+                };
+                row_values.push(val);
+            }
+            rows.push(row_values);
+        }
+    }
+
+    QueryResult::Select { rows, columns }
 }
 
 fn execute_query(conn: &Connection, query: &str, params: &[String]) -> QueryResult {

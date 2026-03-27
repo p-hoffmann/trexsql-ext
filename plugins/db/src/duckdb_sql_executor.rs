@@ -80,7 +80,7 @@ impl SQLExecutor for DuckDBSQLExecutor {
 }
 
 fn execute_on_duckdb(sql: &str) -> DFResult<Vec<RecordBatch>> {
-    let (_schema, batches) = crate::connection_pool::submit_query_blocking(sql)
+    let (_schema, batches) = crate::pool::read_arrow(sql)
         .map_err(|e| datafusion::error::DataFusionError::Execution(e))?;
     Ok(batches)
 }

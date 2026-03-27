@@ -72,6 +72,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - PKGPATH: ./plugins/pool
           - PKGPATH: ./plugins/chdb
             RUNNER: ubuntu-24.04
           - PKGPATH: ./plugins/atlas
