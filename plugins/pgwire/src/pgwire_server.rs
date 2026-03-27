@@ -375,7 +375,7 @@ impl SimpleQueryHandler for TrexQueryHandler {
                 )))
             })?;
 
-            if batches.is_empty() {
+            if schema.fields().is_empty() && batches.is_empty() {
                 log_debug("Got EXECUTE result");
                 responses.push(Response::Execution(Tag::new("OK").with_rows(0)));
             } else {
@@ -457,7 +457,7 @@ impl ExtendedQueryHandler for TrexQueryHandler {
             )))
         })?;
 
-        if batches.is_empty() {
+        if schema.fields().is_empty() && batches.is_empty() {
             Ok(Response::Execution(Tag::new("OK").with_rows(0)))
         } else {
             let header = Arc::new(schema_to_field_info(&schema, &Format::UnifiedText)?);
