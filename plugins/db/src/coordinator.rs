@@ -248,7 +248,7 @@ pub fn execute_distributed_query(
 
 /// Execute locally for queries without a FROM clause.
 fn execute_local_query(sql: &str) -> Result<QueryResult, String> {
-    let (_schema, batches) = trex_pool_client::read_arrow(sql)?;
+    let (_schema, batches) = crate::pool::read_arrow(sql)?;
 
     let schema = if let Some(first) = batches.first() {
         first.schema()

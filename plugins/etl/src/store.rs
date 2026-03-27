@@ -47,7 +47,10 @@ impl DuckDbStore {
     }
 
     fn ensure_tables(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        trex_pool_client::write(
+        let session_id = trex_pool_client::create_session()
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+        let result = trex_pool_client::session_execute(
+            session_id,
             "CREATE TABLE IF NOT EXISTS _etl_checkpoints (
                 pipeline_name VARCHAR PRIMARY KEY,
                 lsn VARCHAR,
@@ -69,8 +72,9 @@ impl DuckDbStore {
                 ordinal_position INTEGER,
                 PRIMARY KEY (pipeline_name, source_schema, source_table, column_name)
             );",
-        )
-        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+        );
+        let _ = trex_pool_client::destroy_session(session_id);
+        result.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
 
         Ok(())
     }
@@ -87,8 +91,11 @@ impl DuckDbStore {
             destination_table_name.replace('\'', "''")
         );
 
-        trex_pool_client::write(&sql)
+        let session_id = trex_pool_client::create_session()
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+        let result = trex_pool_client::session_execute(session_id, &sql);
+        let _ = trex_pool_client::destroy_session(session_id);
+        result.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
 
         Ok(())
     }

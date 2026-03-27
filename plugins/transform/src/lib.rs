@@ -15,12 +15,37 @@ mod test;
 
 use duckdb::Connection;
 use libduckdb_sys as ffi;
+use std::cell::Cell;
 use std::error::Error;
 
-// ── Database access via shared trex_pool ─────────────────────────────────────
+// ── Database access via shared trex_pool (session-based) ─────────────────────
+
+thread_local! {
+    /// When set, `execute_sql` and `query_sql` route through this session.
+    static ACTIVE_SESSION: Cell<Option<u64>> = const { Cell::new(None) };
+}
+
+/// Set the thread-local active session. Returns the previous value.
+pub fn set_active_session(session_id: Option<u64>) -> Option<u64> {
+    ACTIVE_SESSION.with(|c| c.replace(session_id))
+}
+
+fn active_session() -> Option<u64> {
+    ACTIVE_SESSION.with(|c| c.get())
+}
 
 pub fn execute_sql(sql: &str) -> Result<(), Box<dyn Error>> {
-    trex_pool_client::write(sql).map_err(|e| -> Box<dyn Error> { e.into() })
+    if let Some(sid) = active_session() {
+        trex_pool_client::session_execute(sid, sql)
+            .map(|_| ())
+            .map_err(|e| -> Box<dyn Error> { e.into() })
+    } else {
+        let sid = trex_pool_client::create_session()
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+        let result = trex_pool_client::session_execute(sid, sql).map(|_| ());
+        let _ = trex_pool_client::destroy_session(sid);
+        result.map_err(|e| -> Box<dyn Error> { e.into() })
+    }
 }
 
 pub struct QueryRow {
@@ -28,8 +53,16 @@ pub struct QueryRow {
 }
 
 pub fn query_sql(sql: &str) -> Result<Vec<QueryRow>, Box<dyn Error>> {
-    let (_schema, batches) =
-        trex_pool_client::read_arrow(sql).map_err(|e| -> Box<dyn Error> { e.into() })?;
+    let (_schema, batches) = if let Some(sid) = active_session() {
+        trex_pool_client::session_execute(sid, sql)
+            .map_err(|e| -> Box<dyn Error> { e.into() })?
+    } else {
+        let sid = trex_pool_client::create_session()
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+        let result = trex_pool_client::session_execute(sid, sql);
+        let _ = trex_pool_client::destroy_session(sid);
+        result.map_err(|e| -> Box<dyn Error> { e.into() })?
+    };
 
     let mut rows = Vec::new();
     for batch in &batches {

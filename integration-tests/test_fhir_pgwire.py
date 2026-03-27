@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import psycopg2
 import pytest
 
-from conftest import Node, FHIR_EXT, PGWIRE_EXT, alloc_ports
+from conftest import Node, POOL_EXT, FHIR_EXT, PGWIRE_EXT, alloc_ports
 
 
 def _free_port():
@@ -76,31 +76,27 @@ class FhirClient:
 
 @pytest.fixture(scope="module")
 def env(request):
-    """Start a node with both FHIR and PgWire extensions in host-DB mode.
+    """Start a node with both FHIR and PgWire extensions sharing the host DuckDB.
 
-    Host mode means both FHIR and PgWire share the same DuckDB instance,
-    so data written via FHIR HTTP is visible through PgWire SQL and vice versa.
+    Both FHIR and PgWire use the same DuckDB instance via the shared connection
+    pool, so data written via FHIR HTTP is visible through PgWire SQL and vice
+    versa.  This exercises the write queue and concurrent access paths.
     """
-    os.environ["FHIR_POOL_SIZE"] = "1"
-    os.environ["FHIR_USE_HOST_DB"] = "false"
+    os.environ["FHIR_POOL_SIZE"] = "8"
+    os.environ["FHIR_USE_HOST_DB"] = "true"
+    os.environ["TREX_POOL_SIZE"] = "16"
 
-    import tempfile, shutil
+    gp, fp, pp, tp = alloc_ports()
+    node = Node([POOL_EXT, FHIR_EXT, PGWIRE_EXT], gp, fp, pp, tp)
 
-    gp, fp, pp = alloc_ports()
-    node = Node([FHIR_EXT, PGWIRE_EXT], gp, fp, pp)
-
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    fhir_db_dir = tempfile.mkdtemp(dir=os.path.join(repo_root, "tmp", "fhir-test-dbs"))
-    fhir_db_path = os.path.join(fhir_db_dir, "fhir.db")
-
-    # Start FHIR server in standalone mode (its own DuckDB)
+    # Start FHIR server in host-DB mode (shares the node's DuckDB)
     fhir_port = _free_port()
     result = node.execute(
-        f"SELECT trex_fhir_start('127.0.0.1', {fhir_port}, 'fhir', '{fhir_db_path}')"
+        f"SELECT trex_fhir_start('127.0.0.1', {fhir_port}, 'fhir', '')"
     )
     assert "Started" in result[0][0], f"trex_fhir_start: {result}"
 
-    # Start PgWire on the host DuckDB (separate from FHIR's standalone DB)
+    # Start PgWire on the same host DuckDB
     pg_port = _free_port()
     node.execute(
         f"SELECT trex_pgwire_start('127.0.0.1', {pg_port}, 'test', '')"
@@ -127,9 +123,13 @@ def env(request):
     s, body = client.post("/datasets", {"id": dataset_id, "name": "pgwire-test"})
     assert s == 201, f"create dataset failed ({s}): {body}"
 
-    yield client, pg_port, dataset_id
+    # Schema used by FHIR: "fhir"."<dataset_id with - replaced by _>"
+    fhir_schema = dataset_id.replace("-", "_")
+
+    yield client, pg_port, dataset_id, fhir_schema
 
     os.environ.pop("FHIR_USE_HOST_DB", None)
+    os.environ.pop("TREX_POOL_SIZE", None)
     try:
         node.execute(f"SELECT trex_fhir_stop('127.0.0.1', {fhir_port})")
     except Exception:
@@ -139,16 +139,15 @@ def env(request):
     except Exception:
         pass
     node.close()
-    shutil.rmtree(fhir_db_dir, ignore_errors=True)
 
 
 # ===================================================================
 # TESTS
 # ===================================================================
 
-def test_fhir_crud_while_pgwire_active(env):
-    """FHIR CRUD operations work correctly while PgWire is also running."""
-    client, pg_port, dataset_id = env
+def test_fhir_crud_visible_via_pgwire(env):
+    """FHIR data written via HTTP is visible through PgWire on the shared DB."""
+    client, pg_port, dataset_id, fhir_schema = env
 
     # Create a Patient via FHIR
     s, body = client.post(f"/{dataset_id}/Patient", {
@@ -164,25 +163,42 @@ def test_fhir_crud_while_pgwire_active(env):
     assert s == 200
     assert body["name"][0]["family"] == "PgWireCoexist"
 
-    # Meanwhile pgwire works independently on the host DB
+    # Verify the FHIR data is visible via PgWire (shared DB)
     conn = _pg_connect(pg_port)
     try:
         conn.autocommit = True
         cur = conn.cursor()
-        cur.execute("SELECT 42")
-        assert cur.fetchone()[0] == 42
+        cur.execute(
+            f'SELECT _id FROM "fhir"."{fhir_schema}"."Patient" WHERE _id = \'{patient_id}\''
+        )
+        rows = cur.fetchall()
+        assert len(rows) == 1, f"expected 1 row via PgWire, got {len(rows)}"
         cur.close()
     finally:
         conn.close()
 
-    # Delete via FHIR still works
+    # Delete via FHIR and confirm it's soft-deleted via PgWire
     s, _ = client.delete(f"/{dataset_id}/Patient/{patient_id}")
     assert s == 204
 
+    conn = _pg_connect(pg_port)
+    try:
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute(
+            f'SELECT _id FROM "fhir"."{fhir_schema}"."Patient"'
+            f" WHERE _id = '{patient_id}' AND NOT _is_deleted"
+        )
+        rows = cur.fetchall()
+        assert len(rows) == 0, f"expected 0 active rows after delete, got {len(rows)}"
+        cur.close()
+    finally:
+        conn.close()
 
-def test_fhir_search_while_pgwire_active(env):
-    """FHIR search works correctly with PgWire running alongside."""
-    client, pg_port, dataset_id = env
+
+def test_fhir_search_consistent_with_pgwire(env):
+    """FHIR search results match what PgWire sees on the shared DB."""
+    client, pg_port, dataset_id, fhir_schema = env
 
     # Create several patients via FHIR
     for i in range(5):
@@ -195,23 +211,26 @@ def test_fhir_search_while_pgwire_active(env):
     # FHIR search
     s, body = client.get(f"/{dataset_id}/Patient?_count=100")
     assert s == 200
-    assert body["total"] >= 5
+    fhir_total = body["total"]
+    assert fhir_total >= 5
 
-    # PgWire still works
+    # PgWire should see the same row count
     conn = _pg_connect(pg_port)
     try:
         conn.autocommit = True
         cur = conn.cursor()
-        cur.execute("SELECT 1 + 1")
-        assert cur.fetchone()[0] == 2
+        cur.execute(f'SELECT COUNT(*) FROM "fhir"."{fhir_schema}"."Patient"')
+        pg_count = cur.fetchone()[0]
         cur.close()
     finally:
         conn.close()
 
+    assert pg_count >= 5, f"PgWire sees {pg_count} patients, expected >= 5"
+
 
 def test_sequential_fhir_writes(env):
     """Multiple FHIR writes in sequence all succeed and are readable."""
-    client, _, dataset_id = env
+    client, _, dataset_id, _ = env
 
     num_writes = 8
     for i in range(num_writes):
@@ -231,7 +250,7 @@ def test_sequential_fhir_writes(env):
 
 def test_parallel_pgwire_writes_and_reads(env):
     """Concurrent PgWire writes and reads on the host DB work in parallel."""
-    _, pg_port, _ = env
+    _, pg_port, _, _ = env
 
     # Create a table on the host DB via pgwire
     conn = _pg_connect(pg_port)
@@ -283,13 +302,12 @@ def test_parallel_pgwire_writes_and_reads(env):
 
 
 def test_fhir_writes_interleaved_with_pgwire_reads(env):
-    """FHIR writes and PgWire reads interleaved — both protocols work side by side.
+    """FHIR writes are immediately visible via PgWire on the shared DB.
 
-    In standalone mode the FHIR server has its own DuckDB, so PgWire reads
-    go to the host DB. We alternate between FHIR writes and PgWire queries
-    to confirm both protocols function independently.
+    Alternates between FHIR writes and PgWire reads to verify the write queue
+    serialises correctly and data is visible across both protocols.
     """
-    client, pg_port, dataset_id = env
+    client, pg_port, dataset_id, fhir_schema = env
 
     num_ops = 5
     for i in range(num_ops):
@@ -301,19 +319,327 @@ def test_fhir_writes_interleaved_with_pgwire_reads(env):
         })
         assert s in (200, 201), f"FHIR write {i}: status {s}"
 
-        # PgWire read (host DB — just confirm the connection works)
+        # PgWire read — verify the just-written resource is visible
         conn = _pg_connect(pg_port)
         try:
             conn.autocommit = True
             cur = conn.cursor()
-            cur.execute(f"SELECT {i}")
-            val = cur.fetchone()[0]
-            assert val == i
+            cur.execute(
+                f'SELECT _id FROM "fhir"."{fhir_schema}"."Patient" WHERE _id = \'interleaved-{i}\''
+            )
+            rows = cur.fetchall()
+            assert len(rows) == 1, (
+                f"interleaved-{i} not visible via PgWire after FHIR write"
+            )
             cur.close()
         finally:
             conn.close()
 
-    # Verify all FHIR resources exist
+    # Verify all FHIR resources still exist via FHIR API
     for i in range(num_ops):
         s, body = client.get(f"/{dataset_id}/Patient/interleaved-{i}")
         assert s == 200, f"GET interleaved-{i} failed ({s})"
+
+
+def test_concurrent_fhir_writes(env):
+    """Many FHIR writes in parallel — all must succeed without data loss."""
+    client, pg_port, dataset_id, fhir_schema = env
+
+    num_writers = 16
+
+    def fhir_writer(idx):
+        rid = f"concurrent-{idx}"
+        s, body = client.put(f"/{dataset_id}/Patient/{rid}", {
+            "resourceType": "Patient",
+            "id": rid,
+            "name": [{"family": f"Concurrent{idx}"}],
+        })
+        return idx, s
+
+    with ThreadPoolExecutor(max_workers=num_writers) as pool:
+        futures = [pool.submit(fhir_writer, i) for i in range(num_writers)]
+        results = {}
+        for f in as_completed(futures):
+            idx, status = f.result()
+            results[idx] = status
+
+    for i in range(num_writers):
+        assert results[i] in (200, 201), f"writer {i}: status {results[i]}"
+
+    # All resources must be readable via FHIR
+    for i in range(num_writers):
+        s, body = client.get(f"/{dataset_id}/Patient/concurrent-{i}")
+        assert s == 200, f"concurrent-{i} not readable via FHIR"
+        assert body["name"][0]["family"] == f"Concurrent{i}"
+
+    # All resources must be visible via PgWire
+    conn = _pg_connect(pg_port)
+    try:
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute(
+            f'SELECT COUNT(*) FROM "fhir"."{fhir_schema}"."Patient"'
+            f" WHERE _id LIKE 'concurrent-%' AND NOT _is_deleted"
+        )
+        count = cur.fetchone()[0]
+        cur.close()
+    finally:
+        conn.close()
+
+    assert count == num_writers, (
+        f"expected {num_writers} concurrent patients via PgWire, got {count}"
+    )
+
+
+def test_concurrent_fhir_writes_and_pgwire_reads(env):
+    """FHIR writes and PgWire reads fire simultaneously on the shared DB."""
+    client, pg_port, dataset_id, fhir_schema = env
+
+    num_ops = 20
+
+    # Seed some patients first so PgWire reads have data to query
+    for i in range(5):
+        s, _ = client.put(f"/{dataset_id}/Patient/seed-{i}", {
+            "resourceType": "Patient",
+            "id": f"seed-{i}",
+            "name": [{"family": f"Seed{i}"}],
+        })
+        assert s in (200, 201)
+
+    errors = []
+    barrier = threading.Barrier(num_ops, timeout=15)
+
+    def fhir_writer(idx):
+        barrier.wait()
+        rid = f"mixed-{idx}"
+        s, body = client.put(f"/{dataset_id}/Patient/{rid}", {
+            "resourceType": "Patient",
+            "id": rid,
+            "name": [{"family": f"Mixed{idx}"}],
+        })
+        if s not in (200, 201):
+            errors.append(f"FHIR write {idx}: status {s}")
+
+    def pgwire_reader(idx):
+        barrier.wait()
+        conn = _pg_connect(pg_port)
+        try:
+            conn.autocommit = True
+            cur = conn.cursor()
+            cur.execute(
+                f'SELECT COUNT(*) FROM "fhir"."{fhir_schema}"."Patient"'
+            )
+            cur.fetchone()
+            cur.close()
+        except Exception as e:
+            errors.append(f"PgWire read {idx}: {e}")
+        finally:
+            conn.close()
+
+    with ThreadPoolExecutor(max_workers=num_ops) as pool:
+        futures = []
+        for i in range(num_ops):
+            if i % 2 == 0:
+                futures.append(pool.submit(fhir_writer, i))
+            else:
+                futures.append(pool.submit(pgwire_reader, i))
+        for f in as_completed(futures):
+            f.result()  # propagate exceptions
+
+    assert not errors, f"Concurrent errors:\n" + "\n".join(errors)
+
+    # Verify all written patients exist
+    for i in range(0, num_ops, 2):
+        s, body = client.get(f"/{dataset_id}/Patient/mixed-{i}")
+        assert s == 200, f"mixed-{i} not readable after concurrent test"
+
+
+def test_concurrent_pgwire_writes_and_fhir_reads(env):
+    """PgWire writes and FHIR reads fire simultaneously on the shared DB."""
+    client, pg_port, dataset_id, fhir_schema = env
+
+    # Create a table via PgWire for writes
+    conn = _pg_connect(pg_port)
+    conn.autocommit = True
+    cur = conn.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS concurrent_rw (id INTEGER, val VARCHAR)")
+    cur.close()
+    conn.close()
+
+    # Seed some FHIR patients to read
+    for i in range(5):
+        s, _ = client.put(f"/{dataset_id}/Patient/rwseed-{i}", {
+            "resourceType": "Patient",
+            "id": f"rwseed-{i}",
+            "name": [{"family": f"RWSeed{i}"}],
+        })
+        assert s in (200, 201)
+
+    num_ops = 16
+    errors = []
+    barrier = threading.Barrier(num_ops, timeout=15)
+
+    def pgwire_writer(idx):
+        barrier.wait()
+        conn = _pg_connect(pg_port)
+        try:
+            conn.autocommit = True
+            cur = conn.cursor()
+            cur.execute(f"INSERT INTO concurrent_rw VALUES ({idx}, 'rw-{idx}')")
+            cur.close()
+        except Exception as e:
+            errors.append(f"PgWire write {idx}: {e}")
+        finally:
+            conn.close()
+
+    def fhir_reader(idx):
+        barrier.wait()
+        rid = f"rwseed-{idx % 5}"
+        s, body = client.get(f"/{dataset_id}/Patient/{rid}")
+        if s != 200:
+            errors.append(f"FHIR read {rid}: status {s}")
+
+    with ThreadPoolExecutor(max_workers=num_ops) as pool:
+        futures = []
+        for i in range(num_ops):
+            if i % 2 == 0:
+                futures.append(pool.submit(pgwire_writer, i))
+            else:
+                futures.append(pool.submit(fhir_reader, i))
+        for f in as_completed(futures):
+            f.result()
+
+    assert not errors, f"Concurrent errors:\n" + "\n".join(errors)
+
+    # Verify PgWire writes landed
+    conn = _pg_connect(pg_port)
+    conn.autocommit = True
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM concurrent_rw")
+    count = cur.fetchone()[0]
+    cur.execute("DROP TABLE concurrent_rw")
+    cur.close()
+    conn.close()
+
+    expected = num_ops // 2
+    assert count == expected, f"expected {expected} PgWire rows, got {count}"
+
+
+def test_burst_fhir_writes_then_pgwire_count(env):
+    """Rapid burst of FHIR writes followed by a PgWire count — no rows lost."""
+    client, pg_port, dataset_id, fhir_schema = env
+
+    num_burst = 32
+
+    def fhir_writer(idx):
+        rid = f"burst-{idx}"
+        s, _ = client.put(f"/{dataset_id}/Patient/{rid}", {
+            "resourceType": "Patient",
+            "id": rid,
+            "name": [{"family": f"Burst{idx}"}],
+        })
+        return idx, s
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        futures = [pool.submit(fhir_writer, i) for i in range(num_burst)]
+        for f in as_completed(futures):
+            idx, status = f.result()
+            assert status in (200, 201), f"burst writer {idx}: status {status}"
+
+    # PgWire must see all of them
+    conn = _pg_connect(pg_port)
+    try:
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute(
+            f'SELECT COUNT(*) FROM "fhir"."{fhir_schema}"."Patient"'
+            f" WHERE _id LIKE 'burst-%' AND NOT _is_deleted"
+        )
+        count = cur.fetchone()[0]
+        cur.close()
+    finally:
+        conn.close()
+
+    assert count == num_burst, (
+        f"expected {num_burst} burst patients via PgWire, got {count}"
+    )
+
+
+def test_concurrent_fhir_create_update_delete(env):
+    """Concurrent create, update, and delete on different resources."""
+    client, pg_port, dataset_id, fhir_schema = env
+
+    num_resources = 12
+
+    # Phase 1: create all resources in parallel
+    def create(idx):
+        rid = f"lifecycle-{idx}"
+        s, _ = client.put(f"/{dataset_id}/Patient/{rid}", {
+            "resourceType": "Patient",
+            "id": rid,
+            "name": [{"family": f"V1-{idx}"}],
+        })
+        return idx, "create", s
+
+    with ThreadPoolExecutor(max_workers=num_resources) as pool:
+        for f in as_completed([pool.submit(create, i) for i in range(num_resources)]):
+            idx, op, s = f.result()
+            assert s in (200, 201), f"{op} {idx}: status {s}"
+
+    # Phase 2: concurrently update even-indexed, delete odd-indexed
+    def update(idx):
+        rid = f"lifecycle-{idx}"
+        s, _ = client.put(f"/{dataset_id}/Patient/{rid}", {
+            "resourceType": "Patient",
+            "id": rid,
+            "name": [{"family": f"V2-{idx}"}],
+        })
+        return idx, "update", s
+
+    def delete(idx):
+        rid = f"lifecycle-{idx}"
+        s, _ = client.delete(f"/{dataset_id}/Patient/{rid}")
+        return idx, "delete", s
+
+    with ThreadPoolExecutor(max_workers=num_resources) as pool:
+        futures = []
+        for i in range(num_resources):
+            if i % 2 == 0:
+                futures.append(pool.submit(update, i))
+            else:
+                futures.append(pool.submit(delete, i))
+        for f in as_completed(futures):
+            idx, op, s = f.result()
+            if op == "update":
+                assert s in (200, 201), f"{op} {idx}: status {s}"
+            else:
+                assert s == 204, f"{op} {idx}: status {s}"
+
+    # Verify: even-indexed updated, odd-indexed soft-deleted
+    for i in range(num_resources):
+        rid = f"lifecycle-{i}"
+        s, body = client.get(f"/{dataset_id}/Patient/{rid}")
+        if i % 2 == 0:
+            assert s == 200, f"updated resource {rid} not found"
+            assert body["name"][0]["family"] == f"V2-{i}"
+        else:
+            assert s == 410, f"deleted resource {rid} should return 410, got {s}"
+
+    # PgWire: count active (non-deleted) lifecycle resources
+    conn = _pg_connect(pg_port)
+    try:
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute(
+            f'SELECT COUNT(*) FROM "fhir"."{fhir_schema}"."Patient"'
+            f" WHERE _id LIKE 'lifecycle-%' AND NOT _is_deleted"
+        )
+        active = cur.fetchone()[0]
+        cur.close()
+    finally:
+        conn.close()
+
+    expected_active = num_resources // 2
+    assert active == expected_active, (
+        f"expected {expected_active} active lifecycle patients, got {active}"
+    )

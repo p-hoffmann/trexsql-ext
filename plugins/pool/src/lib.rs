@@ -14,9 +14,10 @@ pub use duckdb::arrow;
 use duckdb::arrow::datatypes::Schema;
 use duckdb::arrow::record_batch::RecordBatch;
 use duckdb::Connection;
+use std::collections::HashMap;
 use std::os::raw::c_void;
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use tracing::warn;
@@ -48,6 +49,7 @@ struct ReadRequest {
 
 struct WriteRequest {
     sql: String,
+    params: Vec<String>,
     response_tx: std::sync::mpsc::SyncSender<WriteResult>,
 }
 
@@ -159,7 +161,13 @@ fn read_worker_loop(conn: Connection, receiver: Receiver<ReadRequest>) {
 
 fn write_worker_loop(conn: Connection, receiver: Receiver<WriteRequest>) {
     while let Ok(req) = receiver.recv() {
-        let result = panic::catch_unwind(AssertUnwindSafe(|| execute_write(&conn, &req.sql)));
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            if req.params.is_empty() {
+                execute_write(&conn, &req.sql)
+            } else {
+                execute_write_params(&conn, &req.sql, &req.params)
+            }
+        }));
         let write_result = match result {
             Ok(r) => r,
             Err(panic_err) => {
@@ -192,6 +200,38 @@ fn execute_write(conn: &Connection, sql: &str) -> WriteResult {
     match conn.execute_batch(sql) {
         Ok(()) => WriteResult::Ok,
         Err(e) => WriteResult::Error(format!("exec: {e}")),
+    }
+}
+
+fn execute_read_params(conn: &Connection, sql: &str, params: &[String]) -> PoolResult {
+    match conn.prepare(sql) {
+        Ok(mut stmt) => {
+            let param_refs: Vec<&dyn duckdb::types::ToSql> =
+                params.iter().map(|s| s as &dyn duckdb::types::ToSql).collect();
+            match stmt.query_arrow(param_refs.as_slice()) {
+                Ok(arrow_result) => {
+                    let schema = arrow_result.get_schema();
+                    let batches: Vec<RecordBatch> = arrow_result.collect();
+                    PoolResult::Rows { schema, batches }
+                }
+                Err(e) => PoolResult::Error(format!("query exec: {e}")),
+            }
+        }
+        Err(e) => PoolResult::Error(format!("prepare: {e}")),
+    }
+}
+
+fn execute_write_params(conn: &Connection, sql: &str, params: &[String]) -> WriteResult {
+    match conn.prepare(sql) {
+        Ok(mut stmt) => {
+            let param_refs: Vec<&dyn duckdb::types::ToSql> =
+                params.iter().map(|s| s as &dyn duckdb::types::ToSql).collect();
+            match stmt.execute(param_refs.as_slice()) {
+                Ok(_) => WriteResult::Ok,
+                Err(e) => WriteResult::Error(format!("exec: {e}")),
+            }
+        }
+        Err(e) => WriteResult::Error(format!("prepare: {e}")),
     }
 }
 
@@ -484,12 +524,18 @@ pub fn read_arrow_on(worker_id: usize, sql: &str) -> Result<(Arc<Schema>, Vec<Re
 
 /// Submit a write query through the serialised write queue. Blocks until done.
 pub fn write(sql: &str) -> Result<(), String> {
+    write_params(sql, &[])
+}
+
+/// Submit a parameterized write query through the serialised write queue.
+pub fn write_params(sql: &str, params: &[String]) -> Result<(), String> {
     let pool = get_pool()?;
 
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     pool.write_sender
         .send(WriteRequest {
             sql: sql.to_string(),
+            params: params.to_vec(),
             response_tx: tx,
         })
         .map_err(|e| format!("write channel closed: {e}"))?;
@@ -695,6 +741,210 @@ fn extract_panic_message(err: Box<dyn std::any::Any + Send>) -> String {
         s.clone()
     } else {
         "unknown panic".to_string()
+    }
+}
+
+// ── Session API with automatic transaction detection ─────────────────────────
+
+struct SessionState {
+    /// Index into `SharedPool::direct_connections`. `Some` = in transaction.
+    direct_conn_index: Option<usize>,
+}
+
+static SESSIONS: OnceLock<Mutex<HashMap<u64, SessionState>>> = OnceLock::new();
+static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+
+fn sessions() -> &'static Mutex<HashMap<u64, SessionState>> {
+    SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Create a new session. Returns a unique session ID.
+pub fn create_session() -> u64 {
+    let id = NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed);
+    sessions()
+        .lock()
+        .expect("sessions lock poisoned")
+        .insert(id, SessionState { direct_conn_index: None });
+    id
+}
+
+/// Destroy a session. If a transaction is active, it is rolled back.
+pub fn destroy_session(session_id: u64) {
+    let mut map = sessions().lock().expect("sessions lock poisoned");
+    if let Some(state) = map.remove(&session_id) {
+        if let Some(idx) = state.direct_conn_index {
+            // Auto-rollback the dangling transaction.
+            if let Ok(pool) = get_pool() {
+                if let Some(slot) = pool.direct_connections.get(idx) {
+                    if let Ok(guard) = slot.lock() {
+                        if let Some(conn) = guard.as_ref() {
+                            let _ = conn.execute_batch("ROLLBACK;");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn is_begin(sql: &str) -> bool {
+    let upper = sql.trim().to_uppercase();
+    upper.starts_with("BEGIN")
+}
+
+fn is_commit_or_rollback(sql: &str) -> bool {
+    let upper = sql.trim().to_uppercase();
+    upper.starts_with("COMMIT") || upper.starts_with("ROLLBACK")
+}
+
+/// Execute SQL within a session. See [`session_execute_params`] for details.
+pub fn session_execute(session_id: u64, sql: &str) -> PoolResult {
+    session_execute_params(session_id, sql, &[])
+}
+
+/// Execute parameterized SQL within a session. Automatically detects
+/// `BEGIN`/`COMMIT`/`ROLLBACK` and pins the session to a direct connection
+/// for the duration of the transaction. Outside a transaction, queries are
+/// routed normally (reads → read workers, writes → write worker).
+pub fn session_execute_params(session_id: u64, sql: &str, params: &[String]) -> PoolResult {
+    let mut map = sessions().lock().expect("sessions lock poisoned");
+    if !map.contains_key(&session_id) {
+        return PoolResult::Error(format!("session {session_id} not found"));
+    }
+
+    let in_txn = map[&session_id].direct_conn_index;
+
+    if let Some(idx) = in_txn {
+        // Session is in a transaction — execute on pinned direct connection.
+        let is_end = is_commit_or_rollback(sql);
+        if is_end {
+            if let Some(state) = map.get_mut(&session_id) {
+                state.direct_conn_index = None;
+            }
+        }
+        drop(map);
+        execute_on_direct_params(idx, sql, params)
+    } else if is_begin(sql) {
+        // Acquire a direct connection for the transaction.
+        // Retry with backoff if all direct connections are currently in use.
+        drop(map);
+        let pool = match get_pool() {
+            Ok(p) => p,
+            Err(e) => return PoolResult::Error(e),
+        };
+        let max_retries = 50; // 50 * 20ms = 1s max wait
+        let mut found_idx = None;
+        for _ in 0..max_retries {
+            let m = sessions().lock().expect("sessions lock poisoned");
+            let held: std::collections::HashSet<usize> = m
+                .values()
+                .filter_map(|s| s.direct_conn_index)
+                .collect();
+            for i in 0..pool.direct_connections.len() {
+                if !held.contains(&i) {
+                    found_idx = Some(i);
+                    break;
+                }
+            }
+            drop(m);
+            if found_idx.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let idx = match found_idx {
+            Some(i) => i,
+            None => {
+                return PoolResult::Error(
+                    "no connections available for transaction (timeout)".to_string(),
+                );
+            }
+        };
+        let mut map = sessions().lock().expect("sessions lock poisoned");
+        if let Some(state) = map.get_mut(&session_id) {
+            state.direct_conn_index = Some(idx);
+        }
+        drop(map);
+        execute_on_direct(idx, sql)
+    } else {
+        // Not in a transaction — route normally.
+        drop(map);
+        if params.is_empty() {
+            if is_result_returning_query(sql) {
+                match read_arrow(sql) {
+                    Ok((schema, batches)) => PoolResult::Rows { schema, batches },
+                    Err(e) => PoolResult::Error(e),
+                }
+            } else {
+                match write(sql) {
+                    Ok(()) => PoolResult::Executed,
+                    Err(e) => PoolResult::Error(e),
+                }
+            }
+        } else {
+            // Parameterized queries need a direct connection (read/write workers
+            // don't support params through the channel API).
+            let pool = match get_pool() {
+                Ok(p) => p,
+                Err(e) => return PoolResult::Error(e),
+            };
+            let idx = pool.next_direct.fetch_add(1, Ordering::Relaxed)
+                % pool.direct_connections.len();
+            execute_on_direct_params(idx, sql, params)
+        }
+    }
+}
+
+/// Execute SQL on a direct connection by index, supporting both reads and writes.
+fn execute_on_direct(idx: usize, sql: &str) -> PoolResult {
+    execute_on_direct_params(idx, sql, &[])
+}
+
+/// Execute parameterized SQL on a direct connection by index.
+fn execute_on_direct_params(idx: usize, sql: &str, params: &[String]) -> PoolResult {
+    let pool = match get_pool() {
+        Ok(p) => p,
+        Err(e) => return PoolResult::Error(e),
+    };
+    let slot = match pool.direct_connections.get(idx) {
+        Some(s) => s,
+        None => return PoolResult::Error(format!("invalid direct connection index {idx}")),
+    };
+    let guard = match slot.lock() {
+        Ok(g) => g,
+        Err(e) => return PoolResult::Error(format!("direct conn lock: {e}")),
+    };
+    let conn = match guard.as_ref() {
+        Some(c) => c,
+        None => return PoolResult::Error("direct connection not available".to_string()),
+    };
+
+    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+        if is_result_returning_query(sql) {
+            if params.is_empty() {
+                execute_read(conn, sql)
+            } else {
+                execute_read_params(conn, sql, params)
+            }
+        } else if params.is_empty() {
+            match execute_write(conn, sql) {
+                WriteResult::Ok => PoolResult::Executed,
+                WriteResult::Error(e) => PoolResult::Error(e),
+            }
+        } else {
+            match execute_write_params(conn, sql, params) {
+                WriteResult::Ok => PoolResult::Executed,
+                WriteResult::Error(e) => PoolResult::Error(e),
+            }
+        }
+    }));
+
+    match result {
+        Ok(r) => r,
+        Err(panic_err) => {
+            let msg = extract_panic_message(panic_err);
+            PoolResult::Error(format!("query panicked: {msg}"))
+        }
     }
 }
 
@@ -1039,6 +1289,70 @@ pub extern "C" fn trex_pool_execute_transaction(
     Box::into_raw(Box::new(cresult))
 }
 
+// ── Session C ABI exports ────────────────────────────────────────────────────
+
+/// Create a new session. Returns a unique session ID (always > 0).
+#[no_mangle]
+pub extern "C" fn trex_pool_session_create() -> u64 {
+    create_session()
+}
+
+/// Execute SQL within a session, returning Arrow IPC bytes.
+/// Auto-detects transactions (BEGIN/COMMIT/ROLLBACK).
+#[no_mangle]
+pub extern "C" fn trex_pool_session_execute_arrow(
+    session_id: u64,
+    sql_ptr: *const u8,
+    sql_len: usize,
+) -> *mut CArrowResult {
+    trex_pool_session_execute_params_arrow(
+        session_id, sql_ptr, sql_len,
+        std::ptr::null(), std::ptr::null(), 0,
+    )
+}
+
+/// Execute parameterized SQL within a session, returning Arrow IPC bytes.
+#[no_mangle]
+pub extern "C" fn trex_pool_session_execute_params_arrow(
+    session_id: u64,
+    sql_ptr: *const u8,
+    sql_len: usize,
+    params_ptrs: *const *const u8,
+    params_lens: *const usize,
+    params_count: usize,
+) -> *mut CArrowResult {
+    let sql = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(sql_ptr, sql_len)) };
+    let params: Vec<String> = if params_count > 0 && !params_ptrs.is_null() && !params_lens.is_null() {
+        unsafe {
+            let ptrs = std::slice::from_raw_parts(params_ptrs, params_count);
+            let lens = std::slice::from_raw_parts(params_lens, params_count);
+            ptrs.iter().zip(lens.iter()).map(|(&p, &l)| {
+                std::str::from_utf8_unchecked(std::slice::from_raw_parts(p, l)).to_string()
+            }).collect()
+        }
+    } else {
+        Vec::new()
+    };
+    let result = session_execute_params(session_id, sql, &params);
+    let cresult = match result {
+        PoolResult::Rows { schema, batches } => {
+            match serialize_arrow_ipc(&schema, &batches) {
+                Ok(data) => CArrowResult { data, error: None },
+                Err(e) => CArrowResult { data: Vec::new(), error: Some(e) },
+            }
+        }
+        PoolResult::Executed => CArrowResult { data: Vec::new(), error: None },
+        PoolResult::Error(e) => CArrowResult { data: Vec::new(), error: Some(e) },
+    };
+    Box::into_raw(Box::new(cresult))
+}
+
+/// Destroy a session. Auto-rollback if a transaction is active.
+#[no_mangle]
+pub extern "C" fn trex_pool_session_destroy(session_id: u64) {
+    destroy_session(session_id);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1062,5 +1376,21 @@ mod tests {
         assert!(!is_result_returning_query("DROP TABLE t"));
         assert!(!is_result_returning_query("ALTER TABLE t ADD COLUMN y INT"));
         assert!(!is_result_returning_query("PRAGMA CREATE_FTS_INDEX('t', 'id', 'text')"));
+    }
+
+    #[test]
+    fn test_transaction_detection() {
+        assert!(is_begin("BEGIN"));
+        assert!(is_begin("BEGIN TRANSACTION"));
+        assert!(is_begin("  begin transaction"));
+        assert!(!is_begin("SELECT 1"));
+        assert!(!is_begin("INSERT INTO t VALUES (1)"));
+
+        assert!(is_commit_or_rollback("COMMIT"));
+        assert!(is_commit_or_rollback("ROLLBACK"));
+        assert!(is_commit_or_rollback("  commit"));
+        assert!(is_commit_or_rollback("  rollback;"));
+        assert!(!is_commit_or_rollback("SELECT 1"));
+        assert!(!is_commit_or_rollback("BEGIN"));
     }
 }

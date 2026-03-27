@@ -113,7 +113,7 @@ impl DuckDBTableProvider {
     /// Resolve schema via `PRAGMA table_info`: name (col 1), type (col 2), notnull (col 3).
     fn resolve_schema(table_name: &str) -> DFResult<Schema> {
         let sql = format!("PRAGMA table_info(\"{}\")", crate::catalog::escape_identifier(table_name));
-        let (_schema, batches) = trex_pool_client::read_arrow(&sql)
+        let (_schema, batches) = crate::pool::read_arrow(&sql)
             .map_err(|e| datafusion::error::DataFusionError::Execution(
                 format!("Failed to resolve schema for '{}': {e}", table_name)
             ))?;

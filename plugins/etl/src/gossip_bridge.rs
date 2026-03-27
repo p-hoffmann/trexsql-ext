@@ -29,7 +29,10 @@ pub fn publish_pipeline_state(info: &PipelineInfo) {
 
     let sql = format!("SELECT swarm_set_key('{}', '{}')", escaped_key, escaped_value);
 
-    let _ = trex_pool_client::write(&sql);
+    if let Ok(session_id) = trex_pool_client::create_session() {
+        let _ = trex_pool_client::session_execute(session_id, &sql);
+        let _ = trex_pool_client::destroy_session(session_id);
+    }
 }
 
 /// Remove pipeline state from swarm gossip. Fails silently if swarm unavailable.
@@ -39,5 +42,8 @@ pub fn remove_pipeline_state(pipeline_name: &str) {
 
     let sql = format!("SELECT swarm_delete_key('{}')", escaped_key);
 
-    let _ = trex_pool_client::write(&sql);
+    if let Ok(session_id) = trex_pool_client::create_session() {
+        let _ = trex_pool_client::session_execute(session_id, &sql);
+        let _ = trex_pool_client::destroy_session(session_id);
+    }
 }

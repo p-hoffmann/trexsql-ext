@@ -117,7 +117,19 @@ impl QueryExecutor {
     }
 
     pub fn next_worker_id(&self) -> usize {
+        if self.use_pool {
+            // In pool mode, worker_id is actually a session_id.
+            return trex_pool_client::create_session().unwrap_or(0) as usize;
+        }
         self.next_worker.fetch_add(1, Ordering::Relaxed) % self.senders.len()
+    }
+
+    /// Destroy a pool session. Call after COMMIT/ROLLBACK to release the
+    /// direct connection back to the pool.
+    pub fn destroy_session(&self, session_id: usize) {
+        if self.use_pool {
+            let _ = trex_pool_client::destroy_session(session_id as u64);
+        }
     }
 
     pub fn submit_to(
@@ -143,7 +155,11 @@ impl QueryExecutor {
 
     pub async fn submit(&self, query: String) -> QueryResult {
         if self.use_pool {
-            return Self::pool_execute(query).await;
+            // Create a short-lived session for non-transactional queries.
+            let session_id = trex_pool_client::create_session().unwrap_or(0);
+            let result = Self::pool_session_execute(session_id as u64, query).await;
+            let _ = trex_pool_client::destroy_session(session_id as u64);
+            return result;
         }
         let worker_id = self.next_worker_id();
         self.submit_on(worker_id, query).await
@@ -151,7 +167,9 @@ impl QueryExecutor {
 
     pub async fn submit_on(&self, worker_id: usize, query: String) -> QueryResult {
         if self.use_pool {
-            return Self::pool_execute(query).await;
+            // worker_id is a session_id in pool mode. The session auto-detects
+            // BEGIN/COMMIT/ROLLBACK and pins to a direct connection.
+            return Self::pool_session_execute(worker_id as u64, query).await;
         }
         let rx = self.submit_to(worker_id, query);
         rx.await.unwrap_or(QueryResult::Error(
@@ -161,8 +179,10 @@ impl QueryExecutor {
 
     pub async fn submit_params(&self, query: String, params: Vec<String>) -> QueryResult {
         if self.use_pool {
-            // trex_pool doesn't support params — inline them (params unused in practice for reads)
-            return Self::pool_execute(query).await;
+            let session_id = trex_pool_client::create_session().unwrap_or(0);
+            let result = Self::pool_session_execute_params(session_id as u64, query, params).await;
+            let _ = trex_pool_client::destroy_session(session_id as u64);
+            return result;
         }
         let rx = self.submit_with_params(query, params);
         rx.await.unwrap_or(QueryResult::Error(
@@ -172,7 +192,7 @@ impl QueryExecutor {
 
     pub async fn submit_params_on(&self, worker_id: usize, query: String, params: Vec<String>) -> QueryResult {
         if self.use_pool {
-            return Self::pool_execute(query).await;
+            return Self::pool_session_execute_params(worker_id as u64, query, params).await;
         }
         let sender = &self.senders[worker_id % self.senders.len()];
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
@@ -234,19 +254,37 @@ impl QueryExecutor {
         }
     }
 
-    /// Execute a query via the shared trex_pool, converting the result to QueryResult.
-    async fn pool_execute(query: String) -> QueryResult {
+    /// Execute a parameterized query via a pool session.
+    async fn pool_session_execute_params(session_id: u64, query: String, params: Vec<String>) -> QueryResult {
         let result = tokio::task::spawn_blocking(move || {
-            if trex_pool_client::is_result_returning_query(&query) {
-                match trex_pool_client::read_arrow(&query) {
-                    Ok((_schema, batches)) => arrow_batches_to_query_result(&batches),
-                    Err(e) => QueryResult::Error(e),
+            match trex_pool_client::session_execute_params(session_id, &query, &params) {
+                Ok((_schema, batches)) => {
+                    if batches.is_empty() {
+                        QueryResult::Execute { rows_affected: 0 }
+                    } else {
+                        arrow_batches_to_query_result(&batches)
+                    }
                 }
-            } else {
-                match trex_pool_client::write(&query) {
-                    Ok(()) => QueryResult::Execute { rows_affected: 0 },
-                    Err(e) => QueryResult::Error(e),
+                Err(e) => QueryResult::Error(e),
+            }
+        })
+        .await;
+
+        result.unwrap_or(QueryResult::Error("pool task failed".to_string()))
+    }
+
+    /// Execute a query via a pool session, converting the Arrow result to QueryResult.
+    async fn pool_session_execute(session_id: u64, query: String) -> QueryResult {
+        let result = tokio::task::spawn_blocking(move || {
+            match trex_pool_client::session_execute(session_id, &query) {
+                Ok((_schema, batches)) => {
+                    if batches.is_empty() {
+                        QueryResult::Execute { rows_affected: 0 }
+                    } else {
+                        arrow_batches_to_query_result(&batches)
+                    }
                 }
+                Err(e) => QueryResult::Error(e),
             }
         })
         .await;

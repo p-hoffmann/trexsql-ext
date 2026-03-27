@@ -28,6 +28,12 @@ type FnPoolSize = unsafe extern "C" fn() -> usize;
 type FnWithConnExec = unsafe extern "C" fn(*const u8, usize) -> *mut Opaque;
 type FnExecTransaction = unsafe extern "C" fn(*const *const u8, *const usize, usize) -> *mut Opaque;
 
+// Session-based
+type FnSessionCreate = unsafe extern "C" fn() -> u64;
+type FnSessionExecuteArrow = unsafe extern "C" fn(u64, *const u8, usize) -> *mut Opaque;
+type FnSessionExecuteParamsArrow = unsafe extern "C" fn(u64, *const u8, usize, *const *const u8, *const usize, usize) -> *mut Opaque;
+type FnSessionDestroy = unsafe extern "C" fn(u64);
+
 // Arrow IPC-based
 type FnReadArrowIpc = unsafe extern "C" fn(*const u8, usize) -> *mut Opaque;
 type FnExecArrowIpc = unsafe extern "C" fn(*const u8, usize) -> *mut Opaque;
@@ -57,6 +63,11 @@ struct PoolFns {
     pool_size: FnPoolSize,
     with_conn_exec: FnWithConnExec,
     exec_transaction: FnExecTransaction,
+    // Sessions
+    session_create: FnSessionCreate,
+    session_execute_arrow: FnSessionExecuteArrow,
+    session_execute_params_arrow: FnSessionExecuteParamsArrow,
+    session_destroy: FnSessionDestroy,
     // Arrow IPC
     read_arrow_ipc: FnReadArrowIpc,
     exec_arrow_ipc: FnExecArrowIpc,
@@ -150,6 +161,10 @@ unsafe fn discover_pool_fns() -> Option<PoolFns> {
         pool_size: sym!("trex_pool_read_pool_size"),
         with_conn_exec: sym!("trex_pool_with_connection_execute"),
         exec_transaction: sym!("trex_pool_execute_transaction"),
+        session_create: sym!("trex_pool_session_create"),
+        session_execute_arrow: sym!("trex_pool_session_execute_arrow"),
+        session_execute_params_arrow: sym!("trex_pool_session_execute_params_arrow"),
+        session_destroy: sym!("trex_pool_session_destroy"),
         read_arrow_ipc: sym!("trex_pool_read_arrow_ipc"),
         exec_arrow_ipc: sym!("trex_pool_execute_arrow_ipc"),
         arrow_is_error: sym!("trex_pool_arrow_result_is_error"),
@@ -390,4 +405,56 @@ pub fn execute_transaction(sqls: &[&str]) -> Result<(), String> {
         (fns.exec_transaction)(ptrs.as_ptr(), lens.as_ptr(), sqls.len())
     };
     json_result_to_string(fns, result).map(|_| ())
+}
+
+// ── Public API: Sessions ─────────────────────────────────────────────────────
+
+/// Create a new session. Returns a unique session ID.
+/// Sessions auto-detect transactions: when `BEGIN` is executed via
+/// [`session_execute`], all subsequent queries are pinned to the same
+/// connection until `COMMIT` or `ROLLBACK`.
+pub fn create_session() -> Result<u64, String> {
+    let fns = get_fns()?;
+    let id = unsafe { (fns.session_create)() };
+    Ok(id)
+}
+
+/// Execute SQL within a session, returning Arrow RecordBatches.
+/// Transactions are detected automatically — `BEGIN` pins the session to a
+/// dedicated connection; `COMMIT`/`ROLLBACK` releases it.
+pub fn session_execute(
+    session_id: u64,
+    sql: &str,
+) -> Result<(Arc<Schema>, Vec<RecordBatch>), String> {
+    let fns = get_fns()?;
+    let result = unsafe {
+        (fns.session_execute_arrow)(session_id, sql.as_ptr(), sql.len())
+    };
+    arrow_result_to_batches(fns, result)
+}
+
+/// Execute parameterized SQL within a session, returning Arrow RecordBatches.
+pub fn session_execute_params(
+    session_id: u64,
+    sql: &str,
+    params: &[String],
+) -> Result<(Arc<Schema>, Vec<RecordBatch>), String> {
+    let fns = get_fns()?;
+    let ptrs: Vec<*const u8> = params.iter().map(|s| s.as_ptr()).collect();
+    let lens: Vec<usize> = params.iter().map(|s| s.len()).collect();
+    let result = unsafe {
+        (fns.session_execute_params_arrow)(
+            session_id,
+            sql.as_ptr(), sql.len(),
+            ptrs.as_ptr(), lens.as_ptr(), params.len(),
+        )
+    };
+    arrow_result_to_batches(fns, result)
+}
+
+/// Destroy a session. If a transaction is still active, it is rolled back.
+pub fn destroy_session(session_id: u64) -> Result<(), String> {
+    let fns = get_fns()?;
+    unsafe { (fns.session_destroy)(session_id) };
+    Ok(())
 }

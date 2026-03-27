@@ -187,6 +187,7 @@ pub async fn update_resource(
 
     if let QueryResult::Error(e) = state.executor.submit_on(worker_id, "BEGIN TRANSACTION".to_string()).await {
         eprintln!("[fhir] Failed to begin transaction: {}", e);
+        state.executor.destroy_session(worker_id);
         return Err(AppError::Internal("Failed to begin transaction".to_string()));
     }
 
@@ -217,6 +218,7 @@ pub async fn update_resource(
         }
         QueryResult::Error(e) => {
             let _ = state.executor.submit_on(worker_id, "ROLLBACK".to_string()).await;
+            state.executor.destroy_session(worker_id);
             if e.contains("does not exist") || e.contains("Table") {
                 return Err(AppError::NotFound(format!(
                     "Resource type '{}' not found in dataset '{}'",
@@ -240,6 +242,7 @@ pub async fn update_resource(
             if let Ok(expected) = expected_version.parse::<i64>() {
                 if !is_new && expected != current_version {
                     let _ = state.executor.submit_on(worker_id, "ROLLBACK".to_string()).await;
+                    state.executor.destroy_session(worker_id);
                     return Err(AppError::Conflict(format!(
                         "Version conflict: expected {}, current {}",
                         expected, current_version
@@ -282,6 +285,7 @@ pub async fn update_resource(
             current_raw,
         ]).await {
             let _ = state.executor.submit_on(worker_id, "ROLLBACK".to_string()).await;
+            state.executor.destroy_session(worker_id);
             eprintln!("[fhir] WARNING: history write failed for {}/{}: {}", resource_type, resource_id, e);
             return Err(AppError::Internal("Failed to write history".to_string()));
         }
@@ -299,6 +303,7 @@ pub async fn update_resource(
 
     if let QueryResult::Error(e) = state.executor.submit_params_on(worker_id, sql, vec![resource_id.clone(), raw_json]).await {
         let _ = state.executor.submit_on(worker_id, "ROLLBACK".to_string()).await;
+        state.executor.destroy_session(worker_id);
         eprintln!("[fhir] Failed to update resource: {}", e);
         return Err(AppError::Internal(
             "Failed to update resource".to_string(),
@@ -307,8 +312,11 @@ pub async fn update_resource(
 
     if let QueryResult::Error(e) = state.executor.submit_on(worker_id, "COMMIT".to_string()).await {
         eprintln!("[fhir] Failed to commit update transaction: {}", e);
+        state.executor.destroy_session(worker_id);
         return Err(AppError::Internal("Failed to commit transaction".to_string()));
     }
+
+    state.executor.destroy_session(worker_id);
 
     let status = if is_new {
         StatusCode::CREATED
@@ -344,6 +352,7 @@ pub async fn delete_resource(
 
     if let QueryResult::Error(e) = state.executor.submit_on(worker_id, "BEGIN TRANSACTION".to_string()).await {
         eprintln!("[fhir] Failed to begin transaction: {}", e);
+        state.executor.destroy_session(worker_id);
         return Err(AppError::Internal("Failed to begin transaction".to_string()));
     }
 
@@ -358,6 +367,7 @@ pub async fn delete_resource(
         QueryResult::Select { rows, .. } => {
             if rows.is_empty() {
                 let _ = state.executor.submit_on(worker_id, "ROLLBACK".to_string()).await;
+                state.executor.destroy_session(worker_id);
                 return Err(AppError::NotFound(format!(
                     "{}/{} not found",
                     resource_type, resource_id
@@ -377,6 +387,7 @@ pub async fn delete_resource(
         }
         QueryResult::Error(e) => {
             let _ = state.executor.submit_on(worker_id, "ROLLBACK".to_string()).await;
+            state.executor.destroy_session(worker_id);
             if e.contains("does not exist") || e.contains("Table") {
                 return Err(AppError::NotFound(format!(
                     "Resource type '{}' not found in dataset '{}'",
@@ -390,6 +401,7 @@ pub async fn delete_resource(
         }
         _ => {
             let _ = state.executor.submit_on(worker_id, "ROLLBACK".to_string()).await;
+            state.executor.destroy_session(worker_id);
             return Err(AppError::NotFound(format!(
                 "{}/{} not found",
                 resource_type, resource_id
@@ -411,6 +423,7 @@ pub async fn delete_resource(
         current_raw,
     ]).await {
         let _ = state.executor.submit_on(worker_id, "ROLLBACK".to_string()).await;
+        state.executor.destroy_session(worker_id);
         eprintln!("[fhir] WARNING: history write failed for {}/{}: {}", resource_type, resource_id, e);
         return Err(AppError::Internal("Failed to write history".to_string()));
     }
@@ -425,6 +438,7 @@ pub async fn delete_resource(
 
     if let QueryResult::Error(e) = state.executor.submit_params_on(worker_id, delete_sql, vec![resource_id.clone()]).await {
         let _ = state.executor.submit_on(worker_id, "ROLLBACK".to_string()).await;
+        state.executor.destroy_session(worker_id);
         eprintln!("[fhir] Failed to delete resource: {}", e);
         return Err(AppError::Internal(
             "Failed to delete resource".to_string(),
@@ -433,8 +447,10 @@ pub async fn delete_resource(
 
     if let QueryResult::Error(e) = state.executor.submit_on(worker_id, "COMMIT".to_string()).await {
         eprintln!("[fhir] Failed to commit delete transaction: {}", e);
+        state.executor.destroy_session(worker_id);
         return Err(AppError::Internal("Failed to commit transaction".to_string()));
     }
 
+    state.executor.destroy_session(worker_id);
     Ok(StatusCode::NO_CONTENT)
 }

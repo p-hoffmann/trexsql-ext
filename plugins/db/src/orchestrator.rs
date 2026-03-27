@@ -25,7 +25,7 @@ pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
         let load_sql = format!("LOAD '{}.trex'", ext.name);
         SwarmLogger::info("orchestrator", &format!("Loading extension: {}", ext.name));
 
-        if let Err(e) = trex_pool_client::write(&load_sql) {
+        if let Err(e) = crate::pool::write(&load_sql) {
             let msg = format!("{}: load failed — {}", ext.name, e);
             SwarmLogger::error("orchestrator", &msg);
             statuses.push(msg);
@@ -73,7 +73,7 @@ pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
             &format!("Starting service: {} on {}:{}", ext.name, host, port),
         );
 
-        if let Err(e) = trex_pool_client::write(&start_sql) {
+        if let Err(e) = crate::pool::write(&start_sql) {
             let msg = format!("{}: start failed — {}", ext.name, e);
             SwarmLogger::error("orchestrator", &msg);
             statuses.push(msg);

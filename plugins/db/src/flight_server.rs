@@ -66,7 +66,7 @@ impl DuckDBFlightService {
     fn execute_query_pooled(
         sql: &str,
     ) -> Result<(arrow::datatypes::SchemaRef, Vec<arrow::array::RecordBatch>), Status> {
-        trex_pool_client::read_arrow(sql).map_err(|e| {
+        crate::pool::read_arrow(sql).map_err(|e| {
             Status::internal(format!("Failed to execute '{}': {}", sql, e))
         })
     }
@@ -367,7 +367,7 @@ impl FlightService for DuckDBFlightService {
                     .to_string();
 
                 let result_msg = tokio::task::spawn_blocking(move || -> Result<String, Status> {
-                    trex_pool_client::execute(&sql)
+                    crate::pool::execute(&sql)
                         .map(|_| serde_json::json!({"status": "ok"}).to_string())
                         .map_err(|e| Status::internal(format!("Failed to execute statement: {}", e)))
                 })

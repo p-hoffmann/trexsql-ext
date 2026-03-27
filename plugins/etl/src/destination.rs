@@ -31,7 +31,12 @@ impl DuckDbDestination {
     }
 
     fn execute_sql(&self, sql: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        trex_pool_client::write(sql)
+        let session_id = trex_pool_client::create_session()
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+        let result = trex_pool_client::session_execute(session_id, sql);
+        let _ = trex_pool_client::destroy_session(session_id);
+        result
+            .map(|_| ())
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })
     }
 

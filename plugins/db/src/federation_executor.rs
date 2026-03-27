@@ -48,7 +48,7 @@ impl TrexSQLExecutor {
 
     /// Query local trexsql and return Arrow batches (no IPC — same arrow crate).
     fn query_trexsql(&self, sql: &str) -> Result<(SchemaRef, Vec<arrow::array::RecordBatch>), String> {
-        trex_pool_client::read_arrow(sql)
+        crate::pool::read_arrow(sql)
     }
 }
 

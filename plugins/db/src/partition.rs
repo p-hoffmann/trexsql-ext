@@ -365,7 +365,7 @@ fn read_local_table(table_name: &str) -> Result<(SchemaRef, Vec<RecordBatch>), S
         "SELECT * FROM \"{}\"",
         table_name.replace('"', "\"\"")
     );
-    trex_pool_client::read_arrow(&sql)
+    crate::pool::read_arrow(&sql)
 }
 
 fn drop_local_table(table_name: &str) -> Result<(), String> {
@@ -373,7 +373,7 @@ fn drop_local_table(table_name: &str) -> Result<(), String> {
         "DROP TABLE IF EXISTS \"{}\"",
         table_name.replace('"', "\"\"")
     );
-    trex_pool_client::write(&sql)
+    crate::pool::write(&sql)
 }
 
 fn with_runtime<F, T>(f: F) -> Result<T, String>
@@ -533,7 +533,7 @@ pub fn swarm_create_table_impl(
         &format!("Creating and partitioning table with SQL: {}", create_sql),
     );
 
-    trex_pool_client::write(create_sql)?;
+    crate::pool::write(create_sql)?;
 
     let table_name = extract_table_name(create_sql)
         .ok_or_else(|| "Could not extract table name from CREATE SQL".to_string())?;

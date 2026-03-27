@@ -32,6 +32,7 @@ pub mod flight_server;
 pub mod flight_functions;
 pub mod server_registry;
 pub mod partition;
+pub mod pool;
 
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},

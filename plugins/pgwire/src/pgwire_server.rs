@@ -243,14 +243,16 @@ pub struct TrexQueryHandler {
     server_host: String,
     server_port: u16,
     worker_id: usize,
+    session_id: u64,
 }
 
 impl TrexQueryHandler {
-    pub fn new(host: String, port: u16, worker_id: usize) -> Self {
+    pub fn new(host: String, port: u16, worker_id: usize, session_id: u64) -> Self {
         Self {
             server_host: host,
             server_port: port,
             worker_id,
+            session_id,
         }
     }
 }
@@ -322,7 +324,8 @@ impl SimpleQueryHandler for TrexQueryHandler {
             if let Some(db_credentials) = ServerRegistry::instance().get_db_credentials(&self.server_host, self.server_port) {
                 if matches!(check_database_action(db, &db_credentials), DatabaseAction::SetDatabase) {
                     let use_sql = format!("USE \"{}\"", db.replace('"', "\"\""));
-                    if let Err(err) = tokio::task::spawn_blocking(move || trex_pool_client::write(&use_sql)).await.unwrap_or(Err("spawn error".into())) {
+                    let session_id = self.session_id;
+                    if let Err(err) = tokio::task::spawn_blocking(move || trex_pool_client::session_execute(session_id, &use_sql)).await.unwrap_or(Err("spawn error".into())) {
                         return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                             "ERROR".to_owned(),
                             "XX000".to_owned(),
@@ -355,8 +358,9 @@ impl SimpleQueryHandler for TrexQueryHandler {
 
             log_debug(&format!("Submitting query: {}", sql));
             let sql_owned = sql.clone();
-            let query_result = tokio::task::spawn_blocking(move || {
-                trex_pool_client::execute_arrow(&sql_owned)
+            let session_id = self.session_id;
+            let (schema, batches) = tokio::task::spawn_blocking(move || {
+                trex_pool_client::session_execute(session_id, &sql_owned)
             }).await.map_err(|e| {
                 PgWireError::UserError(Box::new(ErrorInfo::new(
                     "ERROR".to_owned(),
@@ -371,25 +375,22 @@ impl SimpleQueryHandler for TrexQueryHandler {
                 )))
             })?;
 
-            match query_result {
-                trex_pool_client::ArrowExecuteResult::Rows { schema, batches } => {
-                    log_debug(&format!("Got SELECT result: {} batches", batches.len()));
-                    let header = Arc::new(schema_to_field_info(&schema, &Format::UnifiedText)?);
-                    let header_ref = header.clone();
+            if batches.is_empty() {
+                log_debug("Got EXECUTE result");
+                responses.push(Response::Execution(Tag::new("OK").with_rows(0)));
+            } else {
+                log_debug(&format!("Got SELECT result: {} batches", batches.len()));
+                let header = Arc::new(schema_to_field_info(&schema, &Format::UnifiedText)?);
+                let header_ref = header.clone();
 
-                    let data: Vec<_> = batches.into_iter()
-                        .flat_map(|rb| encode_recordbatch(header_ref.clone(), rb))
-                        .collect();
+                let data: Vec<_> = batches.into_iter()
+                    .flat_map(|rb| encode_recordbatch(header_ref.clone(), rb))
+                    .collect();
 
-                    responses.push(Response::Query(QueryResponse::new(
-                        header,
-                        stream::iter(data.into_iter()),
-                    )));
-                }
-                trex_pool_client::ArrowExecuteResult::Executed => {
-                    log_debug("Got EXECUTE result");
-                    responses.push(Response::Execution(Tag::new("OK").with_rows(0)));
-                }
+                responses.push(Response::Query(QueryResponse::new(
+                    header,
+                    stream::iter(data.into_iter()),
+                )));
             }
         }
 
@@ -427,7 +428,8 @@ impl ExtendedQueryHandler for TrexQueryHandler {
             if let Some(db_credentials) = ServerRegistry::instance().get_db_credentials(&self.server_host, self.server_port) {
                 if matches!(check_database_action(db, &db_credentials), DatabaseAction::SetDatabase) {
                     let use_sql = format!("USE \"{}\"", db.replace('"', "\"\""));
-                    if let Err(err) = tokio::task::spawn_blocking(move || trex_pool_client::write(&use_sql)).await.unwrap_or(Err("spawn error".into())) {
+                    let session_id = self.session_id;
+                    if let Err(err) = tokio::task::spawn_blocking(move || trex_pool_client::session_execute(session_id, &use_sql)).await.unwrap_or(Err("spawn error".into())) {
                         return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                             "ERROR".to_owned(),
                             "XX000".to_owned(),
@@ -438,8 +440,9 @@ impl ExtendedQueryHandler for TrexQueryHandler {
             }
         }
 
-        let query_result = tokio::task::spawn_blocking(move || {
-            trex_pool_client::execute_arrow(&query)
+        let session_id = self.session_id;
+        let (schema, batches) = tokio::task::spawn_blocking(move || {
+            trex_pool_client::session_execute(session_id, &query)
         }).await.map_err(|e| {
             PgWireError::UserError(Box::new(ErrorInfo::new(
                 "ERROR".to_owned(),
@@ -454,24 +457,20 @@ impl ExtendedQueryHandler for TrexQueryHandler {
             )))
         })?;
 
-        // Convert ExecuteResult to pgwire Response
-        match query_result {
-            trex_pool_client::ArrowExecuteResult::Rows { schema, batches } => {
-                let header = Arc::new(schema_to_field_info(&schema, &Format::UnifiedText)?);
-                let header_ref = header.clone();
+        if batches.is_empty() {
+            Ok(Response::Execution(Tag::new("OK").with_rows(0)))
+        } else {
+            let header = Arc::new(schema_to_field_info(&schema, &Format::UnifiedText)?);
+            let header_ref = header.clone();
 
-                let data: Vec<_> = batches.into_iter()
-                    .flat_map(|rb| encode_recordbatch(header_ref.clone(), rb))
-                    .collect();
+            let data: Vec<_> = batches.into_iter()
+                .flat_map(|rb| encode_recordbatch(header_ref.clone(), rb))
+                .collect();
 
-                Ok(Response::Query(QueryResponse::new(
-                    header,
-                    stream::iter(data.into_iter()),
-                )))
-            }
-            trex_pool_client::ArrowExecuteResult::Executed => {
-                Ok(Response::Execution(Tag::new("OK").with_rows(0)))
-            }
+            Ok(Response::Query(QueryResponse::new(
+                header,
+                stream::iter(data.into_iter()),
+            )))
         }
     }
 
@@ -614,9 +613,9 @@ pub struct TrexPgWireServerFactory {
 }
 
 impl TrexPgWireServerFactory {
-    pub fn new(host: String, port: u16, worker_id: usize) -> Self {
+    pub fn new(host: String, port: u16, worker_id: usize, session_id: u64) -> Self {
         Self {
-            query_handler: Arc::new(TrexQueryHandler::new(host, port, worker_id)),
+            query_handler: Arc::new(TrexQueryHandler::new(host, port, worker_id, session_id)),
         }
     }
 }
@@ -646,9 +645,10 @@ impl TrexPgWireServerWithAuth {
         host: String,
         port: u16,
         worker_id: usize,
+        session_id: u64,
     ) -> Self {
         Self {
-            query_handler: Arc::new(TrexQueryHandler::new(host, port, worker_id)),
+            query_handler: Arc::new(TrexQueryHandler::new(host, port, worker_id, session_id)),
             password,
         }
     }
@@ -718,9 +718,17 @@ pub fn start_pgwire_server_capi(
                                 match result {
                                     Ok((socket, _addr)) => {
                                         let worker_id = worker_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % pool_size;
-                                        let handlers = Arc::new(TrexPgWireServerWithAuth::new(required_password.to_string(), server_host.clone(), server_port, worker_id));
+                                        let session_id = match trex_pool_client::create_session() {
+                                            Ok(id) => id,
+                                            Err(e) => {
+                                                log_debug(&format!("Failed to create session: {}", e));
+                                                continue;
+                                            }
+                                        };
+                                        let handlers = Arc::new(TrexPgWireServerWithAuth::new(required_password.to_string(), server_host.clone(), server_port, worker_id, session_id));
                                         tokio::spawn(async move {
                                             let _ = process_socket(socket, None, handlers).await;
+                                            let _ = trex_pool_client::destroy_session(session_id);
                                         });
                                     }
                                     Err(_) => break,
@@ -743,11 +751,19 @@ pub fn start_pgwire_server_capi(
                                     Ok((socket, addr)) => {
                                         log_debug(&format!("New connection from {:?}", addr));
                                         let worker_id = worker_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % pool_size;
-                                        let handlers = Arc::new(TrexPgWireServerFactory::new(server_host.clone(), server_port, worker_id));
+                                        let session_id = match trex_pool_client::create_session() {
+                                            Ok(id) => id,
+                                            Err(e) => {
+                                                log_debug(&format!("Failed to create session: {}", e));
+                                                continue;
+                                            }
+                                        };
+                                        let handlers = Arc::new(TrexPgWireServerFactory::new(server_host.clone(), server_port, worker_id, session_id));
                                         tokio::spawn(async move {
                                             log_debug("Processing socket...");
                                             let result = process_socket(socket, None, handlers).await;
                                             log_debug(&format!("Socket result: {:?}", result));
+                                            let _ = trex_pool_client::destroy_session(session_id);
                                         });
                                     }
                                     Err(e) => {

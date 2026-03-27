@@ -11,6 +11,9 @@ const {
 	op_install_plugin,
 	op_execute_query,
 	op_acquire_worker,
+	op_create_session,
+	op_destroy_session,
+	op_execute_query_session,
 	op_execute_query_pinned,
 	op_exit,
 	op_get_dbc,
@@ -260,8 +263,10 @@ export class UserDatabaseManager {
 export class TrexDB {
 	__database;
 	__worker_id;
+	__session_id;
 	constructor(database, worker_id) {
 		const dbm = DatabaseManager.getDatabaseManager();
+		this.__session_id = op_create_session();
 		if (database === CDW_DUCKDB_FILE_DATABASE_CODE) {
       this.__database = CDW_DUCKDB_FILE_DATABASE_CODE;
 			dbm.add_cdw_config_duckdb_connection()
@@ -281,6 +286,12 @@ export class TrexDB {
 		return this.__database;
 	}
 
+	close() {
+		if (this.__session_id) {
+			op_destroy_session(this.__session_id);
+			this.__session_id = null;
+		}
+	}
 
 	executeWrite(sql, params) {
 		return this.execute(sql, params);
@@ -292,7 +303,7 @@ export class TrexDB {
 			try {
 				const nparams = map_params(params);
 				console.log(`DB: ${this.__database} SQL: ${sql}`);
-				resolve(JSON.parse(op_execute_query_pinned(this.__worker_id, this.__database, sql, nparams)));
+				resolve(JSON.parse(op_execute_query_session(this.__session_id, this.__database, sql, nparams)));
 			} catch(e) {
 				reject(e);
 			}

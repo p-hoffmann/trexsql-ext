@@ -21,20 +21,26 @@ use std::{
 
 // ── Database access via shared trex_pool ─────────────────────────────────────
 
-/// Execute SQL using the shared trex_pool write queue.
+/// Execute SQL using the shared trex_pool via a one-off session.
 fn execute_sql(sql: &str) -> Result<(), Box<dyn Error>> {
-    trex_pool_client::write(sql).map_err(|e| -> Box<dyn Error> { e.into() })
+    let sid = trex_pool_client::create_session()
+        .map_err(|e| -> Box<dyn Error> { e.into() })?;
+    let result = trex_pool_client::session_execute(sid, sql).map(|_| ());
+    let _ = trex_pool_client::destroy_session(sid);
+    result.map_err(|e| -> Box<dyn Error> { e.into() })
 }
 
 struct QueryRow {
     columns: Vec<String>,
 }
 
-/// Query SQL using the shared pool and return rows as string columns.
-/// Uses Arrow IPC to preserve column order from the SQL SELECT.
+/// Query SQL using a one-off session and return rows as string columns.
 fn query_sql(sql: &str) -> Result<Vec<QueryRow>, Box<dyn Error>> {
-    let (_schema, batches) =
-        trex_pool_client::read_arrow(sql).map_err(|e| -> Box<dyn Error> { e.into() })?;
+    let sid = trex_pool_client::create_session()
+        .map_err(|e| -> Box<dyn Error> { e.into() })?;
+    let result = trex_pool_client::session_execute(sid, sql);
+    let _ = trex_pool_client::destroy_session(sid);
+    let (_schema, batches) = result.map_err(|e| -> Box<dyn Error> { e.into() })?;
 
     let mut rows = Vec::new();
     for batch in &batches {
@@ -304,18 +310,36 @@ fn execute_migrations(
     for &idx in pending_indices {
         let migration = &discovered[idx];
 
-        // Run migration + insert record in a single transaction
+        // Run migration + insert record in a single transaction via session
         let insert_sql = build_insert_migration_sql(migration);
-        let result = trex_pool_client::execute_transaction(&[
-            &migration.sql,
-            &insert_sql,
-        ]);
+        let sid = trex_pool_client::create_session()
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
 
-        match result {
-            Ok(()) => {}
-            Err(e) => return Err(format!(
+        let txn_result: Result<(), Box<dyn Error>> = (|| {
+            trex_pool_client::session_execute(sid, "BEGIN")
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+
+            if let Err(e) = trex_pool_client::session_execute(sid, &migration.sql) {
+                let _ = trex_pool_client::session_execute(sid, "ROLLBACK");
+                return Err(e.into());
+            }
+
+            if let Err(e) = trex_pool_client::session_execute(sid, &insert_sql) {
+                let _ = trex_pool_client::session_execute(sid, "ROLLBACK");
+                return Err(e.into());
+            }
+
+            trex_pool_client::session_execute(sid, "COMMIT")
+                .map(|_| ())
+                .map_err(|e| -> Box<dyn Error> { e.into() })
+        })();
+
+        let _ = trex_pool_client::destroy_session(sid);
+
+        if let Err(e) = txn_result {
+            return Err(format!(
                 "Migration V{}__{} failed: {}", migration.version, migration.name, e
-            ).into()),
+            ).into());
         }
 
         results.push(MigrationResult {

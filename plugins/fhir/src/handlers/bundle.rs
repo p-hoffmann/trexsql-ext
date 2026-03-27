@@ -74,6 +74,7 @@ async fn process_transaction(
 
     if let QueryResult::Error(e) = state.executor.submit_on(worker_id, "BEGIN TRANSACTION".to_string()).await {
         eprintln!("[fhir] Failed to begin transaction: {}", e);
+        state.executor.destroy_session(worker_id);
         return Err(AppError::Internal(
             "Failed to begin transaction".to_string(),
         ));
@@ -88,6 +89,7 @@ async fn process_transaction(
             }
             Err(e) => {
                 let _ = state.executor.submit_on(worker_id, "ROLLBACK".to_string()).await;
+                state.executor.destroy_session(worker_id);
                 return Err(AppError::BadRequest(format!(
                     "Transaction failed on {}/{}: {}",
                     entry.resource_type, entry.server_id, e
@@ -98,11 +100,13 @@ async fn process_transaction(
 
     if let QueryResult::Error(e) = state.executor.submit_on(worker_id, "COMMIT".to_string()).await {
         eprintln!("[fhir] Failed to commit transaction: {}", e);
+        state.executor.destroy_session(worker_id);
         return Err(AppError::Internal(
             "Failed to commit transaction".to_string(),
         ));
     }
 
+    state.executor.destroy_session(worker_id);
     Ok((
         StatusCode::OK,
         Json(json!({

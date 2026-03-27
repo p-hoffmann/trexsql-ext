@@ -2,7 +2,7 @@
 //! (e.g. registering ArrowVTab, using appender). These can't go through
 //! the C ABI string-based interface.
 //!
-//! Reads go through `trex_pool_client::read_arrow()` when possible.
+//! Reads go through the session-based pool API (`crate::pool`) when possible.
 //! Only complex operations that need closures use these local connections.
 
 use duckdb::Connection;

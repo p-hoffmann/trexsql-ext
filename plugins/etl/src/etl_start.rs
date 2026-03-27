@@ -399,8 +399,12 @@ fn start_copy_only_pipeline(
             pipeline_registry::registry()
                 .update_state(&pipeline_name, PipelineState::Starting);
 
-            {
-                trex_pool_client::write("LOAD postgres")
+            let session_id = trex_pool_client::create_session()
+                .map_err(|e| format!("Failed to create session: {}", e))?;
+
+            // Use a closure so we can clean up the session on any exit path.
+            let result = (|| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                trex_pool_client::session_execute(session_id, "LOAD postgres")
                     .map_err(|e| format!("Failed to load postgres scanner: {}", e))?;
 
                 let escaped_conn = conn_str.replace('\'', "''");
@@ -408,100 +412,99 @@ fn start_copy_only_pipeline(
                     "ATTACH IF NOT EXISTS '{}' AS \"{}\" (TYPE postgres, READ_ONLY)",
                     escaped_conn, attach_name
                 );
-                trex_pool_client::write(&attach_sql)
+                trex_pool_client::session_execute(session_id, &attach_sql)
                     .map_err(|e| format!("Failed to attach source: {}", e))?;
-            }
 
-            pipeline_registry::registry()
-                .update_state(&pipeline_name, PipelineState::Snapshotting);
-
-            let tables: Vec<String> = {
-                let escaped_schema = schema.replace('\'', "''");
-                let sql = format!(
-                    "SELECT table_name FROM \"{}\".information_schema.tables WHERE table_schema = '{}'",
-                    attach_name, escaped_schema
-                );
-                let json_str = trex_pool_client::read(&sql)
-                    .map_err(|e| format!("Failed to query tables: {}", e))?;
-                let parsed: Vec<serde_json::Value> = serde_json::from_str(&json_str)
-                    .unwrap_or_default();
-                parsed.iter()
-                    .filter_map(|v| v.get("table_name").and_then(|n| n.as_str()).map(|s| s.to_string()))
-                    .collect()
-            };
-
-            let mut had_error = false;
-            for table in &tables {
-                match shutdown.try_recv() {
-                    Ok(_) | Err(oneshot::error::TryRecvError::Closed) => {
-                        pipeline_registry::registry()
-                            .update_state(&pipeline_name, PipelineState::Stopping);
-                        let _ = trex_pool_client::write(&format!("DETACH \"{}\"", attach_name));
-                        return Ok(());
-                    }
-                    Err(oneshot::error::TryRecvError::Empty) => {}
-                }
-
-                let escaped_table = table.replace('"', "\"\"");
-                let escaped_schema = schema.replace('"', "\"\"");
-
-                let copy_sql = format!(
-                    "CREATE TABLE IF NOT EXISTS \"{}\".\"{}\" AS SELECT * FROM \"{}\".\"{}\".\"{}\";",
-                    escaped_schema,
-                    escaped_table,
-                    attach_name,
-                    escaped_schema,
-                    escaped_table
-                );
-
-                let ensure_schema_sql = format!(
-                    "CREATE SCHEMA IF NOT EXISTS \"{}\"",
-                    escaped_schema
-                );
-
-                if let Err(e) = trex_pool_client::write(&ensure_schema_sql) {
-                    eprintln!("etl: create schema error for '{}': {}", schema, e);
-                }
-                match trex_pool_client::write(&copy_sql) {
-                    Ok(_) => {
-                        let count_sql = format!(
-                            "SELECT COUNT(*) FROM \"{}\".\"{}\"",
-                            escaped_schema, escaped_table
-                        );
-                        let row_count = trex_pool_client::read(&count_sql)
-                            .ok()
-                            .and_then(|json| serde_json::from_str::<Vec<serde_json::Value>>(&json).ok())
-                            .and_then(|rows| rows.first().cloned())
-                            .and_then(|row| {
-                                row.as_object()
-                                    .and_then(|m| m.values().next().cloned())
-                                    .and_then(|v| v.as_i64())
-                            })
-                            .unwrap_or(0) as u64;
-                        pipeline_registry::registry()
-                            .update_stats(&pipeline_name, row_count);
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "etl: copy error for table '{}.{}': {}",
-                            schema, table, e
-                        );
-                        had_error = true;
-                    }
-                }
-            }
-
-            let _ = trex_pool_client::write(&format!("DETACH \"{}\"", attach_name));
-
-            if had_error {
                 pipeline_registry::registry()
-                    .set_error(&pipeline_name, "Some tables failed to copy");
-            } else {
-                pipeline_registry::registry()
-                    .update_state(&pipeline_name, PipelineState::Stopped);
-            }
+                    .update_state(&pipeline_name, PipelineState::Snapshotting);
 
-            Ok(())
+                let tables: Vec<String> = {
+                    let escaped_schema = schema.replace('\'', "''");
+                    let sql = format!(
+                        "SELECT table_name FROM \"{}\".information_schema.tables WHERE table_schema = '{}'",
+                        attach_name, escaped_schema
+                    );
+                    let (_schema, batches) = trex_pool_client::session_execute(session_id, &sql)
+                        .map_err(|e| format!("Failed to query tables: {}", e))?;
+                    extract_string_column(&batches, "table_name")
+                };
+
+                let mut had_error = false;
+                for table in &tables {
+                    match shutdown.try_recv() {
+                        Ok(_) | Err(oneshot::error::TryRecvError::Closed) => {
+                            pipeline_registry::registry()
+                                .update_state(&pipeline_name, PipelineState::Stopping);
+                            let _ = trex_pool_client::session_execute(
+                                session_id,
+                                &format!("DETACH \"{}\"", attach_name),
+                            );
+                            return Ok(());
+                        }
+                        Err(oneshot::error::TryRecvError::Empty) => {}
+                    }
+
+                    let escaped_table = table.replace('"', "\"\"");
+                    let escaped_schema = schema.replace('"', "\"\"");
+
+                    let copy_sql = format!(
+                        "CREATE TABLE IF NOT EXISTS \"{}\".\"{}\" AS SELECT * FROM \"{}\".\"{}\".\"{}\";",
+                        escaped_schema,
+                        escaped_table,
+                        attach_name,
+                        escaped_schema,
+                        escaped_table
+                    );
+
+                    let ensure_schema_sql = format!(
+                        "CREATE SCHEMA IF NOT EXISTS \"{}\"",
+                        escaped_schema
+                    );
+
+                    if let Err(e) = trex_pool_client::session_execute(session_id, &ensure_schema_sql) {
+                        eprintln!("etl: create schema error for '{}': {}", schema, e);
+                    }
+                    match trex_pool_client::session_execute(session_id, &copy_sql) {
+                        Ok(_) => {
+                            let count_sql = format!(
+                                "SELECT COUNT(*) FROM \"{}\".\"{}\"",
+                                escaped_schema, escaped_table
+                            );
+                            let row_count = trex_pool_client::session_execute(session_id, &count_sql)
+                                .ok()
+                                .and_then(|(_s, batches)| extract_i64_scalar(&batches))
+                                .unwrap_or(0) as u64;
+                            pipeline_registry::registry()
+                                .update_stats(&pipeline_name, row_count);
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "etl: copy error for table '{}.{}': {}",
+                                schema, table, e
+                            );
+                            had_error = true;
+                        }
+                    }
+                }
+
+                let _ = trex_pool_client::session_execute(
+                    session_id,
+                    &format!("DETACH \"{}\"", attach_name),
+                );
+
+                if had_error {
+                    pipeline_registry::registry()
+                        .set_error(&pipeline_name, "Some tables failed to copy");
+                } else {
+                    pipeline_registry::registry()
+                        .update_state(&pipeline_name, PipelineState::Stopped);
+                }
+
+                Ok(())
+            })();
+
+            let _ = trex_pool_client::destroy_session(session_id);
+            result
         });
 
     match thread_result {
@@ -515,4 +518,43 @@ fn start_copy_only_pipeline(
     }
 
     Ok(format!("Pipeline '{}' started (copy_only)", name))
+}
+
+/// Extract all values from a named VARCHAR column across Arrow RecordBatches.
+fn extract_string_column(batches: &[trex_pool_client::arrow_array::RecordBatch], column: &str) -> Vec<String> {
+    use trex_pool_client::arrow_array::Array;
+    use trex_pool_client::arrow_array::cast::AsArray;
+
+    let mut result = Vec::new();
+    for batch in batches {
+        if let Some(col_idx) = batch.schema().index_of(column).ok() {
+            let array = batch.column(col_idx).as_string::<i32>();
+            for i in 0..array.len() {
+                if !array.is_null(i) {
+                    result.push(array.value(i).to_string());
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Extract a single i64 scalar from the first column of the first row.
+fn extract_i64_scalar(batches: &[trex_pool_client::arrow_array::RecordBatch]) -> Option<i64> {
+    let batch = batches.first()?;
+    if batch.num_rows() == 0 || batch.num_columns() == 0 {
+        return None;
+    }
+    let col = batch.column(0);
+    // Try common integer/count types
+    if let Some(arr) = col.as_any().downcast_ref::<trex_pool_client::arrow_array::Int64Array>() {
+        return Some(arr.value(0));
+    }
+    if let Some(arr) = col.as_any().downcast_ref::<trex_pool_client::arrow_array::Int32Array>() {
+        return Some(arr.value(0) as i64);
+    }
+    if let Some(arr) = col.as_any().downcast_ref::<trex_pool_client::arrow_array::UInt64Array>() {
+        return Some(arr.value(0) as i64);
+    }
+    None
 }

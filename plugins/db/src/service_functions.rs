@@ -336,7 +336,7 @@ impl VScalar for SwarmStartServiceScalar {
             }
         };
 
-        if let Err(e) = trex_pool_client::write(&sql) {
+        if let Err(e) = crate::pool::write(&sql) {
             let msg = format!("Failed to start {}: {}", extension, e);
             let flat = output.flat_vector();
             flat.insert(0, &msg);
@@ -507,7 +507,7 @@ impl VScalar for SwarmLoadScalar {
 
         let load_sql = format!("LOAD '{}.trex'", extension);
 
-        let response = match trex_pool_client::write(&load_sql) {
+        let response = match crate::pool::write(&load_sql) {
             Ok(()) => format!("Extension '{}' loaded successfully", extension),
             Err(e) => format!("Failed to load extension '{}': {}", extension, e),
         };

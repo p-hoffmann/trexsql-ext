@@ -214,8 +214,8 @@ def main():
     print("=" * 70)
 
     # Start server
-    gp, fp, pp = alloc_ports()
-    node = Node([FHIR_EXT], gp, fp, pp)
+    gp, fp, pp, tp = alloc_ports()
+    node = Node([FHIR_EXT], gp, fp, pp, tp)
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
