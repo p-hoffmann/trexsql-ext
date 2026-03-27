@@ -34,9 +34,6 @@ use std::{
     },
 };
 
-static SHARED_CONNECTION: OnceCell<Arc<Mutex<Connection>>> = OnceCell::new();
-static QUERY_EXECUTOR: OnceCell<Arc<QueryExecutor>> = OnceCell::new();
-
 const DEFAULT_POOL_SIZE: usize = 1;
 
 pub(crate) fn executor_pool_size() -> usize {
@@ -45,32 +42,6 @@ pub(crate) fn executor_pool_size() -> usize {
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_POOL_SIZE)
         .max(1)
-}
-
-fn store_shared_connection(connection: &Connection) -> Result<(), Box<dyn Error>> {
-    let cloned = connection
-        .try_clone()
-        .map_err(|e| format!("connection clone: {e}"))?;
-
-    SHARED_CONNECTION
-        .set(Arc::new(Mutex::new(cloned)))
-        .map_err(|_| "connection already stored")?;
-
-    let pool_size = executor_pool_size();
-    let executor = QueryExecutor::new(connection, pool_size)?;
-    QUERY_EXECUTOR
-        .set(Arc::new(executor))
-        .map_err(|_| "executor already created")?;
-
-    Ok(())
-}
-
-pub fn get_shared_connection() -> Option<Arc<Mutex<Connection>>> {
-    SHARED_CONNECTION.get().cloned()
-}
-
-pub fn get_query_executor() -> Option<Arc<QueryExecutor>> {
-    QUERY_EXECUTOR.get().cloned()
 }
 
 pub async fn init_fhir_meta(executor: &Arc<QueryExecutor>, db_name: &str) {
@@ -348,7 +319,7 @@ impl VScalar for FhirVersionScalar {
 
 #[duckdb_entrypoint_c_api()]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
-    store_shared_connection(&con)?;
+    // Pool already initialized by db plugin — no local connection management needed
 
     con.register_scalar_function::<FhirStartScalar>("trex_fhir_start")
         .expect("Failed to register trex_fhir_start function");

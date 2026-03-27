@@ -137,9 +137,7 @@ impl PipelineRegistry {
         };
 
         #[cfg(feature = "loadable-extension")]
-        if let Some(conn) = crate::get_shared_connection() {
-            crate::gossip_bridge::publish_pipeline_state(&conn, &_info_snapshot);
-        }
+        crate::gossip_bridge::publish_pipeline_state(&_info_snapshot);
 
         Ok(())
     }
@@ -168,9 +166,7 @@ impl PipelineRegistry {
 
         #[cfg(feature = "loadable-extension")]
         if let Some(snapshot) = _info_snapshot {
-            if let Some(conn) = crate::get_shared_connection() {
-                crate::gossip_bridge::publish_pipeline_state(&conn, &snapshot);
-            }
+            crate::gossip_bridge::publish_pipeline_state(&snapshot);
         }
     }
 
@@ -193,9 +189,7 @@ impl PipelineRegistry {
 
         #[cfg(feature = "loadable-extension")]
         if let Some(snapshot) = _info_snapshot {
-            if let Some(conn) = crate::get_shared_connection() {
-                crate::gossip_bridge::publish_pipeline_state(&conn, &snapshot);
-            }
+            crate::gossip_bridge::publish_pipeline_state(&snapshot);
         }
     }
 
@@ -221,9 +215,7 @@ impl PipelineRegistry {
 
         #[cfg(feature = "loadable-extension")]
         if let Some(snapshot) = _info_snapshot {
-            if let Some(conn) = crate::get_shared_connection() {
-                crate::gossip_bridge::publish_pipeline_state(&conn, &snapshot);
-            }
+            crate::gossip_bridge::publish_pipeline_state(&snapshot);
         }
     }
 
@@ -248,9 +240,7 @@ impl PipelineRegistry {
                 }
 
                 #[cfg(feature = "loadable-extension")]
-                if let Some(conn) = crate::get_shared_connection() {
-                    crate::gossip_bridge::remove_pipeline_state(&conn, name);
-                }
+                crate::gossip_bridge::remove_pipeline_state(name);
 
                 Ok(format!("Pipeline '{}' stopped", name))
             }
@@ -266,9 +256,7 @@ impl PipelineRegistry {
         }
 
         #[cfg(feature = "loadable-extension")]
-        if let Some(conn) = crate::get_shared_connection() {
-            crate::gossip_bridge::remove_pipeline_state(&conn, name);
-        }
+        crate::gossip_bridge::remove_pipeline_state(name);
     }
 
     pub fn get_all_info(&self) -> Vec<PipelineInfo> {

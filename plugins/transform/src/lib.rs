@@ -15,61 +15,37 @@ mod test;
 
 use duckdb::Connection;
 use libduckdb_sys as ffi;
-use std::{
-    error::Error,
-    ffi::CString,
-    sync::{Mutex, OnceLock},
-};
+use std::cell::Cell;
+use std::error::Error;
 
-// ── Shared Connection ────────────────────────────────────────────────────────
+// ── Database access via shared trex_pool (session-based) ─────────────────────
 
-struct SharedConn(ffi::duckdb_connection);
-
-unsafe impl Send for SharedConn {}
-unsafe impl Sync for SharedConn {}
-
-impl Drop for SharedConn {
-    fn drop(&mut self) {
-        unsafe {
-            if !self.0.is_null() {
-                ffi::duckdb_disconnect(&mut self.0);
-            }
-        }
-    }
+thread_local! {
+    /// When set, `execute_sql` and `query_sql` route through this session.
+    static ACTIVE_SESSION: Cell<Option<u64>> = const { Cell::new(None) };
 }
 
-static SHARED_CONNECTION: OnceLock<Mutex<SharedConn>> = OnceLock::new();
+/// Set the thread-local active session. Returns the previous value.
+pub fn set_active_session(session_id: Option<u64>) -> Option<u64> {
+    ACTIVE_SESSION.with(|c| c.replace(session_id))
+}
+
+fn active_session() -> Option<u64> {
+    ACTIVE_SESSION.with(|c| c.get())
+}
 
 pub fn execute_sql(sql: &str) -> Result<(), Box<dyn Error>> {
-    let mutex = SHARED_CONNECTION
-        .get()
-        .ok_or("Transform extension not initialized")?;
-    let guard = mutex.lock().map_err(|_| "Connection mutex poisoned")?;
-    let conn = guard.0;
-
-    unsafe {
-        let c_sql = CString::new(sql)?;
-        let mut result: ffi::duckdb_result = std::mem::zeroed();
-        let state = ffi::duckdb_query(conn, c_sql.as_ptr(), &mut result);
-
-        let ok = if state != ffi::duckdb_state_DuckDBSuccess {
-            let err_ptr = ffi::duckdb_result_error(&mut result);
-            let err_msg = if err_ptr.is_null() {
-                format!("SQL execution failed: {}", sql)
-            } else {
-                let c_str = std::ffi::CStr::from_ptr(err_ptr);
-                format!("{}", c_str.to_string_lossy())
-            };
-            Err(err_msg)
-        } else {
-            Ok(())
-        };
-
-        ffi::duckdb_destroy_result(&mut result);
-        ok?;
+    if let Some(sid) = active_session() {
+        trex_pool_client::session_execute(sid, sql)
+            .map(|_| ())
+            .map_err(|e| -> Box<dyn Error> { e.into() })
+    } else {
+        let sid = trex_pool_client::create_session()
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+        let result = trex_pool_client::session_execute(sid, sql).map(|_| ());
+        let _ = trex_pool_client::destroy_session(sid);
+        result.map_err(|e| -> Box<dyn Error> { e.into() })
     }
-
-    Ok(())
 }
 
 pub struct QueryRow {
@@ -77,71 +53,49 @@ pub struct QueryRow {
 }
 
 pub fn query_sql(sql: &str) -> Result<Vec<QueryRow>, Box<dyn Error>> {
-    let mutex = SHARED_CONNECTION
-        .get()
-        .ok_or("Transform extension not initialized")?;
-    let guard = mutex.lock().map_err(|_| "Connection mutex poisoned")?;
-    let conn = guard.0;
+    let (_schema, batches) = if let Some(sid) = active_session() {
+        trex_pool_client::session_execute(sid, sql)
+            .map_err(|e| -> Box<dyn Error> { e.into() })?
+    } else {
+        let sid = trex_pool_client::create_session()
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+        let result = trex_pool_client::session_execute(sid, sql);
+        let _ = trex_pool_client::destroy_session(sid);
+        result.map_err(|e| -> Box<dyn Error> { e.into() })?
+    };
 
-    unsafe {
-        let c_sql = CString::new(sql)?;
-        let mut result: ffi::duckdb_result = std::mem::zeroed();
-        let state = ffi::duckdb_query(conn, c_sql.as_ptr(), &mut result);
-
-        if state != ffi::duckdb_state_DuckDBSuccess {
-            let err_ptr = ffi::duckdb_result_error(&mut result);
-            let err_msg = if err_ptr.is_null() {
-                format!("Query failed: {}", sql)
-            } else {
-                let c_str = std::ffi::CStr::from_ptr(err_ptr);
-                format!("{}", c_str.to_string_lossy())
-            };
-            ffi::duckdb_destroy_result(&mut result);
-            return Err(err_msg.into());
-        }
-
-        let row_count = ffi::duckdb_row_count(&mut result);
-        let col_count = ffi::duckdb_column_count(&mut result);
-        let mut rows = Vec::new();
-
-        for row_idx in 0..row_count {
+    let mut rows = Vec::new();
+    for batch in &batches {
+        for r in 0..batch.num_rows() {
             let mut columns = Vec::new();
-            for col_idx in 0..col_count {
-                let val = ffi::duckdb_value_varchar(&mut result, col_idx, row_idx);
-                let s = if val.is_null() {
+            for c in 0..batch.num_columns() {
+                let col = batch.column(c);
+                let val = if col.is_null(r) {
                     String::new()
                 } else {
-                    let c_str = std::ffi::CStr::from_ptr(val);
-                    let s = c_str.to_string_lossy().to_string();
-                    ffi::duckdb_free(val as *mut _);
-                    s
+                    arrow_value_to_string(col.as_ref(), r)
                 };
-                columns.push(s);
+                columns.push(val);
             }
             rows.push(QueryRow { columns });
         }
-
-        ffi::duckdb_destroy_result(&mut result);
-        Ok(rows)
     }
+    Ok(rows)
 }
 
-fn init_shared_connection(db: ffi::duckdb_database) -> Result<(), Box<dyn Error>> {
-    SHARED_CONNECTION.get_or_init(|| unsafe {
-        let mut conn: ffi::duckdb_connection = std::ptr::null_mut();
-        let state = ffi::duckdb_connect(db, &mut conn);
-        if state != ffi::duckdb_state_DuckDBSuccess {
-            return Mutex::new(SharedConn(std::ptr::null_mut()));
-        }
-        Mutex::new(SharedConn(conn))
-    });
+fn arrow_value_to_string(array: &dyn trex_pool_client::arrow_array::Array, row: usize) -> String {
+    use trex_pool_client::arrow_array::*;
+    use trex_pool_client::arrow_schema::DataType;
 
-    let mutex = SHARED_CONNECTION.get().unwrap();
-    let guard = mutex.lock().map_err(|_| "Connection mutex poisoned")?;
-    if guard.0.is_null() {
-        return Err("Failed to create shared connection".into());
+    match array.data_type() {
+        DataType::Utf8 => array.as_any().downcast_ref::<StringArray>().unwrap().value(row).to_string(),
+        DataType::LargeUtf8 => array.as_any().downcast_ref::<LargeStringArray>().unwrap().value(row).to_string(),
+        DataType::Int32 => array.as_any().downcast_ref::<Int32Array>().unwrap().value(row).to_string(),
+        DataType::Int64 => array.as_any().downcast_ref::<Int64Array>().unwrap().value(row).to_string(),
+        DataType::UInt64 => array.as_any().downcast_ref::<UInt64Array>().unwrap().value(row).to_string(),
+        DataType::Boolean => array.as_any().downcast_ref::<BooleanArray>().unwrap().value(row).to_string(),
+        _ => format!("{:?}", array.data_type()),
     }
-    Ok(())
 }
 
 pub fn escape_sql_ident(s: &str) -> String {
@@ -176,8 +130,7 @@ unsafe fn transform_init_c_api_internal(
 
     let db: ffi::duckdb_database = *(*access).get_database.unwrap()(info);
 
-    init_shared_connection(db)?;
-
+    // Pool already initialized by db plugin
     let connection = Connection::open_from_raw(db.cast())?;
     extension_entrypoint(connection)?;
 

@@ -866,70 +866,84 @@ fn run_project(path: &str, schema: &str, source_schema: Option<&str>) -> Result<
         let action = if is_new { "create" } else { "update" };
         let start = Instant::now();
 
-        execute_sql("BEGIN TRANSACTION;")?;
+        // Create a session for the entire transaction block so that
+        // BEGIN/COMMIT/ROLLBACK and all intermediate statements are
+        // pinned to the same connection.
+        let session_id = trex_pool_client::create_session()
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+        let prev_session = crate::set_active_session(Some(session_id));
 
-        if let Some(hooks) = &model.pre_hooks {
-            if let Err(e) = execute_hooks(hooks, schema, &model.name) {
-                let _ = execute_sql("ROLLBACK;");
-                return Err(format!("Pre-hook failed for {}: {}", model.name, e).into());
-            }
-        }
+        let txn_result: Result<(), Box<dyn Error>> = (|| {
+            execute_sql("BEGIN TRANSACTION;")?;
 
-        match materialize_model(
-            &model.name,
-            &model.sql,
-            model.materialization,
-            schema,
-            &known_names,
-            is_new,
-            inc_config.as_ref(),
-            &ephemeral_models,
-            model.strategy,
-            model.updated_at.as_deref(),
-            model.check_cols.as_ref(),
-            model.unique_key.as_ref(),
-            src_names.as_ref(),
-            source_schema,
-        ) {
-            Ok(new_watermark) => {
-                if let Some(hooks) = &model.post_hooks {
-                    if let Err(e) = execute_hooks(hooks, schema, &model.name) {
-                        let _ = execute_sql("ROLLBACK;");
-                        return Err(
-                            format!("Post-hook failed for {}: {}", model.name, e).into()
-                        );
-                    }
+            if let Some(hooks) = &model.pre_hooks {
+                if let Err(e) = execute_hooks(hooks, schema, &model.name) {
+                    let _ = execute_sql("ROLLBACK;");
+                    return Err(format!("Pre-hook failed for {}: {}", model.name, e).into());
                 }
+            }
 
-                let checksum = checksums
-                    .get(&model.name)
-                    .cloned()
-                    .unwrap_or_default();
-                let deployed_at = Utc::now().to_rfc3339();
-                let strategy_str = inc_config.as_ref().map(|c| c.strategy.as_str());
-                upsert_state(
-                    schema,
-                    &model.name,
-                    model.materialization.as_str(),
-                    &checksum,
-                    &deployed_at,
-                    strategy_str,
-                    new_watermark.as_deref(),
-                )?;
-                execute_sql("COMMIT;")?;
-                results.push(RunResult {
-                    name: cr.name.clone(),
-                    action: action.to_string(),
-                    materialized: cr.materialized.clone(),
-                    duration_ms: start.elapsed().as_millis() as i64,
-                    message: String::new(),
-                });
+            match materialize_model(
+                &model.name,
+                &model.sql,
+                model.materialization,
+                schema,
+                &known_names,
+                is_new,
+                inc_config.as_ref(),
+                &ephemeral_models,
+                model.strategy,
+                model.updated_at.as_deref(),
+                model.check_cols.as_ref(),
+                model.unique_key.as_ref(),
+                src_names.as_ref(),
+                source_schema,
+            ) {
+                Ok(new_watermark) => {
+                    if let Some(hooks) = &model.post_hooks {
+                        if let Err(e) = execute_hooks(hooks, schema, &model.name) {
+                            let _ = execute_sql("ROLLBACK;");
+                            return Err(
+                                format!("Post-hook failed for {}: {}", model.name, e).into()
+                            );
+                        }
+                    }
+
+                    let checksum = checksums
+                        .get(&model.name)
+                        .cloned()
+                        .unwrap_or_default();
+                    let deployed_at = Utc::now().to_rfc3339();
+                    let strategy_str = inc_config.as_ref().map(|c| c.strategy.as_str());
+                    upsert_state(
+                        schema,
+                        &model.name,
+                        model.materialization.as_str(),
+                        &checksum,
+                        &deployed_at,
+                        strategy_str,
+                        new_watermark.as_deref(),
+                    )?;
+                    execute_sql("COMMIT;")?;
+                    results.push(RunResult {
+                        name: cr.name.clone(),
+                        action: action.to_string(),
+                        materialized: cr.materialized.clone(),
+                        duration_ms: start.elapsed().as_millis() as i64,
+                        message: String::new(),
+                    });
+                }
+                Err(e) => {
+                    let _ = execute_sql("ROLLBACK;");
+                    return Err(format!("Failed to materialize {}: {}", model.name, e).into());
+                }
             }
-            Err(e) => {
-                let _ = execute_sql("ROLLBACK;");
-                return Err(format!("Failed to materialize {}: {}", model.name, e).into());
-            }
-        }
+            Ok(())
+        })();
+
+        crate::set_active_session(prev_session);
+        let _ = trex_pool_client::destroy_session(session_id);
+        txn_result?;
     }
 
     Ok(results)

@@ -180,13 +180,32 @@ fn load_extensions_from_dir(conn: &Connection, dir: &str) -> (u32, u32) {
         }
     };
 
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let ext = path.extension().and_then(|e| e.to_str());
-        if ext != Some("trex") && ext != Some("duckdb_extension") {
-            continue;
-        }
+    // Collect and sort extension paths, ensuring pool.trex loads first
+    // (other extensions depend on the shared connection pool).
+    let mut ext_paths: Vec<_> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let ext = path.extension().and_then(|e| e.to_str()).map(|s| s.to_string());
+            if ext.as_deref() == Some("trex") || ext.as_deref() == Some("duckdb_extension") {
+                Some(path)
+            } else {
+                None
+            }
+        })
+        .collect();
 
+    ext_paths.sort_by(|a, b| {
+        let a_is_pool = a.file_stem().and_then(|s| s.to_str()) == Some("pool");
+        let b_is_pool = b.file_stem().and_then(|s| s.to_str()) == Some("pool");
+        match (a_is_pool, b_is_pool) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.cmp(b),
+        }
+    });
+
+    for path in &ext_paths {
         let path_str = path.display().to_string();
         if let Err(e) = validate_extension_path(&path_str) {
             pgrx::warning!("pg_trex: skipping {}: {}", path_str, e);

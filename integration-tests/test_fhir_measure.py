@@ -256,8 +256,8 @@ def _post_library_and_measure(client, dataset_id, elm_library, measure_url="http
 
 @pytest.fixture(scope="module")
 def fhir():
-    gp, fp, pp = alloc_ports()
-    node = Node([FHIR_EXT], gp, fp, pp)
+    gp, fp, pp, tp = alloc_ports()
+    node = Node([FHIR_EXT], gp, fp, pp, tp)
 
     fhir_port = _free_port()
     result = node.execute(f"SELECT trex_fhir_start('127.0.0.1', {fhir_port})")

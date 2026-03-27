@@ -46,13 +46,13 @@ def http(base_url, method, path, data=None):
 
 
 def main():
-    gp, fp, pp = alloc_ports()
+    gp, fp, pp, tp = alloc_ports()
     fhir_port = free_port()
     base = f"http://127.0.0.1:{fhir_port}"
 
     # ── Start server with both extensions ──
     print(f"Starting FHIR+CQL server on port {fhir_port}...")
-    node = Node([FHIR_EXT, CQL2ELM_EXT], gp, fp, pp)
+    node = Node([FHIR_EXT, CQL2ELM_EXT], gp, fp, pp, tp)
     node.execute(f"SELECT trex_fhir_start('127.0.0.1', {fhir_port})")
 
     deadline = time.time() + 30

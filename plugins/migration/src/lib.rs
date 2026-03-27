@@ -13,147 +13,82 @@ use siphasher::sip::SipHasher13;
 use std::{
     collections::HashMap,
     error::Error,
-    ffi::CString,
     fs,
     hash::{Hash, Hasher},
     path::Path,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Mutex, OnceLock,
-    },
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
-// ── Shared Connection (raw FFI, following hana pattern) ──────────────────────
+// ── Database access via shared trex_pool ─────────────────────────────────────
 
-struct SharedConn(ffi::duckdb_connection);
-
-unsafe impl Send for SharedConn {}
-unsafe impl Sync for SharedConn {}
-
-impl Drop for SharedConn {
-    fn drop(&mut self) {
-        unsafe {
-            if !self.0.is_null() {
-                ffi::duckdb_disconnect(&mut self.0);
-            }
-        }
-    }
-}
-
-static SHARED_CONNECTION: OnceLock<Mutex<SharedConn>> = OnceLock::new();
-
-/// Execute SQL using the shared connection, acquiring the lock internally.
+/// Execute SQL using the shared trex_pool via a one-off session.
 fn execute_sql(sql: &str) -> Result<(), Box<dyn Error>> {
-    let mutex = SHARED_CONNECTION
-        .get()
-        .ok_or("Migration extension not initialized")?;
-    let guard = mutex.lock().map_err(|_| "Connection mutex poisoned")?;
-    let conn = guard.0;
-    unsafe { execute_sql_raw(conn, sql) }
-}
-
-/// Execute SQL on a raw connection handle without acquiring any lock.
-/// Caller must ensure exclusive access to the connection.
-unsafe fn execute_sql_raw(conn: ffi::duckdb_connection, sql: &str) -> Result<(), Box<dyn Error>> {
-    let c_sql = CString::new(sql)?;
-    let mut result: ffi::duckdb_result = std::mem::zeroed();
-    let state = ffi::duckdb_query(conn, c_sql.as_ptr(), &mut result);
-
-    let ok = if state != ffi::duckdb_state_DuckDBSuccess {
-        let err_ptr = ffi::duckdb_result_error(&mut result);
-        let err_msg = if err_ptr.is_null() {
-            format!("SQL execution failed: {}", sql)
-        } else {
-            let c_str = std::ffi::CStr::from_ptr(err_ptr);
-            format!("{}", c_str.to_string_lossy())
-        };
-        Err(err_msg)
-    } else {
-        Ok(())
-    };
-
-    ffi::duckdb_destroy_result(&mut result);
-    ok?;
-
-    Ok(())
+    let sid = trex_pool_client::create_session()
+        .map_err(|e| -> Box<dyn Error> { e.into() })?;
+    let result = trex_pool_client::session_execute(sid, sql).map(|_| ());
+    let _ = trex_pool_client::destroy_session(sid);
+    result.map_err(|e| -> Box<dyn Error> { e.into() })
 }
 
 struct QueryRow {
     columns: Vec<String>,
 }
 
+/// Query SQL using a one-off session and return rows as string columns.
 fn query_sql(sql: &str) -> Result<Vec<QueryRow>, Box<dyn Error>> {
-    let mutex = SHARED_CONNECTION
-        .get()
-        .ok_or("Migration extension not initialized")?;
-    let guard = mutex.lock().map_err(|_| "Connection mutex poisoned")?;
-    let conn = guard.0;
+    let sid = trex_pool_client::create_session()
+        .map_err(|e| -> Box<dyn Error> { e.into() })?;
+    let result = trex_pool_client::session_execute(sid, sql);
+    let _ = trex_pool_client::destroy_session(sid);
+    let (_schema, batches) = result.map_err(|e| -> Box<dyn Error> { e.into() })?;
 
-    unsafe {
-        let c_sql = CString::new(sql)?;
-        let mut result: ffi::duckdb_result = std::mem::zeroed();
-        let state = ffi::duckdb_query(conn, c_sql.as_ptr(), &mut result);
-
-        if state != ffi::duckdb_state_DuckDBSuccess {
-            let err_ptr = ffi::duckdb_result_error(&mut result);
-            let err_msg = if err_ptr.is_null() {
-                format!("Query failed: {}", sql)
-            } else {
-                let c_str = std::ffi::CStr::from_ptr(err_ptr);
-                format!("{}", c_str.to_string_lossy())
-            };
-            ffi::duckdb_destroy_result(&mut result);
-            return Err(err_msg.into());
-        }
-
-        let row_count = ffi::duckdb_row_count(&mut result);
-        let col_count = ffi::duckdb_column_count(&mut result);
-        let mut rows = Vec::new();
-
-        for row_idx in 0..row_count {
+    let mut rows = Vec::new();
+    for batch in &batches {
+        for r in 0..batch.num_rows() {
             let mut columns = Vec::new();
-            for col_idx in 0..col_count {
-                let val = ffi::duckdb_value_varchar(&mut result, col_idx, row_idx);
-                let s = if val.is_null() {
+            for c in 0..batch.num_columns() {
+                let col = batch.column(c);
+                let val = if col.is_null(r) {
                     String::new()
                 } else {
-                    let c_str = std::ffi::CStr::from_ptr(val);
-                    let s = c_str.to_string_lossy().to_string();
-                    ffi::duckdb_free(val as *mut _);
-                    s
+                    arrow_value_to_string(col.as_ref(), r)
                 };
-                columns.push(s);
+                columns.push(val);
             }
             rows.push(QueryRow { columns });
         }
-
-        ffi::duckdb_destroy_result(&mut result);
-        Ok(rows)
     }
+    Ok(rows)
 }
 
-fn init_shared_connection(db: ffi::duckdb_database) -> Result<(), Box<dyn Error>> {
-    // OnceLock::get_or_init is atomic — if two threads race, only one closure runs
-    // and the other blocks until the value is set. This avoids the TOCTOU race of
-    // a manual get() + set() pattern.
-    SHARED_CONNECTION.get_or_init(|| unsafe {
-        let mut conn: ffi::duckdb_connection = std::ptr::null_mut();
-        let state = ffi::duckdb_connect(db, &mut conn);
-        if state != ffi::duckdb_state_DuckDBSuccess {
-            // Return a poisoned mutex with null — callers will fail on use
-            return Mutex::new(SharedConn(std::ptr::null_mut()));
+fn arrow_value_to_string(array: &dyn trex_pool_client::arrow_array::Array, row: usize) -> String {
+    use trex_pool_client::arrow_array::*;
+    use trex_pool_client::arrow_schema::DataType;
+
+    match array.data_type() {
+        DataType::Utf8 => {
+            array.as_any().downcast_ref::<StringArray>().unwrap().value(row).to_string()
         }
-        Mutex::new(SharedConn(conn))
-    });
-
-    // Verify the connection is valid
-    let mutex = SHARED_CONNECTION.get().unwrap();
-    let guard = mutex.lock().map_err(|_| "Connection mutex poisoned")?;
-    if guard.0.is_null() {
-        return Err("Failed to create shared connection".into());
+        DataType::LargeUtf8 => {
+            array.as_any().downcast_ref::<LargeStringArray>().unwrap().value(row).to_string()
+        }
+        DataType::Int32 => {
+            array.as_any().downcast_ref::<Int32Array>().unwrap().value(row).to_string()
+        }
+        DataType::Int64 => {
+            array.as_any().downcast_ref::<Int64Array>().unwrap().value(row).to_string()
+        }
+        DataType::UInt64 => {
+            array.as_any().downcast_ref::<UInt64Array>().unwrap().value(row).to_string()
+        }
+        DataType::Boolean => {
+            array.as_any().downcast_ref::<BooleanArray>().unwrap().value(row).to_string()
+        }
+        _ => format!("{:?}", array.data_type()),
     }
-    Ok(())
 }
+
+// init_shared_connection removed — using shared trex_pool
 
 // ── Migration File ───────────────────────────────────────────────────────────
 
@@ -300,67 +235,21 @@ fn query_applied_migrations() -> Result<Vec<AppliedMigration>, Box<dyn Error>> {
 }
 
 fn insert_migration_record(migration: &MigrationFile) -> Result<(), Box<dyn Error>> {
-    let mutex = SHARED_CONNECTION
-        .get()
-        .ok_or("Migration extension not initialized")?;
-    let guard = mutex.lock().map_err(|_| "Connection mutex poisoned")?;
-    let conn = guard.0;
-    unsafe { insert_migration_record_raw(conn, migration) }
+    let sql = build_insert_migration_sql(migration);
+    execute_sql(&sql)
 }
 
-/// Insert a migration record using a raw connection handle without acquiring any lock.
-/// Caller must ensure exclusive access to the connection.
-unsafe fn insert_migration_record_raw(
-    conn: ffi::duckdb_connection,
-    migration: &MigrationFile,
-) -> Result<(), Box<dyn Error>> {
-    let sql = CString::new(
-        "INSERT INTO refinery_schema_history (version, name, applied_on, checksum) \
-         VALUES ($1, $2, $3, $4);",
-    )?;
-    let mut stmt: ffi::duckdb_prepared_statement = std::ptr::null_mut();
-    let state = ffi::duckdb_prepare(conn, sql.as_ptr(), &mut stmt);
-    if state != ffi::duckdb_state_DuckDBSuccess {
-        let err = ffi::duckdb_prepare_error(stmt);
-        let msg = if err.is_null() {
-            "Failed to prepare insert statement".to_string()
-        } else {
-            std::ffi::CStr::from_ptr(err).to_string_lossy().to_string()
-        };
-        ffi::duckdb_destroy_prepare(&mut stmt);
-        return Err(msg.into());
-    }
-
-    ffi::duckdb_bind_int32(stmt, 1, migration.version);
-    let c_name = CString::new(migration.name.as_str())?;
-    ffi::duckdb_bind_varchar(stmt, 2, c_name.as_ptr());
+/// Build the INSERT SQL for a migration history record.
+fn build_insert_migration_sql(migration: &MigrationFile) -> String {
     let applied_on = Utc::now().to_rfc3339();
-    let c_applied_on = CString::new(applied_on.as_str())?;
-    ffi::duckdb_bind_varchar(stmt, 3, c_applied_on.as_ptr());
-    let checksum_str = migration.checksum.to_string();
-    let c_checksum = CString::new(checksum_str.as_str())?;
-    ffi::duckdb_bind_varchar(stmt, 4, c_checksum.as_ptr());
-
-    let mut result: ffi::duckdb_result = std::mem::zeroed();
-    let exec_state = ffi::duckdb_execute_prepared(stmt, &mut result);
-
-    let ok = if exec_state != ffi::duckdb_state_DuckDBSuccess {
-        let err_ptr = ffi::duckdb_result_error(&mut result);
-        let msg = if err_ptr.is_null() {
-            "Failed to insert migration record".to_string()
-        } else {
-            std::ffi::CStr::from_ptr(err_ptr).to_string_lossy().to_string()
-        };
-        Err(msg)
-    } else {
-        Ok(())
-    };
-
-    ffi::duckdb_destroy_result(&mut result);
-    ffi::duckdb_destroy_prepare(&mut stmt);
-    ok?;
-
-    Ok(())
+    format!(
+        "INSERT INTO refinery_schema_history (version, name, applied_on, checksum) \
+         VALUES ({}, '{}', '{}', '{}')",
+        migration.version,
+        migration.name.replace('\'', "''"),
+        applied_on.replace('\'', "''"),
+        migration.checksum,
+    )
 }
 
 // ── Verification ─────────────────────────────────────────────────────────────
@@ -418,54 +307,41 @@ fn execute_migrations(
         }
     }
 
-    // Hold the connection lock for each transaction to prevent interleaving
-    // from concurrent callers.
-    let mutex = SHARED_CONNECTION
-        .get()
-        .ok_or("Migration extension not initialized")?;
-
     for &idx in pending_indices {
         let migration = &discovered[idx];
 
-        let guard = mutex.lock().map_err(|_| "Connection mutex poisoned")?;
-        let conn = guard.0;
+        // Run migration + insert record in a single transaction via session
+        let insert_sql = build_insert_migration_sql(migration);
+        let sid = trex_pool_client::create_session()
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
 
-        unsafe {
-            execute_sql_raw(conn, "BEGIN TRANSACTION;")?;
-            match execute_sql_raw(conn, &migration.sql) {
-                Ok(_) => match insert_migration_record_raw(conn, migration) {
-                    Ok(_) => {
-                        execute_sql_raw(conn, "COMMIT;")?;
-                    }
-                    Err(e) => {
-                        let rollback_err = execute_sql_raw(conn, "ROLLBACK;").err();
-                        drop(guard);
-                        let mut msg = format!(
-                            "Migration V{}__{} failed to record: {}",
-                            migration.version, migration.name, e
-                        );
-                        if let Some(re) = rollback_err {
-                            msg.push_str(&format!("; rollback also failed: {}", re));
-                        }
-                        return Err(msg.into());
-                    }
-                },
-                Err(e) => {
-                    let rollback_err = execute_sql_raw(conn, "ROLLBACK;").err();
-                    drop(guard);
-                    let mut msg = format!(
-                        "Migration V{}__{} failed: {}",
-                        migration.version, migration.name, e
-                    );
-                    if let Some(re) = rollback_err {
-                        msg.push_str(&format!("; rollback also failed: {}", re));
-                    }
-                    return Err(msg.into());
-                }
+        let txn_result: Result<(), Box<dyn Error>> = (|| {
+            trex_pool_client::session_execute(sid, "BEGIN")
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+
+            if let Err(e) = trex_pool_client::session_execute(sid, &migration.sql) {
+                let _ = trex_pool_client::session_execute(sid, "ROLLBACK");
+                return Err(e.into());
             }
+
+            if let Err(e) = trex_pool_client::session_execute(sid, &insert_sql) {
+                let _ = trex_pool_client::session_execute(sid, "ROLLBACK");
+                return Err(e.into());
+            }
+
+            trex_pool_client::session_execute(sid, "COMMIT")
+                .map(|_| ())
+                .map_err(|e| -> Box<dyn Error> { e.into() })
+        })();
+
+        let _ = trex_pool_client::destroy_session(sid);
+
+        if let Err(e) = txn_result {
+            return Err(format!(
+                "Migration V{}__{} failed: {}", migration.version, migration.name, e
+            ).into());
         }
 
-        drop(guard);
         results.push(MigrationResult {
             version: migration.version,
             name: migration.name.clone(),
@@ -864,47 +740,18 @@ fn execute_migrations_in_schema(
     }
 
     if !is_postgres {
-        // Hold the connection lock for each transaction to prevent interleaving
-        // from concurrent callers.
-        let mutex = SHARED_CONNECTION
-            .get()
-            .ok_or("Migration extension not initialized")?;
-
         for &idx in pending_indices {
             let migration = &discovered[idx];
-            let guard = mutex.lock().map_err(|_| "Connection mutex poisoned")?;
-            let conn = guard.0;
 
-            unsafe {
-                execute_sql_raw(conn, "BEGIN TRANSACTION;")?;
-                match execute_sql_raw(conn, &migration.sql) {
-                    Ok(_) => match insert_migration_record_raw(conn, migration) {
-                        Ok(_) => {
-                            execute_sql_raw(conn, "COMMIT;")?;
-                        }
-                        Err(e) => {
-                            let _ = execute_sql_raw(conn, "ROLLBACK;");
-                            drop(guard);
-                            return Err(format!(
-                                "Migration V{}__{} failed to record: {}",
-                                migration.version, migration.name, e
-                            )
-                            .into());
-                        }
-                    },
-                    Err(e) => {
-                        let _ = execute_sql_raw(conn, "ROLLBACK;");
-                        drop(guard);
-                        return Err(format!(
-                            "Migration V{}__{} failed: {}",
-                            migration.version, migration.name, e
-                        )
-                        .into());
-                    }
-                }
-            }
+            let insert_sql = build_insert_migration_sql(migration);
+            trex_pool_client::execute_transaction(&[
+                &migration.sql,
+                &insert_sql,
+            ])
+            .map_err(|e| -> Box<dyn Error> {
+                format!("Migration V{}__{} failed: {}", migration.version, migration.name, e).into()
+            })?;
 
-            drop(guard);
             results.push(MigrationResult {
                 version: migration.version,
                 name: migration.name.clone(),
@@ -1219,8 +1066,7 @@ unsafe fn migration_init_c_api_internal(
 
     let db: ffi::duckdb_database = *(*access).get_database.unwrap()(info);
 
-    init_shared_connection(db)?;
-
+    // Pool already initialized by db plugin
     let connection = Connection::open_from_raw(db.cast())?;
     extension_entrypoint(connection)?;
 

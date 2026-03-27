@@ -17,7 +17,7 @@ import uuid
 
 import pytest
 
-from conftest import Node, FHIR_EXT, alloc_ports
+from conftest import Node, POOL_EXT, FHIR_EXT, alloc_ports
 
 # Pool sizes to test: single-threaded and multi-threaded.
 # Each parametrized value starts a separate FHIR server instance.
@@ -139,8 +139,9 @@ def fhir(request):
     os.environ["FHIR_POOL_SIZE"] = str(pool_size)
     os.environ["FHIR_USE_HOST_DB"] = "true" if db_mode == "host" else "false"
 
-    gp, fp, pp = alloc_ports()
-    node = Node([FHIR_EXT], gp, fp, pp)
+    gp, fp, pp, tp = alloc_ports()
+    exts = [POOL_EXT, FHIR_EXT] if db_mode == "host" else [FHIR_EXT]
+    node = Node(exts, gp, fp, pp, tp)
 
     fhir_db_dir = None
     fhir_port = _free_port()

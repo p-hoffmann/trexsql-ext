@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
-use duckdb::Connection;
 use etl_lib::error::{EtlResult, ErrorKind};
 use etl_lib::state::table::TableReplicationPhase;
 use etl_lib::store::cleanup::CleanupStore;
@@ -16,7 +15,6 @@ pub type SchemaCache = Arc<Mutex<HashMap<TableId, TableSchema>>>;
 /// State, schema, and cleanup store backed by trexsql metadata tables.
 #[derive(Clone)]
 pub struct DuckDbStore {
-    connection: Arc<Mutex<Connection>>,
     pipeline_name: String,
     inner: Arc<TokioMutex<Inner>>,
     schemas: SchemaCache,
@@ -32,12 +30,10 @@ struct Inner {
 
 impl DuckDbStore {
     pub fn new(
-        connection: Arc<Mutex<Connection>>,
         pipeline_name: String,
         schemas: SchemaCache,
     ) -> Self {
         Self {
-            connection,
             pipeline_name,
             inner: Arc::new(TokioMutex::new(Inner {
                 table_replication_states: BTreeMap::new(),
@@ -51,12 +47,10 @@ impl DuckDbStore {
     }
 
     fn ensure_tables(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let conn = self
-            .connection
-            .lock()
-            .map_err(|e| format!("lock: {}", e))?;
-
-        conn.execute_batch(
+        let session_id = trex_pool_client::create_session()
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+        let result = trex_pool_client::session_execute(
+            session_id,
             "CREATE TABLE IF NOT EXISTS _etl_checkpoints (
                 pipeline_name VARCHAR PRIMARY KEY,
                 lsn VARCHAR,
@@ -78,8 +72,9 @@ impl DuckDbStore {
                 ordinal_position INTEGER,
                 PRIMARY KEY (pipeline_name, source_schema, source_table, column_name)
             );",
-        )
-        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+        );
+        let _ = trex_pool_client::destroy_session(session_id);
+        result.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
 
         Ok(())
     }
@@ -89,11 +84,6 @@ impl DuckDbStore {
         source_table_id: TableId,
         destination_table_name: &str,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let conn = self
-            .connection
-            .lock()
-            .map_err(|e| format!("lock: {}", e))?;
-
         let sql = format!(
             "INSERT OR REPLACE INTO _etl_table_mappings (pipeline_name, source_table_id, destination_table_name) VALUES ('{}', {}, '{}')",
             self.pipeline_name.replace('\'', "''"),
@@ -101,8 +91,11 @@ impl DuckDbStore {
             destination_table_name.replace('\'', "''")
         );
 
-        conn.execute_batch(&sql)
-            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+        let session_id = trex_pool_client::create_session()
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+        let result = trex_pool_client::session_execute(session_id, &sql);
+        let _ = trex_pool_client::destroy_session(session_id);
+        result.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
 
         Ok(())
     }

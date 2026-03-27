@@ -23,6 +23,36 @@ jobs:
   # Layer 1: Build Jobs (all run in parallel)
   # ===========================================================================
 
+  build-pool:
+    name: "Build pool"
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            plugins/pool/target
+          key: pool-${{ runner.os }}-${{ hashFiles('plugins/pool/Cargo.lock') }}
+          restore-keys: pool-${{ runner.os }}-
+
+      - name: Build pool
+        run: make configure && make debug
+        working-directory: plugins/pool
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ext-pool
+          path: plugins/pool/build/debug/extension/pool/pool.trex
+          retention-days: 1
+
   build-rust-core:
     name: "Build db"
     runs-on: ubuntu-24.04
@@ -394,13 +424,18 @@ jobs:
   test-distributed:
     name: "Test distributed (tier1/2/3)"
     runs-on: ubuntu-24.04
-    needs: [build-rust-core]
+    needs: [build-pool, build-rust-core]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-pool
+          path: plugins/pool/build/debug/extension/pool/
 
       - uses: actions/download-artifact@v4
         with:
@@ -426,13 +461,18 @@ jobs:
   test-pgwire:
     name: "Test pgwire"
     runs-on: ubuntu-24.04
-    needs: [build-rust-core, build-pgwire]
+    needs: [build-pool, build-rust-core, build-pgwire]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-pool
+          path: plugins/pool/build/debug/extension/pool/
 
       - uses: actions/download-artifact@v4
         with:
@@ -459,13 +499,18 @@ jobs:
   test-atlas:
     name: "Test atlas"
     runs-on: ubuntu-24.04
-    needs: [build-atlas]
+    needs: [build-pool, build-atlas]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-pool
+          path: plugins/pool/build/debug/extension/pool/
 
       - uses: actions/download-artifact@v4
         with:
@@ -483,13 +528,18 @@ jobs:
   test-ai:
     name: "Test ai"
     runs-on: ubuntu-24.04
-    needs: [build-ai]
+    needs: [build-pool, build-ai]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-pool
+          path: plugins/pool/build/debug/extension/pool/
 
       - uses: actions/download-artifact@v4
         with:
@@ -507,7 +557,7 @@ jobs:
   test-chdb:
     name: "Test chdb"
     runs-on: ubuntu-24.04
-    needs: [build-rust-core, build-chdb]
+    needs: [build-pool, build-rust-core, build-chdb]
     steps:
       - uses: actions/checkout@v4
 
@@ -518,6 +568,11 @@ jobs:
       - name: Install chdb native library
         run: sudo bash ./install_chdb.sh
         working-directory: plugins/chdb
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-pool
+          path: plugins/pool/build/debug/extension/pool/
 
       - uses: actions/download-artifact@v4
         with:
@@ -544,7 +599,7 @@ jobs:
   test-trexas:
     name: "Test trexas"
     runs-on: ubuntu-24.04
-    needs: [build-rust-core, build-trexas]
+    needs: [build-pool, build-rust-core, build-trexas]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -553,6 +608,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-pool
+          path: plugins/pool/build/debug/extension/pool/
 
       - uses: actions/download-artifact@v4
         with:
@@ -579,13 +639,18 @@ jobs:
   test-tpm:
     name: "Test tpm"
     runs-on: ubuntu-24.04
-    needs: [build-tpm]
+    needs: [build-pool, build-tpm]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-pool
+          path: plugins/pool/build/debug/extension/pool/
 
       - uses: actions/download-artifact@v4
         with:
@@ -603,13 +668,18 @@ jobs:
   test-etl:
     name: "Test etl"
     runs-on: ubuntu-24.04
-    needs: [build-etl, build-rust-core]
+    needs: [build-pool, build-etl, build-rust-core]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-pool
+          path: plugins/pool/build/debug/extension/pool/
 
       - uses: actions/download-artifact@v4
         with:
@@ -636,13 +706,18 @@ jobs:
   test-migration:
     name: "Test migration"
     runs-on: ubuntu-24.04
-    needs: [build-migration]
+    needs: [build-pool, build-migration]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-pool
+          path: plugins/pool/build/debug/extension/pool/
 
       - uses: actions/download-artifact@v4
         with:
@@ -660,7 +735,7 @@ jobs:
   test-hana:
     name: "Test hana"
     runs-on: ubuntu-24.04
-    needs: [build-hana]
+    needs: [build-pool, build-hana]
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -671,6 +746,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-pool
+          path: plugins/pool/build/debug/extension/pool/
 
       - uses: actions/download-artifact@v4
         with:
@@ -709,7 +789,7 @@ jobs:
   test-pg-trex:
     name: "Test pg_trex"
     runs-on: ubuntu-24.04
-    needs: [build-rust-core, build-pg-trex]
+    needs: [build-pool, build-rust-core, build-pg-trex]
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -717,6 +797,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext-pool
+          path: extensions/
 
       - uses: actions/download-artifact@v4
         with:

@@ -18,8 +18,8 @@ def _sql_escape(s):
 
 @pytest.fixture(scope="module")
 def cql2elm_node():
-    gp, fp, pp = alloc_ports()
-    node = Node([CQL2ELM_EXT], gp, fp, pp)
+    gp, fp, pp, tp = alloc_ports()
+    node = Node([CQL2ELM_EXT], gp, fp, pp, tp)
     yield node
     node.close()
 

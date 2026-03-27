@@ -276,10 +276,7 @@ fn compute_schema_hash_duckdb(schema: &duckdb::arrow::datatypes::SchemaRef) -> u
 
 /// Publish `catalog:{table}` gossip keys for all local tables.
 pub fn advertise_local_tables() -> Result<usize, String> {
-    let pool = crate::connection_pool::get_pool()
-        .map_err(|e| format!("Connection pool not available: {e}"))?;
-
-    let table_data = pool.with_connection(|conn| {
+    let table_data = crate::local_connections::with_connection(|conn| {
         let mut stmt = conn
             .prepare("SHOW TABLES")
             .map_err(|e| format!("Failed to prepare SHOW TABLES: {e}"))?;
@@ -610,15 +607,9 @@ pub fn resolve_table_with_fallback(table_name: &str) -> Result<Vec<CatalogEntry>
         Err(e) => return Err(e),
     }
 
-    let pool = crate::connection_pool::get_pool()
-        .map_err(|_| format!(
-            "Table '{}' not found in distributed catalog or local database",
-            table_name,
-        ))?;
-
     let check_sql = format!("SELECT COUNT(*) FROM \"{}\"", escape_identifier(table_name));
     let table_name_owned = table_name.to_string();
-    match pool.with_connection(|conn| {
+    match crate::local_connections::with_connection(|conn| {
         let mut stmt = conn.prepare(&check_sql).map_err(|e| format!("prepare: {e}"))?;
         let batches: Vec<DuckRecordBatch> = stmt
             .query_arrow([])

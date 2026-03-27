@@ -11,7 +11,7 @@ use crate::query_executor::QueryExecutor;
 use crate::router::build_router;
 use crate::server_registry::{ServerHandle, ServerRegistry};
 use crate::state::AppState;
-use crate::{get_query_executor, init_fhir_meta};
+use crate::init_fhir_meta;
 
 const FHIR_PROFILES_RESOURCES: &str = include_str!("../data/profiles-resources.json");
 const FHIR_PROFILES_TYPES: &str = include_str!("../data/profiles-types.json");
@@ -51,12 +51,8 @@ pub fn start_fhir_server(host: String, port: u16, db_name: String, db_path: Stri
                 let pool_size = crate::executor_pool_size();
 
                 let executor = if use_host_db {
-                    eprintln!("[fhir] Using host DuckDB connection");
-                    get_query_executor().ok_or_else(|| {
-                        let msg = "No query executor available";
-                        eprintln!("[fhir] ERROR: {msg}");
-                        std::io::Error::new(std::io::ErrorKind::Other, msg)
-                    })?
+                    eprintln!("[fhir] Using shared trex_pool");
+                    Arc::new(QueryExecutor::from_pool())
                 } else {
                     eprintln!("[fhir] Opening standalone DuckDB at {db_path}");
                     Arc::new(QueryExecutor::new_standalone(&db_path, pool_size).map_err(|e| {

@@ -44,35 +44,55 @@ fn main() {
     if ext_path.is_dir() {
         match fs::read_dir(ext_path) {
             Ok(entries) => {
-                for entry in entries.flatten() {
-                    let path = match entry.path().canonicalize() {
-                        Ok(p) => p,
-                        Err(e) => {
-                            println!("Warning: could not resolve {}: {e}", entry.path().display());
-                            continue;
-                        }
-                    };
-                    // Reject symlinks pointing outside the extension directory
-                    if let Ok(canonical_ext) = ext_path.canonicalize() {
-                        if !path.starts_with(&canonical_ext) {
-                            println!("Warning: skipping {} (outside extension dir)", path.display());
-                            continue;
-                        }
-                    }
-                    let ext = path.extension().and_then(|e| e.to_str());
-                    if ext == Some("trex") || ext == Some("duckdb_extension") {
-                        let path_str = path.display().to_string();
-                        let safe_path = path_str.replace("'", "''");
-                        print!("Loading extension: {path_str} ... ");
-                        match conn.execute(&format!("LOAD '{safe_path}'"), []) {
-                            Ok(_) => {
-                                println!("ok");
-                                loaded += 1;
-                            }
+                // Collect and sort extension paths, ensuring pool.trex loads first
+                // (other extensions depend on the shared connection pool).
+                let mut ext_paths: Vec<_> = entries
+                    .flatten()
+                    .filter_map(|entry| {
+                        let path = match entry.path().canonicalize() {
+                            Ok(p) => p,
                             Err(e) => {
-                                println!("FAILED: {e}");
-                                failures += 1;
+                                println!("Warning: could not resolve {}: {e}", entry.path().display());
+                                return None;
                             }
+                        };
+                        if let Ok(canonical_ext) = ext_path.canonicalize() {
+                            if !path.starts_with(&canonical_ext) {
+                                println!("Warning: skipping {} (outside extension dir)", path.display());
+                                return None;
+                            }
+                        }
+                        let ext = path.extension().and_then(|e| e.to_str()).map(|s| s.to_string());
+                        if ext.as_deref() == Some("trex") || ext.as_deref() == Some("duckdb_extension") {
+                            Some(path)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                ext_paths.sort_by(|a, b| {
+                    let a_is_pool = a.file_stem().and_then(|s| s.to_str()) == Some("pool");
+                    let b_is_pool = b.file_stem().and_then(|s| s.to_str()) == Some("pool");
+                    match (a_is_pool, b_is_pool) {
+                        (true, false) => std::cmp::Ordering::Less,
+                        (false, true) => std::cmp::Ordering::Greater,
+                        _ => a.cmp(b),
+                    }
+                });
+
+                for path in &ext_paths {
+                    let path_str = path.display().to_string();
+                    let safe_path = path_str.replace("'", "''");
+                    print!("Loading extension: {path_str} ... ");
+                    match conn.execute(&format!("LOAD '{safe_path}'"), []) {
+                        Ok(_) => {
+                            println!("ok");
+                            loaded += 1;
+                        }
+                        Err(e) => {
+                            println!("FAILED: {e}");
+                            failures += 1;
                         }
                     }
                 }

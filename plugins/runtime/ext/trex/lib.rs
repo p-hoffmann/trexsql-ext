@@ -77,12 +77,8 @@ static TREX_DB: LazyLock<Arc<Mutex<Connection>>> = LazyLock::new(|| {
 
   if pool_size > 0 {
     let _ = connection::init_query_executor(&conn, pool_size);
-    if let Err(e) = connection::init_streaming_pool(&conn, pool_size) {
-      warn!(error = %e, "failed to initialize streaming pool");
-    }
   }
   let conn_arc = Arc::new(Mutex::new(conn));
-  let _ = connection::init_owned_connection(conn_arc.clone());
   conn_arc
 });
 static DB_CREDENTIALS: LazyLock<Arc<Mutex<String>>> = LazyLock::new(|| {
@@ -310,7 +306,7 @@ fn op_install_plugin(#[string] name: String, #[string] dir: String) {
   };
 
   let _ =
-    execute_query("memory".to_string(), "LOAD 'tpm'".to_string(), vec![], -1);
+    execute_query("memory".to_string(), "LOAD 'tpm'".to_string(), vec![], -1, 0);
 
   let sql = format!(
     "SELECT install_results FROM tpm_install('{}', '{}')",
@@ -318,7 +314,7 @@ fn op_install_plugin(#[string] name: String, #[string] dir: String) {
     install_dir.replace('\'', "''")
   );
 
-  match execute_query("memory".to_string(), sql, vec![], -1) {
+  match execute_query("memory".to_string(), sql, vec![], -1, 0) {
     Ok(json_str) => {
       match serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
         Ok(rows) if rows.is_empty() => {
@@ -562,6 +558,61 @@ fn record_batches_to_json(batches: &[RecordBatch]) -> String {
   serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_string())
 }
 
+/// Convert pool-client Arrow RecordBatches (arrow v57) to JSON string.
+fn pool_batches_to_json(batches: &[trex_pool_client::arrow_array::RecordBatch]) -> String {
+  use trex_pool_client::arrow_array::*;
+  use trex_pool_client::arrow_schema::DataType;
+
+  let mut rows: Vec<serde_json::Value> = Vec::new();
+  for batch in batches {
+    let schema = batch.schema();
+    for r in 0..batch.num_rows() {
+      let mut obj = serde_json::Map::new();
+      for (i, field) in schema.fields().iter().enumerate() {
+        let col = batch.column(i);
+        let v: serde_json::Value = if col.is_null(r) {
+          serde_json::Value::Null
+        } else {
+          match col.data_type() {
+            DataType::Utf8 => {
+              let a = col.as_any().downcast_ref::<StringArray>().unwrap();
+              serde_json::Value::String(a.value(r).to_string())
+            }
+            DataType::LargeUtf8 => {
+              let a = col.as_any().downcast_ref::<LargeStringArray>().unwrap();
+              serde_json::Value::String(a.value(r).to_string())
+            }
+            DataType::Int32 => {
+              let a = col.as_any().downcast_ref::<Int32Array>().unwrap();
+              serde_json::Value::from(a.value(r) as i64)
+            }
+            DataType::Int64 => {
+              let a = col.as_any().downcast_ref::<Int64Array>().unwrap();
+              serde_json::Value::from(a.value(r))
+            }
+            DataType::UInt64 => {
+              let a = col.as_any().downcast_ref::<UInt64Array>().unwrap();
+              serde_json::Value::from(a.value(r))
+            }
+            DataType::Float64 => {
+              let a = col.as_any().downcast_ref::<Float64Array>().unwrap();
+              serde_json::Value::from(a.value(r))
+            }
+            DataType::Boolean => {
+              let a = col.as_any().downcast_ref::<BooleanArray>().unwrap();
+              serde_json::Value::from(a.value(r))
+            }
+            _ => serde_json::Value::Null,
+          }
+        };
+        obj.insert(field.name().clone(), v);
+      }
+      rows.push(serde_json::Value::Object(obj));
+    }
+  }
+  serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_string())
+}
+
 /// Extract a human-readable message from a panic payload
 fn extract_panic_message(panic_err: Box<dyn std::any::Any + Send>) -> String {
   if let Some(s) = panic_err.downcast_ref::<&str>() {
@@ -578,7 +629,36 @@ fn execute_query(
   sql: String,
   params: Vec<TrexType>,
   worker_id: i32,
+  session_id: u64,
 ) -> Result<String, TrexError> {
+  // When a session is provided, route ALL queries through it (supports transactions).
+  if session_id > 0 {
+    let result = trex_pool_client::session_execute(session_id, &sql);
+    return match result {
+      Ok((_schema, batches)) => {
+        if batches.is_empty() {
+          Ok("[]".to_string())
+        } else {
+          Ok(pool_batches_to_json(&batches))
+        }
+      }
+      Err(e) => Err(TrexError::Generic(e)),
+    };
+  }
+
+  // Route write operations through a short-lived session.
+  if !trex_pool_client::is_result_returning_query(&sql) {
+    let sid = trex_pool_client::create_session()
+      .map_err(TrexError::Generic)?;
+    let result = trex_pool_client::session_execute(sid, &sql);
+    let _ = trex_pool_client::destroy_session(sid);
+    return match result {
+      Ok(_) => Ok("[]".to_string()),
+      Err(e) => Err(TrexError::Generic(e)),
+    };
+  }
+
+  // Reads go through the local executor (supports params + database switching)
   if let Some(executor) = connection::get_query_executor() {
     let params_json = serde_json::to_string(&params)
       .map_err(|e| TrexError::Generic(format!("param serialize: {e}")))?;
@@ -664,7 +744,7 @@ fn op_execute_query(
   #[string] sql: String,
   #[serde] params: Vec<TrexType>,
 ) -> Result<String, TrexError> {
-  execute_query(database, sql, params, -1)
+  execute_query(database, sql, params, -1, 0)
 }
 
 #[op2(fast)]
@@ -675,6 +755,32 @@ fn op_acquire_worker() -> u32 {
     .unwrap_or(0)
 }
 
+/// Create a pool session for transaction-safe query execution.
+/// Returns a session_id (> 0) that should be passed to op_execute_query_session.
+#[op2(fast)]
+#[number]
+fn op_create_session() -> Result<u64, TrexError> {
+  trex_pool_client::create_session().map_err(TrexError::Generic)
+}
+
+/// Destroy a pool session. Auto-rollback if a transaction is still active.
+#[op2(fast)]
+fn op_destroy_session(#[number] session_id: u64) {
+  let _ = trex_pool_client::destroy_session(session_id);
+}
+
+/// Execute a query using a pool session for transaction isolation.
+#[op2]
+#[string]
+fn op_execute_query_session(
+  #[number] session_id: u64,
+  #[string] database: String,
+  #[string] sql: String,
+  #[serde] params: Vec<TrexType>,
+) -> Result<String, TrexError> {
+  execute_query(database, sql, params, -1, session_id)
+}
+
 #[op2]
 #[string]
 fn op_execute_query_pinned(
@@ -683,7 +789,7 @@ fn op_execute_query_pinned(
   #[string] sql: String,
   #[serde] params: Vec<TrexType>,
 ) -> Result<String, TrexError> {
-  execute_query(database, sql, params, worker_id as i32)
+  execute_query(database, sql, params, worker_id as i32, 0)
 }
 
 pub struct QueryStreamResource {
@@ -975,6 +1081,9 @@ deno_core::extension!(
         op_install_plugin,
         op_execute_query,
         op_acquire_worker,
+        op_create_session,
+        op_destroy_session,
+        op_execute_query_session,
         op_execute_query_pinned,
         op_get_dbc,
         op_get_dbc2,
@@ -1424,7 +1533,7 @@ mod tests {
   #[serial]
   fn test_execute_query_simple_select() {
     let result =
-      execute_query("memory".into(), "SELECT 1 AS val".into(), vec![], -1);
+      execute_query("memory".into(), "SELECT 1 AS val".into(), vec![], -1, 0);
     let json_str = result.unwrap();
     let parsed: Vec<JsonValue> = serde_json::from_str(&json_str).unwrap();
     assert_eq!(parsed.len(), 1);
@@ -1434,7 +1543,7 @@ mod tests {
   #[test]
   #[serial]
   fn test_execute_query_empty_sql() {
-    let result = execute_query("memory".into(), "".into(), vec![], -1);
+    let result = execute_query("memory".into(), "".into(), vec![], -1, 0);
     assert_eq!(result.unwrap(), "[]");
   }
 
@@ -1447,12 +1556,14 @@ mod tests {
         .into(),
       vec![],
       -1,
+      0,
     );
     let _ = execute_query(
       "memory".into(),
       "INSERT INTO test_cq_tbl VALUES (1, 'Alice'), (2, 'Bob')".into(),
       vec![],
       -1,
+      0,
     );
     let result = execute_query(
       "memory".into(),
@@ -1470,6 +1581,7 @@ mod tests {
       "DROP TABLE IF EXISTS test_cq_tbl".into(),
       vec![],
       -1,
+      0,
     );
   }
 
@@ -1513,7 +1625,7 @@ mod tests {
   #[serial]
   fn test_execute_query_invalid_sql() {
     let result =
-      execute_query("memory".into(), "NOT VALID SQL".into(), vec![], -1);
+      execute_query("memory".into(), "NOT VALID SQL".into(), vec![], -1, 0);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(!err_msg.is_empty());
@@ -1544,6 +1656,7 @@ mod tests {
       .into(),
       vec![],
       -1,
+      0,
     );
     let _ = execute_query(
       "memory".into(),
@@ -1551,6 +1664,7 @@ mod tests {
         .into(),
       vec![],
       -1,
+      0,
     );
     let result = execute_query(
       "memory".into(),
@@ -1570,6 +1684,7 @@ mod tests {
       "DROP TABLE IF EXISTS test_types".into(),
       vec![],
       -1,
+      0,
     );
   }
 
