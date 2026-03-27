@@ -8,6 +8,10 @@ node_modules/
 
 # Extension source (extensions come from npm packages or CI artifacts)
 plugins/
+!plugins/devx/
+!plugins/web/
+!plugins/storage/
+!plugins/devx-ext/build/release/devx_ext.trex
 
 # Misc
 .claude/

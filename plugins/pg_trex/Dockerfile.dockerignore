@@ -6,6 +6,7 @@
 node_modules/
 **/node_modules/
 **/build/
+!plugins/devx-ext/build/release/devx_ext.trex
 integration-tests/
 specs/
 

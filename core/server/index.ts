@@ -394,6 +394,55 @@ app.all(`${BASE_PATH}/storage/v1/*`, express.raw({ type: "*/*", limit: "50mb" })
   }
 });
 
+// Supabase-compatible /pg/v1/* route — calls postgres-meta worker directly.
+app.all(`${BASE_PATH}/pg/v1/*`, express.json({ limit: "5mb" }), async (req, res) => {
+  const handler = fnmap["@trex/pg-meta/postgres-meta/functions"];
+  if (!handler) {
+    res.status(503).json({ error: "pg-meta plugin not loaded" });
+    return;
+  }
+  try {
+    const host = req.get("host") || "localhost";
+    const protocol = req.protocol || "http";
+    // Rewrite /trex/pg/v1/... to /pg-meta-api/...
+    const metaPath = req.originalUrl.replace(`${BASE_PATH}/pg/v1`, "/pg-meta-api");
+    const requestUrl = `${protocol}://${host}${metaPath}`;
+
+    const headers = new Headers();
+    for (const [key, val] of Object.entries(req.headers)) {
+      if (val) {
+        const lower = key.toLowerCase();
+        if (lower === "accept-encoding" || lower === "content-length") continue;
+        headers.set(key, Array.isArray(val) ? val.join(", ") : String(val));
+      }
+    }
+
+    let body: Blob | undefined;
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      const rawBody = JSON.stringify(req.body);
+      if (rawBody && rawBody !== "undefined") {
+        body = new Blob([rawBody], { type: "application/json" });
+        headers.set("content-type", "application/json");
+      }
+    }
+
+    const webReq = new globalThis.Request(requestUrl, { method: req.method, headers, body });
+    const workerResponse = await handler(webReq);
+
+    res.status(workerResponse.status);
+    workerResponse.headers.forEach((value: string, key: string) => {
+      const lower = key.toLowerCase();
+      if (lower === "content-encoding" || lower === "content-length" || lower === "transfer-encoding") return;
+      res.setHeader(key, value);
+    });
+    const responseBody = await workerResponse.text();
+    res.send(responseBody);
+  } catch (err) {
+    console.error("[pg-meta-proxy] Error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Run core schema migrations (SCHEMA_DIR) via direct PostgreSQL connection
 try {
   const schemaDir = Deno.env.get("SCHEMA_DIR");

@@ -293,6 +293,140 @@ fn start_cluster(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+/// Start services from SWARM_CONFIG after all extensions are loaded.
+/// The db.trex orchestrator runs during db.trex init (before other extensions
+/// like trexas.trex are loaded), so its LOAD calls fail. This function runs
+/// after pg_trex has loaded all extensions, making the service functions available.
+fn start_swarm_services(conn: &Connection, swarm_json: &str) {
+    // Minimal JSON parsing without serde — extract extension entries from
+    // the "extensions" array in the current node's config.
+    let swarm_node = std::env::var("SWARM_NODE").unwrap_or_default();
+    if swarm_node.is_empty() {
+        pgrx::warning!("pg_trex: SWARM_NODE not set, cannot start services");
+        return;
+    }
+
+    // Find the node's extensions array by locating "extensions":[...] after the node name
+    let node_key = format!("\"{}\"", swarm_node);
+    let node_start = match swarm_json.find(&node_key) {
+        Some(pos) => pos,
+        None => {
+            pgrx::warning!("pg_trex: node '{}' not found in SWARM_CONFIG", swarm_node);
+            return;
+        }
+    };
+
+    let after_node = &swarm_json[node_start..];
+    let ext_start = match after_node.find("\"extensions\"") {
+        Some(pos) => node_start + pos,
+        None => return, // no extensions configured
+    };
+
+    // Find the opening '[' after "extensions"
+    let rest = &swarm_json[ext_start..];
+    let arr_start = match rest.find('[') {
+        Some(pos) => ext_start + pos,
+        None => return,
+    };
+
+    // Find matching ']' (handle nesting)
+    let arr_bytes = swarm_json[arr_start..].as_bytes();
+    let mut depth = 0i32;
+    let mut arr_end = arr_start;
+    for (i, &b) in arr_bytes.iter().enumerate() {
+        match b {
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    arr_end = arr_start + i + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let extensions_str = &swarm_json[arr_start..arr_end];
+
+    // Split by {"name": to find individual extension entries
+    let mut pos = 0;
+    while let Some(name_start) = extensions_str[pos..].find("\"name\"") {
+        let abs = pos + name_start;
+        // Extract extension name
+        let after_name = &extensions_str[abs + 6..]; // skip "name"
+        let colon = match after_name.find(':') {
+            Some(p) => p,
+            None => break,
+        };
+        let after_colon = &after_name[colon + 1..];
+        let q1 = match after_colon.find('"') {
+            Some(p) => p,
+            None => break,
+        };
+        let after_q1 = &after_colon[q1 + 1..];
+        let q2 = match after_q1.find('"') {
+            Some(p) => p,
+            None => break,
+        };
+        let ext_name = &after_q1[..q2];
+
+        // Extract config object if present
+        let search_start = abs + 6 + colon + 1 + q1 + 1 + q2 + 1;
+        let remaining = &extensions_str[search_start..];
+
+        let config_json = if let Some(cfg_pos) = remaining.find("\"config\"") {
+            let after_cfg = &remaining[cfg_pos + 8..]; // skip "config"
+            if let Some(brace) = after_cfg.find('{') {
+                let obj_start_abs = search_start + cfg_pos + 8 + brace;
+                let obj_bytes = extensions_str[obj_start_abs..].as_bytes();
+                let mut d = 0i32;
+                let mut obj_end = obj_start_abs;
+                for (i, &b) in obj_bytes.iter().enumerate() {
+                    match b {
+                        b'{' => d += 1,
+                        b'}' => {
+                            d -= 1;
+                            if d == 0 {
+                                obj_end = obj_start_abs + i + 1;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Some(extensions_str[obj_start_abs..obj_end].to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Build and execute start SQL for known service extensions
+        if let Some(cfg) = &config_json {
+            let start_sql = match ext_name {
+                "trexas" => {
+                    let escaped = cfg.replace('\'', "''");
+                    Some(format!("SELECT trex_start_server_with_config('{escaped}')"))
+                }
+                _ => None,
+            };
+
+            if let Some(sql) = start_sql {
+                pgrx::log!("pg_trex: starting service '{}' from SWARM_CONFIG", ext_name);
+                if let Err(e) = conn.execute_batch(&sql) {
+                    pgrx::warning!("pg_trex: failed to start '{}': {}", ext_name, e);
+                } else {
+                    pgrx::log!("pg_trex: service '{}' started", ext_name);
+                }
+            }
+        }
+
+        pos = search_start;
+    }
+}
+
 /// Stop the cluster (called before re-starting with new addresses on SIGHUP).
 fn stop_cluster(conn: &Connection) {
     let extension_dir = guc::get_str(&guc::EXTENSION_DIR, "");
@@ -881,10 +1015,13 @@ pub fn worker_main(shmem: &pgrx::PgLwLock<PgTrexShmem>) {
     // Run schema migrations (via postgres_scanner) and pg_attach before cluster start
     run_migrations_and_attach(&conn);
 
-    // When SWARM_CONFIG is set, the db extension's init already started gossip
-    // and orchestrated services (including trexas). Skip the GUC-based startup.
-    if std::env::var("SWARM_CONFIG").is_ok() {
-        pgrx::log!("pg_trex: SWARM_CONFIG detected, skipping GUC-based cluster start");
+    // When SWARM_CONFIG is set, db.trex already started gossip during its init.
+    // However, the orchestrator may have failed to LOAD service extensions
+    // (trexas, etc.) because they weren't loaded yet at that point.
+    // Now that all extensions are loaded, re-run the service start commands.
+    if let Ok(swarm_json) = std::env::var("SWARM_CONFIG") {
+        pgrx::log!("pg_trex: SWARM_CONFIG detected, starting services post-load");
+        start_swarm_services(&conn, &swarm_json);
     } else if let Err(e) = start_cluster(&conn) {
         pgrx::warning!("pg_trex: trex_db_start failed (non-fatal): {}", e);
     }

@@ -151,8 +151,15 @@ RUN cd /usr/src && \
 # ── Application files ──
 WORKDIR /usr/src
 COPY core/ ./core/
+RUN cd /usr/src/core/server && npm install --omit=dev && \
+    cd /usr/src/core/event && npm install --omit=dev
 COPY functions/ ./functions/
 COPY --from=npm-deps /usr/src/node_modules/@trex ./plugins/@trex
+COPY plugins/devx/ ./plugins-dev/devx/
+COPY plugins/web/ ./plugins-dev/web/
+COPY plugins/storage/ ./plugins-dev/storage/
+COPY plugins/pg-meta/ ./plugins-dev/pg-meta/
+COPY plugins/devx-ext/build/release/devx_ext.trex /usr/lib/trexsql/extensions/devx_ext.trex
 
 # ── Pre-initialize the database to avoid the initdb→restart cycle.
 # The entrypoint detects existing PGDATA and skips initdb+init scripts,
@@ -163,6 +170,12 @@ ENV POSTGRES_HOST_AUTH_METHOD=trust
 RUN mkdir -p /var/lib/postgresql/data \
     && chown postgres:postgres /var/lib/postgresql/data \
     && su postgres -c "initdb -D /var/lib/postgresql/data --auth=trust --no-sync" \
+    && openssl req -new -x509 -days 3650 -nodes \
+         -out /var/lib/postgresql/data/server.crt \
+         -keyout /var/lib/postgresql/data/server.key \
+         -subj '/CN=localhost' \
+    && chown postgres:postgres /var/lib/postgresql/data/server.crt /var/lib/postgresql/data/server.key \
+    && chmod 600 /var/lib/postgresql/data/server.key \
     && su postgres -c "pg_ctl -D /var/lib/postgresql/data -o '-c shared_preload_libraries=pg_trex' -w start" \
     && su postgres -c "psql -c \"CREATE EXTENSION pg_trex;\"" \
     && su postgres -c "createdb testdb" \
