@@ -313,7 +313,9 @@ fn execute_migrations(
 
         match result {
             Ok(()) => {}
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(format!(
+                "Migration V{}__{} failed: {}", migration.version, migration.name, e
+            ).into()),
         }
 
         results.push(MigrationResult {
@@ -722,7 +724,9 @@ fn execute_migrations_in_schema(
                 &migration.sql,
                 &insert_sql,
             ])
-            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            .map_err(|e| -> Box<dyn Error> {
+                format!("Migration V{}__{} failed: {}", migration.version, migration.name, e).into()
+            })?;
 
             results.push(MigrationResult {
                 version: migration.version,
