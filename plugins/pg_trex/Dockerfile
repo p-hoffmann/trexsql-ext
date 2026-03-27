@@ -159,7 +159,6 @@ COPY plugins/devx/ ./plugins-dev/devx/
 COPY plugins/web/ ./plugins-dev/web/
 COPY plugins/storage/ ./plugins-dev/storage/
 COPY plugins/pg-meta/ ./plugins-dev/pg-meta/
-COPY plugins/devx-ext/build/release/devx_ext.trex /usr/lib/trexsql/extensions/devx_ext.trex
 
 # ── Pre-initialize the database to avoid the initdb→restart cycle.
 # The entrypoint detects existing PGDATA and skips initdb+init scripts,
