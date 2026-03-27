@@ -801,7 +801,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-pool
-          path: plugins/pool/build/debug/extension/pool/
+          path: extensions/
 
       - uses: actions/download-artifact@v4
         with:
