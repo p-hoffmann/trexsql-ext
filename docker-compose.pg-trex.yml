@@ -37,21 +37,21 @@ services:
       PLUGINS_DEV_PATH: /usr/src/plugins-dev
       SCHEMA_DIR: /usr/src/core/schema
       SWARM_CONFIG: >-
-        {"cluster_id":"local","nodes":{"local":{"gossip_addr":"0.0.0.0:7946","extensions":[{"name":"trexas","config":{"host":"0.0.0.0","port":8001,"main_service_path":"/usr/src/core/server","event_worker_path":"/usr/src/core/event","tls_port":443,"tls_cert_path":"/var/lib/postgresql/data/server.crt","tls_key_path":"/var/lib/postgresql/data/server.key"}},{"name":"flight","config":{"host":"0.0.0.0","port":50051}}]}}}
+        {"cluster_id":"local","nodes":{"local":{"gossip_addr":"0.0.0.0:7946","extensions":[{"name":"trexas","config":{"host":"0.0.0.0","port":8001,"main_service_path":"/usr/src/core/server","event_worker_path":"/usr/src/core/event","tls_port":443,"tls_cert_path":"/var/lib/postgresql/data/server.crt","tls_key_path":"/var/lib/postgresql/data/server.key"}}]}}}
       SWARM_NODE: local
       POSTGREST_HOST: postgrest
       POSTGREST_PORT: "3000"
     volumes:
       - pg-trex-data:/var/lib/postgresql/data
       - devx-workspaces:/var/devx-workspaces
-      - ./core/schema:/usr/src/core/schema
-      - ./core/server:/usr/src/core/server
-      - ./core/event:/usr/src/core/event
-      - ./functions:/usr/src/functions
-      - ./plugins/devx:/usr/src/plugins-dev/devx
-      - ./plugins/web:/usr/src/plugins-dev/web
-      - ./plugins/storage:/usr/src/plugins-dev/storage
-      - ./plugins/devx-ext/build/release/devx_ext.trex:/usr/lib/trexsql/extensions/devx_ext.trex
+    #   - ./core/schema:/usr/src/core/schema
+    #   - ./core/server:/usr/src/core/server
+    #   - ./core/event:/usr/src/core/event
+    #   - ./functions:/usr/src/functions
+    #   - ./plugins/devx:/usr/src/plugins-dev/devx
+    #   - ./plugins/web:/usr/src/plugins-dev/web
+    #   - ./plugins/storage:/usr/src/plugins-dev/storage
+    #   - ./plugins/devx-ext/build/release/devx_ext.trex:/usr/lib/trexsql/extensions/devx_ext.trex
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres && psql -U postgres -d testdb -tAc \"SELECT 1 FROM pg_roles WHERE rolname='authenticator' AND rolcanlogin\" | grep -q 1"]
       interval: 5s

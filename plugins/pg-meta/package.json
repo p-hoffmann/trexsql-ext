@@ -1,0 +1,23 @@
+{
+  "name": "@trex/pg-meta",
+  "version": "0.1.0",
+  "description": "Supabase postgres-meta as edge function",
+  "trex": {
+    "functions": {
+      "env": {
+        "_shared": {
+          "PG_META_DB_URL": "${DATABASE_URL}",
+          "CRYPTO_KEY": "${BETTER_AUTH_SECRET}"
+        }
+      },
+      "api": [
+        {
+          "source": "/pg-meta-api",
+          "function": "/postgres-meta/functions",
+          "imports": "/postgres-meta/deno.json",
+          "allowHostFsAccess": true
+        }
+      ]
+    }
+  }
+}

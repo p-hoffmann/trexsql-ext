@@ -104,15 +104,30 @@ RUN curl -sLO https://github.com/posit-dev/shinylive/releases/download/v${SHINYL
 RUN mkdir -p ./plugins && \
     ln -sf $(pwd)/node_modules/@trex ./plugins/@trex
 
-# Copy core (overridden by volume mount in development)
+# Copy core and install dependencies
 COPY core/ ./core/
+RUN cd /usr/src/core/server && npm install --omit=dev && \
+    cd /usr/src/core/event && npm install --omit=dev
 
-# Copy functions (overridden by volume mount in development)
+# Copy functions
 COPY functions/ ./functions/
+
+# Copy dev plugins and devx extension
+COPY plugins/devx/ ./plugins-dev/devx/
+COPY plugins/web/ ./plugins-dev/web/
+COPY plugins/storage/ ./plugins-dev/storage/
+COPY plugins/devx-ext/build/release/devx_ext.trex /usr/lib/trexsql/extensions/devx_ext.trex
+
+# Generate self-signed TLS cert for HTTPS
+RUN openssl req -new -x509 -days 3650 -nodes \
+      -out /usr/src/server.crt -keyout /usr/src/server.key \
+      -subj '/CN=localhost' && \
+    chown node:node /usr/src/server.crt /usr/src/server.key && \
+    chmod 644 /usr/src/server.crt && chmod 600 /usr/src/server.key
 
 ENV SCHEMA_DIR=/usr/src/core/schema
 ENV DUCKDB_EXTENSION_DIRECTORY=/usr/share/trexsql/extensions
 
-EXPOSE 8001
+EXPOSE 8001 8000
 USER node
 ENTRYPOINT ["trex"]

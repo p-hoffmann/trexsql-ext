@@ -74,7 +74,11 @@ export async function runAllPluginMigrations(): Promise<void> {
             files.push(entry.name);
           }
         }
-        files.sort();
+        files.sort((a, b) => {
+          const va = parseInt(a.match(/^V(\d+)/)?.[1] || "0", 10);
+          const vb = parseInt(b.match(/^V(\d+)/)?.[1] || "0", 10);
+          return va - vb;
+        });
 
         // Ensure schema exists
         await pool.query(`CREATE SCHEMA IF NOT EXISTS ${info.schema}`);
