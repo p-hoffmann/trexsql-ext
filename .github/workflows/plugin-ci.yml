@@ -360,6 +360,9 @@ jobs:
           echo "=== arm64 ==="
           ls -la extensions/arm64/ 2>/dev/null || echo "none"
 
+      - name: Ensure Dockerfile optional-copy dirs exist
+        run: mkdir -p plugins/devx-ext/build/release
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
