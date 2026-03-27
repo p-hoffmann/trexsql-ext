@@ -822,6 +822,17 @@ jobs:
     needs: [build-pool, build-rust-core, build-pg-trex, build-devx-ext]
     timeout-minutes: 25
     steps:
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive

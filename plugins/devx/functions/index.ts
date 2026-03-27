@@ -22,6 +22,18 @@ import { handleAttachmentRoutes } from "./routes/attachment_routes.ts";
 import { handleSecurityRoutes } from "./routes/security_routes.ts";
 import { handleVisualEditingRoutes } from "./routes/visual_editing_routes.ts";
 import { handleSupabaseRoutes } from "./routes/supabase_routes.ts";
+import { handleSkillsRoutes } from "./routes/skills_routes.ts";
+import { syncBuiltins } from "./skills/sync.ts";
+import {
+  parseSlashInput,
+  resolveCommand,
+  buildCommandOverride,
+  loadSkillMetadata,
+  matchSkillBySlug,
+  matchSkillsByIntent,
+  loadSkillBody,
+  enrichSkillContext,
+} from "./skills/resolver.ts";
 
 // Load bridge scripts lazily for injection into proxied HTML.
 // import.meta.url resolves to the Deno sandbox compile path where .js files
@@ -101,7 +113,8 @@ Deno.serve(async (req: Request) => {
       await handlePromptRoutes(path, method, req, userId, sql, corsHeaders) ||
       await handleAttachmentRoutes(path, method, req, userId, sql, corsHeaders) ||
       await handleSecurityRoutes(path, method, req, userId, sql, corsHeaders) ||
-      await handleVisualEditingRoutes(path, method, req, userId, sql, corsHeaders);
+      await handleVisualEditingRoutes(path, method, req, userId, sql, corsHeaders) ||
+      await handleSkillsRoutes(path, method, req, userId, sql, corsHeaders);
     if (routeResult) return routeResult;
 
     // --- Chat CRUD ---
@@ -269,6 +282,56 @@ Deno.serve(async (req: Request) => {
         augmentedPrompt = `[Selected components: ${compList}]\n${augmentedPrompt}`;
       }
 
+      // --- Skill/Command resolution ---
+      let skillContext = undefined;
+      let commandOverride = undefined;
+      const streamAppId = chatCheck.rows[0].app_id;
+
+      try {
+        // Sync built-in skills/commands/agents on first request
+        const pluginBase = new URL("../", import.meta.url).pathname.replace(/\/$/, "");
+        await syncBuiltins(pluginBase, sql);
+
+        const slashInput = parseSlashInput(prompt);
+        if (slashInput) {
+          // Try as command first, then as skill slug
+          const cmd = await resolveCommand(slashInput.slug, userId, sql);
+          if (cmd) {
+            commandOverride = buildCommandOverride(cmd, slashInput.args);
+          } else {
+            const skills = await loadSkillMetadata(userId, sql);
+            const matchedSkill = matchSkillBySlug(slashInput.slug, skills);
+            if (matchedSkill) {
+              let body = await loadSkillBody(matchedSkill.id, sql);
+              if (body) {
+                const wsPath = streamAppId ? getAppWorkspacePath(userId, streamAppId) : "";
+                body = await enrichSkillContext(matchedSkill.name, body, streamAppId, userId, wsPath, sql);
+                skillContext = body;
+                // If skill has a mode override and chat is not already in that mode
+                if (matchedSkill.mode === "agent") {
+                  commandOverride = { allowed_tools: matchedSkill.allowed_tools, model: null };
+                }
+              }
+            }
+          }
+        } else {
+          // No slash command — try intent matching
+          const skills = await loadSkillMetadata(userId, sql);
+          const matchedSkill = matchSkillsByIntent(prompt, skills);
+          if (matchedSkill) {
+            let body = await loadSkillBody(matchedSkill.id, sql);
+            if (body) {
+              const wsPath = streamAppId ? getAppWorkspacePath(userId, streamAppId) : "";
+              body = await enrichSkillContext(matchedSkill.name, body, streamAppId, userId, wsPath, sql);
+              skillContext = body;
+            }
+          }
+        }
+      } catch (err) {
+        console.error("[index] Skill/command resolution error:", err);
+        // Don't block the request — proceed without skill/command
+      }
+
       // Save user message
       await sql(
         `INSERT INTO devx.messages (chat_id, role, content) VALUES ($1, 'user', $2)`,
@@ -276,11 +339,14 @@ Deno.serve(async (req: Request) => {
       );
 
       // Build system prompt based on chat mode
-      const chatMode = chatCheck.rows[0].mode || "build";
+      let chatMode = chatCheck.rows[0].mode || "build";
+      // If a skill requires agent mode, override
+      if (skillContext && chatMode !== "agent" && chatMode !== "plan") {
+        chatMode = "agent";
+      }
 
       // Read AI_RULES.md from app workspace (like Dyad), fall back to DB settings
       let aiRules = settings.ai_rules || undefined;
-      const streamAppId = chatCheck.rows[0].app_id;
       if (streamAppId) {
         try {
           const wsPath = getAppWorkspacePath(userId, streamAppId);
@@ -392,6 +458,8 @@ Deno.serve(async (req: Request) => {
                 history,
                 send,
                 sqlFn: sql,
+                skillContext,
+                commandOverride,
               });
               fullContent = agentResult.content;
               if (agentResult.toolCalls.length > 0) savedToolCalls = agentResult.toolCalls;

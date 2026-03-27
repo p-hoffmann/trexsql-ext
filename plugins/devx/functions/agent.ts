@@ -13,6 +13,7 @@ import { buildToolSet, getToolByName } from "./tools/registry.ts";
 import type { AgentContext } from "./tools/types.ts";
 import { ensureWorkspace, ensureAppWorkspace } from "./tools/workspace.ts";
 import { mcpManager } from "./mcp_manager.ts";
+import { loadHooks, runPreToolHooks, runPostToolHooks, runStopHooks } from "./skills/hooks.ts";
 
 const DEFAULT_MAX_STEPS = 25;
 
@@ -132,9 +133,17 @@ export async function streamAgentChat({
   history,
   send,
   sqlFn,
+  // Skills/commands/hooks integration
+  skillContext,
+  commandOverride,
 }) {
   const mode = chatMode || "agent";
   const maxSteps = settings.max_steps || DEFAULT_MAX_STEPS;
+
+  // Apply model override from command if present
+  const effectiveSettings = commandOverride?.model
+    ? { ...settings, model: commandOverride.model }
+    : settings;
 
   // Ensure workspace exists — app-scoped if chat belongs to an app
   const workspacePath = appId
@@ -142,14 +151,14 @@ export async function streamAgentChat({
     : await ensureWorkspace(userId);
 
   // Read AI_RULES.md from app workspace (like Dyad), fall back to DB settings
-  let aiRules = settings.ai_rules || undefined;
+  let aiRules = effectiveSettings.ai_rules || undefined;
   if (appId) {
     try {
       aiRules = await Deno.readTextFile(`${workspacePath}/AI_RULES.md`);
     } catch { /* no AI_RULES.md, use DB setting or default */ }
   }
 
-  const systemPrompt = constructSystemPrompt(mode, aiRules);
+  const systemPrompt = constructSystemPrompt(mode, aiRules, skillContext);
 
   // Load user consent preferences
   const consentResult = await sqlFn(
@@ -162,7 +171,21 @@ export async function streamAgentChat({
   }
 
   // Build AI SDK tool set with consent-aware execution
-  const toolDefs = buildToolSet(mode, consents);
+  // Apply command/skill allowedTools filter if present
+  const allowedTools = commandOverride?.allowed_tools || null;
+  const toolDefs = buildToolSet(mode, consents, allowedTools);
+
+  // Load hooks for this user
+  let preToolHooks = [];
+  let postToolHooks = [];
+  try {
+    [preToolHooks, postToolHooks] = await Promise.all([
+      loadHooks(userId, "PreToolUse", sqlFn),
+      loadHooks(userId, "PostToolUse", sqlFn),
+    ]);
+  } catch (err) {
+    console.error("[agent] Failed to load hooks:", err);
+  }
   const aiTools = {};
 
   for (const [name, def] of Object.entries(toolDefs)) {
@@ -221,8 +244,22 @@ export async function streamAgentChat({
           },
         };
 
+        // Run PreToolUse hooks before consent
+        let effectiveArgs = args;
+        if (preToolHooks.length > 0) {
+          try {
+            const hookResult = await runPreToolHooks(name, args, preToolHooks);
+            if (!hookResult.allow) {
+              return `Tool call blocked by hook.`;
+            }
+            if (hookResult.modifiedArgs) effectiveArgs = hookResult.modifiedArgs;
+          } catch (err) {
+            console.error("[agent] PreToolUse hook error:", err);
+          }
+        }
+
         // Check consent
-        const consentPreview = toolDef.getConsentPreview ? toolDef.getConsentPreview(args) : JSON.stringify(args).slice(0, 200);
+        const consentPreview = toolDef.getConsentPreview ? toolDef.getConsentPreview(effectiveArgs) : JSON.stringify(effectiveArgs).slice(0, 200);
         const approved = await ctx.requireConsent({
           toolName: name,
           toolDescription: toolDef.description,
@@ -234,10 +271,20 @@ export async function streamAgentChat({
         }
 
         const callId = toolCallId;
-        send({ type: "tool_call_start", callId, name, args });
+        send({ type: "tool_call_start", callId, name, args: effectiveArgs });
         try {
-          const result = await toolDef.execute(args, ctx);
-          collectedToolCalls.push({ callId, name, args, result: result.slice(0, 500) });
+          let result = await toolDef.execute(effectiveArgs, ctx);
+
+          // Run PostToolUse hooks
+          if (postToolHooks.length > 0) {
+            try {
+              result = await runPostToolHooks(name, effectiveArgs, result, postToolHooks);
+            } catch (err) {
+              console.error("[agent] PostToolUse hook error:", err);
+            }
+          }
+
+          collectedToolCalls.push({ callId, name, args: effectiveArgs, result: result.slice(0, 500) });
           send({ type: "tool_call_end", callId, name, result: result.slice(0, 500) });
           const MAX_RESULT = 20_000;
           if (result.length > MAX_RESULT) {
@@ -246,7 +293,7 @@ export async function streamAgentChat({
           return result;
         } catch (err) {
           const errMsg = `Tool error: ${err.message || String(err)}`;
-          collectedToolCalls.push({ callId, name, args, result: errMsg, error: true });
+          collectedToolCalls.push({ callId, name, args: effectiveArgs, result: errMsg, error: true });
           send({ type: "tool_call_end", callId, name, result: errMsg, error: true });
           return errMsg;
         }
@@ -334,7 +381,7 @@ export async function streamAgentChat({
       content: m.content,
     }));
 
-  const model = createModel(settings);
+  const model = createModel(effectiveSettings);
   let fullContent = "";
   let stepCount = 0;
   const collectedToolCalls: { callId: string; name: string; args: any; result?: string; error?: boolean }[] = [];
@@ -392,6 +439,16 @@ export async function streamAgentChat({
       ? msg.replace(/:.+$/, "")
       : "An error occurred during agent execution";
     throw new Error(safeMsg);
+  }
+
+  // Run Stop hooks
+  try {
+    const stopHooks = await loadHooks(userId, "Stop", sqlFn);
+    if (stopHooks.length > 0) {
+      await runStopHooks(stopHooks, { chatId, content: fullContent });
+    }
+  } catch (err) {
+    console.error("[agent] Stop hooks error:", err);
   }
 
   return { content: fullContent, toolCalls: collectedToolCalls };

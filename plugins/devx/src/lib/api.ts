@@ -775,3 +775,79 @@ export async function applyVisualEdit(
 export async function setupVisualEditing(appId: string): Promise<{ success: boolean; error?: string }> {
   return apiFetch(`/apps/${appId}/setup-visual-editing`, { method: "POST" });
 }
+
+// Skills, Commands, Hooks, Agents
+
+import type { Skill, DevxCommand, DevxHook, DevxAgent, SlashCompletion } from "./types";
+
+export async function getSkills(): Promise<Skill[]> {
+  return apiFetch("/skills");
+}
+
+export async function createSkill(data: Partial<Skill>): Promise<Skill> {
+  return apiFetch("/skills", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function updateSkill(id: string, data: Partial<Skill>): Promise<Skill> {
+  return apiFetch(`/skills/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+}
+
+export async function deleteSkill(id: string): Promise<void> {
+  await apiFetch(`/skills/${id}`, { method: "DELETE" });
+}
+
+export async function importSkill(content: string): Promise<Skill> {
+  return apiFetch("/skills/import", { method: "POST", body: JSON.stringify({ content }) });
+}
+
+export async function getCommands(): Promise<DevxCommand[]> {
+  return apiFetch("/commands");
+}
+
+export async function createCommand(data: Partial<DevxCommand>): Promise<DevxCommand> {
+  return apiFetch("/commands", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function updateCommand(id: string, data: Partial<DevxCommand>): Promise<DevxCommand> {
+  return apiFetch(`/commands/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+}
+
+export async function deleteCommand(id: string): Promise<void> {
+  await apiFetch(`/commands/${id}`, { method: "DELETE" });
+}
+
+export async function getHooks(): Promise<DevxHook[]> {
+  return apiFetch("/hooks");
+}
+
+export async function createHook(data: Partial<DevxHook>): Promise<DevxHook> {
+  return apiFetch("/hooks", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function updateHook(id: string, data: Partial<DevxHook>): Promise<DevxHook> {
+  return apiFetch(`/hooks/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+}
+
+export async function deleteHook(id: string): Promise<void> {
+  await apiFetch(`/hooks/${id}`, { method: "DELETE" });
+}
+
+export async function getAgents(): Promise<DevxAgent[]> {
+  return apiFetch("/agents");
+}
+
+export async function createAgent(data: Partial<DevxAgent>): Promise<DevxAgent> {
+  return apiFetch("/agents", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function updateAgent(id: string, data: Partial<DevxAgent>): Promise<DevxAgent> {
+  return apiFetch(`/agents/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+}
+
+export async function deleteAgent(id: string): Promise<void> {
+  await apiFetch(`/agents/${id}`, { method: "DELETE" });
+}
+
+export async function getSlashCompletions(query: string): Promise<SlashCompletion[]> {
+  return apiFetch(`/slash-completions?q=${encodeURIComponent(query)}`);
+}

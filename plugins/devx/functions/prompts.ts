@@ -941,21 +941,26 @@ function wrapAiRules(aiRules, fallback) {
   return `<user_defined_ai_rules>\n${rules}\n</user_defined_ai_rules>`;
 }
 
-export function constructSystemPrompt(mode, aiRules) {
+export function constructSystemPrompt(mode, aiRules, skillContext) {
+  let prompt;
+
   if (mode === "plan") {
-    return constructPlanModePrompt(aiRules);
+    prompt = constructPlanModePrompt(aiRules);
+  } else if (mode === "agent") {
+    prompt = constructLocalAgentPrompt(aiRules);
+  } else if (mode === "ask") {
+    prompt = ASK_MODE_SYSTEM_PROMPT.replace("[[AI_RULES]]", wrapAiRules(aiRules, DEFAULT_AI_RULES));
+  } else {
+    // Default: build mode
+    prompt = BUILD_SYSTEM_PROMPT.replace("[[AI_RULES]]", wrapAiRules(aiRules, DEFAULT_AI_RULES));
   }
 
-  if (mode === "agent") {
-    return constructLocalAgentPrompt(aiRules);
+  // Inject skill context if a skill was activated
+  if (skillContext) {
+    prompt += `\n\n<active_skill>\n${skillContext}\n</active_skill>`;
   }
 
-  if (mode === "ask") {
-    return ASK_MODE_SYSTEM_PROMPT.replace("[[AI_RULES]]", wrapAiRules(aiRules, DEFAULT_AI_RULES));
-  }
-
-  // Default: build mode
-  return BUILD_SYSTEM_PROMPT.replace("[[AI_RULES]]", wrapAiRules(aiRules, DEFAULT_AI_RULES));
+  return prompt;
 }
 
 export function constructLocalAgentPrompt(aiRules, options) {

@@ -284,6 +284,85 @@ export interface BuildAction {
   error?: string;
 }
 
+// Skills, Commands, Hooks, Agents
+
+export interface Skill {
+  id: string;
+  name: string;
+  slug: string | null;
+  description: string;
+  version: string;
+  body: string;
+  allowed_tools: string[] | null;
+  mode: string | null;
+  is_builtin: boolean;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DevxCommand {
+  id: string;
+  slug: string;
+  description: string | null;
+  body: string;
+  allowed_tools: string[] | null;
+  model: string | null;
+  argument_hint: string | null;
+  is_builtin: boolean;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type HookEvent = "PreToolUse" | "PostToolUse" | "Stop";
+
+export interface DevxHook {
+  id: string;
+  event: HookEvent;
+  matcher: string | null;
+  hook_type: "command" | "prompt";
+  command: string | null;
+  prompt: string | null;
+  timeout_ms: number;
+  is_builtin: boolean;
+  enabled: boolean;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface DevxAgent {
+  id: string;
+  name: string;
+  description: string;
+  body: string;
+  allowed_tools: string[] | null;
+  model: string;
+  max_steps: number;
+  is_builtin: boolean;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SubagentRun {
+  id: string;
+  agent_name: string;
+  task: string;
+  status: "running" | "completed" | "failed";
+  result: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+/** Item returned by /slash-completions endpoint */
+export interface SlashCompletion {
+  slug: string;
+  description: string | null;
+  type: "skill" | "command";
+  argument_hint?: string | null;
+}
+
 // Prompt templates
 export interface PromptTemplate {
   id: string;
