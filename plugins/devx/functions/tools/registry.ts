@@ -48,6 +48,8 @@ import {
   kbListReposTool, kbInitTool, kbUpdateTool, kbReadTool, kbSearchTool,
   kbListFilesTool, kbOverviewTool, kbFindSymbolsTool,
 } from "./knowledge_base.ts";
+// Subagents
+import { spawnAgentTool } from "./spawn_agent.ts";
 
 /** All registered tools */
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
@@ -111,17 +113,24 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   kbListFilesTool,
   kbOverviewTool,
   kbFindSymbolsTool,
+  // Subagents
+  spawnAgentTool,
 ];
 
 /**
- * Build a tool set filtered by chat mode and user consent preferences.
+ * Build a tool set filtered by chat mode, user consent, and optional allowlist.
  * Returns an object suitable for the AI SDK's `tools` parameter.
+ *
+ * @param allowedTools - Optional allowlist from a command or agent definition.
+ *   When provided, only tools in this list are included (after mode filtering).
  */
 export function buildToolSet(
   mode: string,
   consents: Record<string, string>,
+  allowedTools?: string[] | null,
 ) {
   const tools: Record<string, any> = {};
+  const allowSet = allowedTools ? new Set(allowedTools) : null;
 
   for (const tool of TOOL_DEFINITIONS) {
     // Skip tools the user has set to "never"
@@ -143,6 +152,9 @@ export function buildToolSet(
 
     // Build mode doesn't use tools (uses raw streaming)
     if (mode === "build") continue;
+
+    // Apply command/agent allowlist filter
+    if (allowSet && !allowSet.has(tool.name)) continue;
 
     tools[tool.name] = {
       description: tool.description,

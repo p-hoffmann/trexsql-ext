@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Send, Square, Paperclip, X, BarChart3, Paintbrush, Code2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ChatModeSelector } from "./ChatModeSelector";
@@ -6,8 +6,10 @@ import { TodoList } from "./TodoList";
 import { AgentConsentBanner } from "./AgentConsentBanner";
 import { TokenBar } from "./TokenBar";
 import { VoiceInput } from "./VoiceInput";
+import { SlashCommandPopup } from "./SlashCommandPopup";
 import { useTokenCount } from "@/hooks/useTokenCount";
-import type { ChatMode, AgentTodo, ConsentRequest, Message } from "@/lib/types";
+import { useSlashCommands } from "@/hooks/useSlashCommands";
+import type { ChatMode, AgentTodo, ConsentRequest, Message, SlashCompletion } from "@/lib/types";
 import type { VisualEditContext, SelectedComponent } from "@/lib/visual-editing-types";
 
 interface AttachmentFile {
@@ -61,6 +63,8 @@ export function ChatInput({
   const [input, setInput] = useState("");
   const [showTokenBar, setShowTokenBar] = useState(false);
   const [attachments, setAttachments] = useState<AttachmentFile[]>([]);
+  const [showSlash, setShowSlash] = useState(false);
+  const slash = useSlashCommands();
 
   const tokenCounts = useTokenCount(
     messages,
@@ -102,8 +106,37 @@ export function ChatInput({
     setAttachments([]);
   };
 
+  // Slash command detection on input change
+  const handleInputChange = useCallback((value: string) => {
+    setInput(value);
+    // Detect /slash at start of input
+    const match = value.match(/^\/([a-zA-Z0-9-]*)$/);
+    if (match) {
+      setShowSlash(true);
+      slash.search(match[1]);
+    } else {
+      setShowSlash(false);
+    }
+  }, [slash]);
+
+  const handleSlashSelect = useCallback((item: SlashCompletion) => {
+    setInput(`/${item.slug} `);
+    setShowSlash(false);
+    textareaRef.current?.focus();
+  }, []);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Let slash popup handle navigation keys when visible
+    if (showSlash && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Tab")) {
+      return; // SlashCommandPopup handles these
+    }
+    if (showSlash && e.key === "Escape") {
+      e.preventDefault();
+      setShowSlash(false);
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
+      if (showSlash) return; // Let popup handle Enter
       e.preventDefault();
       if (streaming) return;
       handleSubmit();
@@ -212,11 +245,18 @@ export function ChatInput({
           </div>
         )}
 
-        <div className="flex items-end gap-2 rounded-lg border bg-muted/50 p-2">
+        <div className="relative flex items-end gap-2 rounded-lg border bg-muted/50 p-2">
+          <SlashCommandPopup
+            items={slash.items}
+            query={input.replace(/^\//, "")}
+            onSelect={handleSlashSelect}
+            onDismiss={() => setShowSlash(false)}
+            visible={showSlash}
+          />
           <textarea
             ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => handleInputChange(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Send a message..."
             disabled={disabled}

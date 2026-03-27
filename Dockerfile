@@ -112,11 +112,13 @@ RUN cd /usr/src/core/server && npm install --omit=dev && \
 # Copy functions
 COPY functions/ ./functions/
 
-# Copy dev plugins and devx extension
+# Copy dev plugins
 COPY plugins/devx/ ./plugins-dev/devx/
 COPY plugins/web/ ./plugins-dev/web/
 COPY plugins/storage/ ./plugins-dev/storage/
-COPY plugins/devx-ext/build/release/devx_ext.trex /usr/lib/trexsql/extensions/devx_ext.trex
+
+# Copy locally-built devx extension if present (no-op in CI where it comes via extensions/)
+COPY plugins/devx-ext/build/release/devx_ext.tre[x] /usr/lib/trexsql/extensions/
 
 # Generate self-signed TLS cert for HTTPS
 RUN openssl req -new -x509 -days 3650 -nodes \
