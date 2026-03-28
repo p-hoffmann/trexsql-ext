@@ -1246,6 +1246,134 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // DELETE /apps/:id/files/* - delete file or directory
+    const appFileDeleteMatch = path.match(/\/apps\/([^/]+)\/files\/(.+)$/);
+    if (appFileDeleteMatch && method === "DELETE") {
+      const appId = appFileDeleteMatch[1];
+      const filePath = decodeURIComponent(appFileDeleteMatch[2]);
+      const appCheck = await sql(`SELECT id FROM devx.apps WHERE id = $1 AND user_id = $2`, [appId, userId]);
+      if (appCheck.rows.length === 0) {
+        return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
+      }
+      try {
+        const wsPath = getAppWorkspacePath(userId, appId);
+        const fullPath = safeJoin(wsPath, filePath);
+        await Deno.remove(fullPath, { recursive: true });
+        return Response.json({ ok: true }, { headers: corsHeaders });
+      } catch (err) {
+        return Response.json({ error: err.message }, { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // POST /apps/:id/files-rename - rename/move a file
+    const filesRenameMatch = path.match(/\/apps\/([^/]+)\/files-rename$/);
+    if (filesRenameMatch && method === "POST") {
+      const appId = filesRenameMatch[1];
+      const appCheck = await sql(`SELECT id FROM devx.apps WHERE id = $1 AND user_id = $2`, [appId, userId]);
+      if (appCheck.rows.length === 0) {
+        return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
+      }
+      const body = await req.json();
+      if (!body.from || !body.to) {
+        return Response.json({ error: "from and to required" }, { status: 400, headers: corsHeaders });
+      }
+      try {
+        const wsPath = getAppWorkspacePath(userId, appId);
+        const fromPath = safeJoin(wsPath, body.from);
+        const toPath = safeJoin(wsPath, body.to);
+        // Ensure target parent directory exists
+        const toDir = body.to.includes("/") ? body.to.substring(0, body.to.lastIndexOf("/")) : null;
+        if (toDir) await Deno.mkdir(`${wsPath}/${toDir}`, { recursive: true });
+        await Deno.rename(fromPath, toPath);
+        return Response.json({ ok: true }, { headers: corsHeaders });
+      } catch (err) {
+        return Response.json({ error: err.message }, { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // POST /apps/:id/files-mkdir - create directory
+    const filesMkdirMatch = path.match(/\/apps\/([^/]+)\/files-mkdir$/);
+    if (filesMkdirMatch && method === "POST") {
+      const appId = filesMkdirMatch[1];
+      const appCheck = await sql(`SELECT id FROM devx.apps WHERE id = $1 AND user_id = $2`, [appId, userId]);
+      if (appCheck.rows.length === 0) {
+        return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
+      }
+      const body = await req.json();
+      if (!body.path) {
+        return Response.json({ error: "path required" }, { status: 400, headers: corsHeaders });
+      }
+      try {
+        const wsPath = getAppWorkspacePath(userId, appId);
+        const fullPath = safeJoin(wsPath, body.path);
+        await Deno.mkdir(fullPath, { recursive: true });
+        return Response.json({ ok: true }, { headers: corsHeaders });
+      } catch (err) {
+        return Response.json({ error: err.message }, { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // POST /apps/:id/search - search file contents
+    const searchMatch = path.match(/\/apps\/([^/]+)\/search$/);
+    if (searchMatch && method === "POST") {
+      const appId = searchMatch[1];
+      const appCheck = await sql(`SELECT id FROM devx.apps WHERE id = $1 AND user_id = $2`, [appId, userId]);
+      if (appCheck.rows.length === 0) {
+        return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
+      }
+      const body = await req.json();
+      const query = body.query || "";
+      if (!query) {
+        return Response.json({ results: [] }, { headers: corsHeaders });
+      }
+      try {
+        const wsPath = getAppWorkspacePath(userId, appId);
+        const results = [];
+        const BINARY_EXTS = new Set(["png","jpg","jpeg","gif","svg","ico","woff","woff2","ttf","eot","mp3","mp4","webm","webp","pdf","zip","tar","gz"]);
+
+        async function searchDir(dir, depth = 0) {
+          if (depth > 5 || results.length >= 200) return;
+          try {
+            for await (const entry of Deno.readDir(dir)) {
+              if (results.length >= 200) break;
+              if (entry.name.startsWith(".")) continue;
+              const fullPath = `${dir}/${entry.name}`;
+              if (entry.isDirectory) {
+                if (EXCLUDED_DIRS.has(entry.name)) continue;
+                await searchDir(fullPath, depth + 1);
+              } else if (entry.isFile) {
+                const ext = entry.name.split(".").pop()?.toLowerCase() || "";
+                if (BINARY_EXTS.has(ext)) continue;
+                try {
+                  const content = await Deno.readTextFile(fullPath);
+                  const lines = content.split("\n");
+                  const lowerQuery = query.toLowerCase();
+                  for (let i = 0; i < lines.length && results.length < 200; i++) {
+                    const col = lines[i].toLowerCase().indexOf(lowerQuery);
+                    if (col !== -1) {
+                      results.push({
+                        file: fullPath.replace(wsPath + "/", ""),
+                        line: i + 1,
+                        col: col + 1,
+                        text: lines[i].trim().slice(0, 200),
+                        before: i > 0 ? lines[i - 1].trim().slice(0, 100) : null,
+                        after: i < lines.length - 1 ? lines[i + 1].trim().slice(0, 100) : null,
+                      });
+                    }
+                  }
+                } catch { /* skip unreadable files */ }
+              }
+            }
+          } catch { /* skip unreadable dirs */ }
+        }
+
+        await searchDir(wsPath);
+        return Response.json({ results }, { headers: corsHeaders });
+      } catch (err) {
+        return Response.json({ error: err.message }, { status: 500, headers: corsHeaders });
+      }
+    }
+
     // --- Dev Server ---
 
     // POST /apps/:id/server/start

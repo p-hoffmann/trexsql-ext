@@ -114,5 +114,56 @@ export function useFileTree(appId: string | null) {
     }
   }, [appId, selectedFile]);
 
-  return { tree, loading, selectedFile, fileContent, expanded, selectFile, toggleDir, refresh, reloadSelectedFile, saveFile };
+  const createFile = useCallback(
+    async (filePath: string) => {
+      if (!appId) return;
+      await api.createFile(appId, filePath);
+      await refresh();
+      await selectFile(filePath);
+    },
+    [appId, refresh, selectFile],
+  );
+
+  const deleteFile = useCallback(
+    async (filePath: string) => {
+      if (!appId) return;
+      await api.deleteFile(appId, filePath);
+      contentCache.current.delete(filePath);
+      if (selectedFile === filePath) {
+        setSelectedFile(null);
+        setFileContent(null);
+      }
+      await refresh();
+    },
+    [appId, refresh, selectedFile],
+  );
+
+  const renameFile = useCallback(
+    async (from: string, to: string) => {
+      if (!appId) return;
+      await api.renameFile(appId, from, to);
+      contentCache.current.delete(from);
+      if (selectedFile === from) {
+        setSelectedFile(to);
+      }
+      await refresh();
+    },
+    [appId, refresh, selectedFile],
+  );
+
+  const createDir = useCallback(
+    async (dirPath: string) => {
+      if (!appId) return;
+      await api.createDir(appId, dirPath);
+      await refresh();
+      setExpanded((prev) => new Set([...prev, dirPath]));
+    },
+    [appId, refresh],
+  );
+
+  return {
+    tree, loading, selectedFile, fileContent, expanded,
+    selectFile, toggleDir, refresh, reloadSelectedFile, saveFile,
+    createFile, deleteFile, renameFile, createDir,
+  };
 }

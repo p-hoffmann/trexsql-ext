@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ClipboardList, CheckCircle2, Circle, Play, Bot, Loader2, Check } from "lucide-react";
+import { ClipboardList, CheckCircle2, Circle, Play, Bot, Loader2, Check, X, ThumbsUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
@@ -56,7 +56,7 @@ function PlanMarkdown({ content }: { content: string }) {
         components={{
           pre({ children, ...props }) {
             return (
-              <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs" {...props}>
+              <pre className="overflow-x-auto rounded-md bg-zinc-100 dark:bg-zinc-900 p-3 text-xs text-zinc-800 dark:text-zinc-200" {...props}>
                 {children}
               </pre>
             );
@@ -65,7 +65,7 @@ function PlanMarkdown({ content }: { content: string }) {
             const isInline = !className;
             if (isInline) {
               return (
-                <code className="rounded bg-muted px-1 py-0.5 text-xs" {...props}>
+                <code className="rounded bg-zinc-100 dark:bg-zinc-800 px-1 py-0.5 text-xs text-zinc-800 dark:text-zinc-200" {...props}>
                   {children}
                 </code>
               );
@@ -164,6 +164,24 @@ export function PlanTab({ appId, livePlanContent, onFixPrompt }: PlanTabProps) {
     }
   };
 
+  const acceptPlan = async (plan: Plan) => {
+    setMarkingId(plan.id);
+    try {
+      await api.updatePlanStatus(plan.id, "accepted");
+      setPlans((prev) => prev.map((p) => (p.id === plan.id ? { ...p, status: "accepted" } : p)));
+    } catch { /* ignore */ }
+    finally { setMarkingId(null); }
+  };
+
+  const rejectPlan = async (plan: Plan) => {
+    setMarkingId(plan.id);
+    try {
+      await api.updatePlanStatus(plan.id, "rejected");
+      setPlans((prev) => prev.map((p) => (p.id === plan.id ? { ...p, status: "rejected" } : p)));
+    } catch { /* ignore */ }
+    finally { setMarkingId(null); }
+  };
+
   const implementInChat = (plan: Plan) => {
     const title = planTitle(plan);
     onFixPrompt?.(`Implement the following plan: "${title}"\n\n${plan.content}`);
@@ -223,8 +241,33 @@ export function PlanTab({ appId, livePlanContent, onFixPrompt }: PlanTabProps) {
             </AccordionTrigger>
             <AccordionContent>
               <div className="px-4 pb-3">
-                {/* Action buttons for non-implemented plans */}
-                {plan.status !== "implemented" && plan.status !== "draft" && (
+                {/* Draft: Accept/Reject buttons */}
+                {plan.status === "draft" && (
+                  <div className="flex items-center gap-2 mb-3 pb-3 border-b">
+                    <Button
+                      size="sm"
+                      variant="default"
+                      className="h-7 text-xs gap-1.5"
+                      onClick={() => acceptPlan(plan)}
+                      disabled={markingId === plan.id}
+                    >
+                      <ThumbsUp className="h-3 w-3" />
+                      Accept Plan
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs gap-1.5 text-destructive"
+                      onClick={() => rejectPlan(plan)}
+                      disabled={markingId === plan.id}
+                    >
+                      <X className="h-3 w-3" />
+                      Reject
+                    </Button>
+                  </div>
+                )}
+                {/* Accepted: Implement/Mark done buttons */}
+                {plan.status === "accepted" && (
                   <div className="flex items-center gap-2 mb-3 pb-3 border-b">
                     {onFixPrompt && (
                       <>

@@ -12,14 +12,41 @@ import { getAppWorkspacePath } from "./workspace.ts";
 const POLL_INTERVAL_MS = 500;
 const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
-/** Write plan content to specs/plan.md in the app workspace (best-effort). */
+/** Generate a short slug from plan content (first heading or first line) */
+function planSlug(content: string): string {
+  // Try to extract first heading
+  const headingMatch = content.match(/^#+\s+(.+)$/m);
+  const title = headingMatch ? headingMatch[1] : content.split("\n")[0] || "plan";
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+/** Write plan content to specs/NN-title.md in the app workspace (best-effort). */
 async function writePlanToWorkspace(userId: string, appId: string | null | undefined, content: string) {
   if (!appId) return;
   try {
     const wsPath = getAppWorkspacePath(userId, appId);
     const specsDir = `${wsPath}/specs`;
     await Deno.mkdir(specsDir, { recursive: true });
-    await Deno.writeTextFile(`${specsDir}/plan.md`, content);
+
+    // Find the next number
+    let maxNum = 0;
+    try {
+      for await (const entry of Deno.readDir(specsDir)) {
+        if (entry.isFile && entry.name.endsWith(".md")) {
+          const num = parseInt(entry.name.split("-")[0], 10);
+          if (!isNaN(num) && num > maxNum) maxNum = num;
+        }
+      }
+    } catch { /* empty dir */ }
+
+    const num = String(maxNum + 1).padStart(2, "0");
+    const slug = planSlug(content);
+    const fileName = `${num}-${slug}.md`;
+    await Deno.writeTextFile(`${specsDir}/${fileName}`, content);
   } catch { /* best-effort — workspace may not exist yet */ }
 }
 

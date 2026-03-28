@@ -173,6 +173,46 @@ export async function saveFileContent(appId: string, filePath: string, content: 
   if (!res.ok) throw new Error(`API error ${res.status}`);
 }
 
+export async function createFile(appId: string, filePath: string): Promise<void> {
+  await saveFileContent(appId, filePath, "");
+}
+
+export async function deleteFile(appId: string, filePath: string): Promise<void> {
+  const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
+  await apiFetch(`/apps/${appId}/files/${encodedPath}`, { method: "DELETE" });
+}
+
+export async function renameFile(appId: string, from: string, to: string): Promise<void> {
+  await apiFetch(`/apps/${appId}/files-rename`, {
+    method: "POST",
+    body: JSON.stringify({ from, to }),
+  });
+}
+
+export async function createDir(appId: string, dirPath: string): Promise<void> {
+  await apiFetch(`/apps/${appId}/files-mkdir`, {
+    method: "POST",
+    body: JSON.stringify({ path: dirPath }),
+  });
+}
+
+export interface SearchResult {
+  file: string;
+  line: number;
+  col: number;
+  text: string;
+  before: string | null;
+  after: string | null;
+}
+
+export async function searchFiles(appId: string, query: string): Promise<SearchResult[]> {
+  const result = await apiFetch<{ results: SearchResult[] }>(`/apps/${appId}/search`, {
+    method: "POST",
+    body: JSON.stringify({ query }),
+  });
+  return result.results;
+}
+
 // Dev server
 export async function startDevServer(appId: string): Promise<DevServerStatus> {
   return apiFetch(`/apps/${appId}/server/start`, { method: "POST" });
