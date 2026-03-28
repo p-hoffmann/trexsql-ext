@@ -8,6 +8,10 @@ import { parseBuildTags, stripBuildTags } from "./build_tag_parser.ts";
 import { executeBuildTags } from "./build_tag_executor.ts";
 import { devServerManager } from "./dev_server.ts";
 import { duckdb, escapeSql } from "./duckdb.ts";
+import { parseCodeReviewFindings } from "./code_review_prompt.ts";
+import { parseSecurityFindings } from "./security_review_prompt.ts";
+import { parseQaFindings } from "./qa_review_prompt.ts";
+import { parseDesignFindings } from "./design_review_prompt.ts";
 import { TEMPLATES, scaffoldTemplate, injectComponentTagger } from "./templates.ts";
 import { relative } from "https://deno.land/std@0.224.0/path/mod.ts";
 // Phase 6: Extracted route handlers
@@ -100,6 +104,12 @@ Deno.serve(async (req: Request) => {
     if (path.endsWith("/health")) {
       return Response.json({ status: "ok", plugin: "@trex/devx" }, { headers: corsHeaders });
     }
+
+    // Ensure built-in skills/commands/agents are synced (runs once per worker lifecycle)
+    // TREX_FUNCTION_PATH points to the actual function dir; go up one level to get the plugin root
+    const fnPath = Deno.env.get("TREX_FUNCTION_PATH") || new URL("../", import.meta.url).pathname;
+    const pluginBase = fnPath.replace(/\/functions\/?$/, "").replace(/\/$/, "");
+    await syncBuiltins(pluginBase, sql);
 
     // Phase 6: Dispatch to extracted route handlers
     const routeResult =
@@ -268,18 +278,56 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      // Augment prompt with visual edit / selected component context so the AI
-      // can reliably associate "the selected component" with actual code
-      let augmentedPrompt = prompt;
-      if (streamContext?.visualEdit) {
-        const { filePath, line, componentName } = streamContext.visualEdit;
-        augmentedPrompt = `[Visual edit target: <${componentName}> in ${filePath}:${line}]\n${prompt}`;
-      }
-      if (streamContext?.selectedComponents && streamContext.selectedComponents.length > 0) {
-        const compList = streamContext.selectedComponents
-          .map((c) => `<${c.devxName}> in ${c.filePath}:${c.line}`)
-          .join(", ");
-        augmentedPrompt = `[Selected components: ${compList}]\n${augmentedPrompt}`;
+      // Build enriched prompt for AI (with component snippets) and clean
+      // display prompt for DB/chat history (Dyad-inspired approach)
+      const displayPrompt = prompt;
+      let aiPrompt = prompt;
+      const hasComponentSelection = !!(streamContext?.visualEdit ||
+        (streamContext?.selectedComponents && streamContext.selectedComponents.length > 0));
+
+      if (hasComponentSelection && chatCheck.rows[0].app_id) {
+        const wsPath = getAppWorkspacePath(userId, chatCheck.rows[0].app_id);
+        const components = [];
+
+        if (streamContext?.visualEdit) {
+          components.push({
+            name: streamContext.visualEdit.componentName,
+            filePath: streamContext.visualEdit.filePath,
+            line: streamContext.visualEdit.line,
+          });
+        }
+        if (streamContext?.selectedComponents) {
+          for (const c of streamContext.selectedComponents) {
+            components.push({ name: c.devxName, filePath: c.filePath, line: c.line });
+          }
+        }
+
+        let snippetBlock = components.length === 1 && streamContext?.visualEdit
+          ? "\n\nVisual edit target:\n"
+          : "\n\nSelected components:\n";
+
+        for (let i = 0; i < components.length; i++) {
+          const comp = components[i];
+          let snippet = "[snippet not available]";
+          try {
+            const sourceContent = await Deno.readTextFile(`${wsPath}/${comp.filePath}`);
+            const lines = sourceContent.split("\n");
+            const targetIdx = comp.line - 1; // 0-indexed
+            const startIdx = Math.max(0, targetIdx - 1);
+            const endIdx = Math.min(lines.length, targetIdx + 4);
+            const snippetLines = lines.slice(startIdx, endIdx).map((l, j) => {
+              const lineNum = startIdx + j + 1;
+              const marker = (startIdx + j === targetIdx) ? " // <-- EDIT HERE" : "";
+              return `${lineNum} | ${l}${marker}`;
+            });
+            snippet = snippetLines.join("\n");
+          } catch { /* file read failed */ }
+
+          const prefix = components.length > 1 ? `${i + 1}. ` : "";
+          snippetBlock += `\n${prefix}Component: ${comp.name} (file: ${comp.filePath})\n\nSnippet:\n\`\`\`tsx\n${snippet}\n\`\`\`\n`;
+        }
+
+        aiPrompt = prompt + snippetBlock;
       }
 
       // --- Skill/Command resolution ---
@@ -288,11 +336,133 @@ Deno.serve(async (req: Request) => {
       const streamAppId = chatCheck.rows[0].app_id;
 
       try {
-        // Sync built-in skills/commands/agents on first request
-        const pluginBase = new URL("../", import.meta.url).pathname.replace(/\/$/, "");
-        await syncBuiltins(pluginBase, sql);
-
+        // --- Meta-commands: respond inline without AI ---
         const slashInput = parseSlashInput(prompt);
+
+        // /agent <skill> — spawn a background subagent with its own context
+        if (slashInput && slashInput.slug === "agent") {
+          const encoder = new TextEncoder();
+
+          // Helper to return a quick inline response
+          const quickResponse = async (msg: string) => {
+            await sql(`INSERT INTO devx.messages (chat_id, role, content) VALUES ($1, 'user', $2)`, [chatId, displayPrompt]);
+            await sql(`INSERT INTO devx.messages (chat_id, role, content) VALUES ($1, 'assistant', $2)`, [chatId, msg]);
+            const stream = new ReadableStream({
+              start(c) {
+                c.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "chunk", content: msg })}\n\n`));
+                c.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "done", content: msg })}\n\n`));
+                c.close();
+              },
+            });
+            return new Response(stream, { headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
+          };
+
+          if (!streamAppId) {
+            return quickResponse("Select an app first to run an agent.");
+          }
+
+          const innerArg = (slashInput.args || "").trim().replace(/^\//, "");
+          const skills = await loadSkillMetadata(userId, sql);
+          const matchedSkill = innerArg ? matchSkillBySlug(innerArg, skills) : null;
+
+          if (!innerArg || !matchedSkill) {
+            const available = skills.filter(s => s.slug).map(s => {
+              const aliases = (s.aliases || []).map(a => `\`${a}\``).join(", ");
+              return `- \`/agent /${s.slug}\`${aliases ? ` (or ${aliases})` : ""} — ${s.description?.split(".")[0] || s.name}`;
+            }).join("\n");
+            return quickResponse(innerArg
+              ? `Unknown skill: \`${innerArg}\`. Available skills:\n\n${available}`
+              : `Usage: \`/agent /<skill>\`\n\nAvailable skills:\n\n${available}`);
+          }
+
+          // Create subagent run
+          const runResult = await sql(
+            `INSERT INTO devx.subagent_runs (parent_chat_id, agent_name, task, user_id, app_id, skill_name)
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+            [chatId, matchedSkill.name, `Run ${matchedSkill.name}`, userId, streamAppId, matchedSkill.slug],
+          );
+          const runId = runResult.rows[0].id;
+
+          // Return immediately with a confirmation — agent runs in background via /agents/:id/start
+          return quickResponse(`Started **${matchedSkill.name}** agent. Check the Agents tab to follow progress.\n\n_Agent run: ${runId}_`);
+        }
+
+        if (slashInput && ["commands", "skills", "help"].includes(slashInput.slug)) {
+          // Save user message
+          await sql(
+            `INSERT INTO devx.messages (chat_id, role, content) VALUES ($1, 'user', $2)`,
+            [chatId, displayPrompt],
+          );
+
+          let listing = "";
+          if (slashInput.slug === "commands" || slashInput.slug === "help") {
+            const cmds = await sql(
+              `SELECT slug, description, argument_hint FROM devx.commands
+               WHERE enabled = true AND (user_id = $1 OR (is_builtin = true AND user_id IS NULL))
+               ORDER BY slug`,
+              [userId],
+            );
+            const skills = await sql(
+              `SELECT slug, description FROM devx.skills
+               WHERE slug IS NOT NULL AND enabled = true
+                 AND (user_id = $1 OR (is_builtin = true AND user_id IS NULL))
+               ORDER BY slug`,
+              [userId],
+            );
+            listing = "## Available Commands\n\n";
+            listing += "| Command | Description |\n|---------|-------------|\n";
+            listing += `| \`/agent /<skill>\` | Run a skill as an autonomous agent |\n`;
+            listing += `| \`/commands\` | List all available commands |\n`;
+            listing += `| \`/skills\` | List all available skills |\n`;
+            listing += `| \`/help\` | Show this help |\n`;
+            for (const c of cmds.rows) {
+              const hint = c.argument_hint ? ` ${c.argument_hint}` : "";
+              listing += `| \`/${c.slug}${hint}\` | ${c.description || "—"} |\n`;
+            }
+            if (skills.rows.length > 0) {
+              listing += "\n## Available Skills\n\n";
+              listing += "| Skill | Description |\n|-------|-------------|\n";
+              for (const s of skills.rows) {
+                listing += `| \`/${s.slug}\` | ${s.description || "—"} |\n`;
+              }
+            }
+          } else if (slashInput.slug === "skills") {
+            const skills = await sql(
+              `SELECT slug, name, description FROM devx.skills
+               WHERE enabled = true AND (user_id = $1 OR (is_builtin = true AND user_id IS NULL))
+               ORDER BY slug`,
+              [userId],
+            );
+            listing = "## Available Skills\n\n";
+            if (skills.rows.length === 0) {
+              listing += "No skills registered yet.";
+            } else {
+              listing += "| Skill | Description |\n|-------|-------------|\n";
+              for (const s of skills.rows) {
+                const slug = s.slug ? `\`/${s.slug}\`` : s.name;
+                listing += `| ${slug} | ${s.description || "—"} |\n`;
+              }
+            }
+          }
+
+          // Save and stream as assistant message
+          await sql(
+            `INSERT INTO devx.messages (chat_id, role, content) VALUES ($1, 'assistant', $2)`,
+            [chatId, listing],
+          );
+          const encoder = new TextEncoder();
+          const stream = new ReadableStream({
+            start(controller) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "chunk", content: listing })}\n\n`));
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "done", content: listing })}\n\n`));
+              controller.close();
+            },
+          });
+          return new Response(stream, {
+            headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+          });
+        }
+
         if (slashInput) {
           // Try as command first, then as skill slug
           const cmd = await resolveCommand(slashInput.slug, userId, sql);
@@ -307,7 +477,6 @@ Deno.serve(async (req: Request) => {
                 const wsPath = streamAppId ? getAppWorkspacePath(userId, streamAppId) : "";
                 body = await enrichSkillContext(matchedSkill.name, body, streamAppId, userId, wsPath, sql);
                 skillContext = body;
-                // If skill has a mode override and chat is not already in that mode
                 if (matchedSkill.mode === "agent") {
                   commandOverride = { allowed_tools: matchedSkill.allowed_tools, model: null };
                 }
@@ -335,12 +504,12 @@ Deno.serve(async (req: Request) => {
       // Save user message
       await sql(
         `INSERT INTO devx.messages (chat_id, role, content) VALUES ($1, 'user', $2)`,
-        [chatId, augmentedPrompt],
+        [chatId, displayPrompt],
       );
 
       // Build system prompt based on chat mode
       let chatMode = chatCheck.rows[0].mode || "build";
-      // If a skill requires agent mode, override
+      // Skills run in agent mode (interactive, with consent) in the current chat
       if (skillContext && chatMode !== "agent" && chatMode !== "plan") {
         chatMode = "agent";
       }
@@ -357,47 +526,10 @@ Deno.serve(async (req: Request) => {
       let systemPrompt = constructSystemPrompt(chatMode, aiRules);
       const maxHistory = getMaxHistoryTurns(chatMode);
 
-      // Inject visual edit context if present
-      if (streamContext?.visualEdit) {
-        const { filePath, line, componentName } = streamContext.visualEdit;
-        const appId = chatCheck.rows[0].app_id;
-        let componentCode = "";
-        if (appId) {
-          try {
-            const wsPath = getAppWorkspacePath(userId, appId);
-            const sourceContent = await Deno.readTextFile(`${wsPath}/${filePath}`);
-            const lines = sourceContent.split("\n");
-            const start = Math.max(0, line - 20);
-            const end = Math.min(lines.length, line + 20);
-            componentCode = lines.slice(start, end).join("\n");
-          } catch { /* file read failed, continue without code */ }
-        }
-        const visualContext = `\nUser is visually editing <${componentName}> in ${filePath} at line ${line}.${
-          componentCode ? `\nHere is the component code:\n\`\`\`\n${componentCode}\n\`\`\`\n` : ""
-        }Focus modifications on this component.`;
-        systemPrompt = systemPrompt + visualContext;
-      }
-
-      // Inject selected components context if present
-      if (streamContext?.selectedComponents && streamContext.selectedComponents.length > 0) {
-        const appId = chatCheck.rows[0].app_id;
-        let componentsContext = "\nUser has selected the following components for editing:\n";
-        for (const comp of streamContext.selectedComponents) {
-          componentsContext += `\n- <${comp.devxName}> in ${comp.filePath} at line ${comp.line}`;
-          if (appId) {
-            try {
-              const wsPath = getAppWorkspacePath(userId, appId);
-              const sourceContent = await Deno.readTextFile(`${wsPath}/${comp.filePath}`);
-              const lines = sourceContent.split("\n");
-              const start = Math.max(0, comp.line - 20);
-              const end = Math.min(lines.length, comp.line + 20);
-              const code = lines.slice(start, end).join("\n");
-              componentsContext += `\n\`\`\`tsx\n${code}\n\`\`\``;
-            } catch { /* file read failed */ }
-          }
-        }
-        componentsContext += "\nFocus your modifications on these components.";
-        systemPrompt = systemPrompt + componentsContext;
+      // Add minimal behavioral hint when components are selected
+      // (actual code snippets are now inline in the user message via aiPrompt)
+      if (hasComponentSelection) {
+        systemPrompt += "\nThe user has selected specific components for editing. Component details and code snippets are in the user's message. Focus your modifications on those components.";
       }
 
       // Get most recent messages for context (subquery to get newest, then order ascending)
@@ -411,6 +543,15 @@ Deno.serve(async (req: Request) => {
         [chatId, maxHistory],
       );
       let history = historyResult.rows;
+
+      // Swap the last user message with the AI-enriched version (with component snippets)
+      // so the AI sees code context inline while the DB keeps the clean display prompt
+      if (aiPrompt !== displayPrompt && history.length > 0) {
+        const lastMsg = history[history.length - 1];
+        if (lastMsg.role === "user" && lastMsg.content === displayPrompt) {
+          lastMsg.content = aiPrompt;
+        }
+      }
 
       // Prepend compacted context summary if available
       const compactResult = await sql(
@@ -460,6 +601,7 @@ Deno.serve(async (req: Request) => {
                 sqlFn: sql,
                 skillContext,
                 commandOverride,
+                hasComponentSelection,
               });
               fullContent = agentResult.content;
               if (agentResult.toolCalls.length > 0) savedToolCalls = agentResult.toolCalls;
@@ -511,7 +653,7 @@ Deno.serve(async (req: Request) => {
         },
         cancel() {
           clearInterval(heartbeat);
-          clearPendingConsents(chatId);
+          clearPendingConsents(chatId, sql);
           clearPendingResponses(chatId, sql);
         },
       });
@@ -536,7 +678,7 @@ Deno.serve(async (req: Request) => {
       if (!requestId || !decision) {
         return Response.json({ error: "requestId and decision required" }, { status: 400, headers: corsHeaders });
       }
-      const resolved = resolveConsent(requestId, decision, userId);
+      const resolved = await resolveConsent(requestId, decision, userId, sql);
       if (!resolved) {
         return Response.json({ error: "Consent request not found or unauthorized" }, { status: 404, headers: corsHeaders });
       }
@@ -563,6 +705,200 @@ Deno.serve(async (req: Request) => {
         [chatId],
       );
       return Response.json(result.rows, { headers: corsHeaders });
+    }
+
+    // --- Subagent Runs ---
+
+    // GET /agents - list subagent runs for the user (optionally by app_id)
+    if (path.endsWith("/agent-runs") && method === "GET") {
+      const appIdParam = url.searchParams.get("app_id");
+      const result = appIdParam
+        ? await sql(
+            `SELECT id, parent_chat_id, agent_name, skill_name, task, status, created_at, completed_at
+             FROM devx.subagent_runs WHERE user_id = $1 AND app_id = $2
+             ORDER BY created_at DESC LIMIT 20`,
+            [userId, appIdParam],
+          )
+        : await sql(
+            `SELECT id, parent_chat_id, agent_name, skill_name, task, status, created_at, completed_at
+             FROM devx.subagent_runs WHERE user_id = $1
+             ORDER BY created_at DESC LIMIT 20`,
+            [userId],
+          );
+      return Response.json(result.rows, { headers: corsHeaders });
+    }
+
+    // POST /agents/:id/start - start a subagent run (SSE stream)
+    const agentStartMatch = path.match(/\/agent-runs\/([^/]+)\/start$/);
+    if (agentStartMatch && method === "POST") {
+      const runId = agentStartMatch[1];
+      const runResult = await sql(
+        `SELECT * FROM devx.subagent_runs WHERE id = $1 AND user_id = $2`,
+        [runId, userId],
+      );
+      if (runResult.rows.length === 0) {
+        return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
+      }
+      const run = runResult.rows[0];
+      if (run.status !== "running") {
+        return Response.json({ error: "Agent already completed" }, { status: 400, headers: corsHeaders });
+      }
+
+      // Load skill
+      const skills = await loadSkillMetadata(userId, sql);
+      const matchedSkill = skills.find(s => s.slug === run.skill_name || s.name === run.agent_name);
+      let skillBody = "";
+      if (matchedSkill) {
+        skillBody = await loadSkillBody(matchedSkill.id, sql) || "";
+        if (skillBody && run.app_id) {
+          const wsPath = getAppWorkspacePath(userId, run.app_id);
+          skillBody = await enrichSkillContext(matchedSkill.name, skillBody, run.app_id, userId, wsPath, sql);
+        }
+      }
+
+      const agentSettingsResult = await sql(
+        `SELECT provider, model, api_key, base_url, ai_rules, auto_approve, max_steps, max_tool_steps, auto_fix_problems
+         FROM devx.settings WHERE user_id = $1`,
+        [userId],
+      );
+      const agentSettings = agentSettingsResult.rows[0];
+      if (!agentSettings?.api_key) {
+        return Response.json({ error: "AI provider not configured" }, { status: 400, headers: corsHeaders });
+      }
+
+      const stream = new ReadableStream({
+        async start(controller) {
+          const encoder = new TextEncoder();
+          const send = (data: unknown) => {
+            try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`)); } catch { /* closed */ }
+          };
+          const heartbeat = setInterval(() => {
+            try { controller.enqueue(encoder.encode(": heartbeat\n\n")); } catch { /* closed */ }
+          }, 15000);
+
+          try {
+            const { streamAgentChat } = await import("./agent.ts");
+
+            // Log tool calls and chunks as subagent messages
+            const agentSend = (data: any) => {
+              send(data); // Forward to SSE
+              if (data.type === "tool_call_start") {
+                sql(
+                  `INSERT INTO devx.subagent_messages (run_id, role, content, tool_name, tool_call_id)
+                   VALUES ($1, 'tool', $2, $3, $4)`,
+                  [runId, JSON.stringify(data.args || {}), data.name, data.callId],
+                ).catch(() => {});
+              }
+            };
+
+            const result = await streamAgentChat({
+              chatId: `agent-run-${runId}`,
+              userId,
+              appId: run.app_id,
+              chatMode: "agent",
+              settings: {
+                ...agentSettings,
+                max_steps: matchedSkill?.allowed_tools ? 25 : 15,
+                auto_approve: true,
+              },
+              history: [{ role: "user", content: run.task + ". Use your tools to thoroughly analyze the project." }],
+              send: agentSend,
+              sqlFn: sql,
+              skillContext: skillBody,
+              commandOverride: matchedSkill?.allowed_tools
+                ? { allowed_tools: matchedSkill.allowed_tools, model: null, body: "" }
+                : undefined,
+            });
+
+            const fullContent = result.content || "";
+            await sql(
+              `UPDATE devx.subagent_runs SET status = 'completed', result = $1, completed_at = NOW() WHERE id = $2`,
+              [fullContent.slice(0, 50000), runId],
+            );
+            // Save final assistant message
+            await sql(
+              `INSERT INTO devx.subagent_messages (run_id, role, content) VALUES ($1, 'assistant', $2)`,
+              [runId, fullContent],
+            );
+
+            // Parse and store review findings based on skill type
+            try {
+              const skillName = run.skill_name || run.agent_name;
+              let findings = null;
+              let resultType = null;
+              if (skillName === "code-review" || skillName === "review") {
+                findings = parseCodeReviewFindings(fullContent);
+                resultType = "code-review";
+              } else if (skillName === "security-review" || skillName === "security") {
+                findings = parseSecurityFindings(fullContent);
+                resultType = "security-review";
+              } else if (skillName === "qa-test" || skillName === "qa") {
+                findings = parseQaFindings(fullContent);
+                resultType = "qa-test";
+              } else if (skillName === "design-review" || skillName === "design") {
+                findings = parseDesignFindings(fullContent);
+                resultType = "design-review";
+              }
+              if (findings && findings.length > 0 && resultType && run.app_id) {
+                await sql(
+                  `INSERT INTO devx.agent_results (app_id, user_id, run_id, result_type, findings)
+                   VALUES ($1, $2, $3, $4, $5)`,
+                  [run.app_id, userId, runId, resultType, JSON.stringify(findings)],
+                );
+              }
+            } catch { /* parsing failed, not critical */ }
+
+            send({ type: "done", content: fullContent });
+          } catch (err) {
+            await sql(
+              `UPDATE devx.subagent_runs SET status = 'failed', result = $1, completed_at = NOW() WHERE id = $2`,
+              [err.message, runId],
+            );
+            send({ type: "error", error: err.message });
+          } finally {
+            clearInterval(heartbeat);
+            controller.close();
+          }
+        },
+      });
+
+      return new Response(stream, {
+        headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" },
+      });
+    }
+
+    // GET /agents/:id/messages - get subagent messages
+    const agentMsgsMatch = path.match(/\/agent-runs\/([^/]+)\/messages$/);
+    if (agentMsgsMatch && method === "GET") {
+      const runId = agentMsgsMatch[1];
+      const runCheck = await sql(
+        `SELECT id FROM devx.subagent_runs WHERE id = $1 AND user_id = $2`,
+        [runId, userId],
+      );
+      if (runCheck.rows.length === 0) {
+        return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
+      }
+      const result = await sql(
+        `SELECT id, role, content, tool_name, tool_call_id, created_at
+         FROM devx.subagent_messages WHERE run_id = $1 ORDER BY created_at ASC`,
+        [runId],
+      );
+      return Response.json(result.rows, { headers: corsHeaders });
+    }
+
+    // POST /agents/:id/stop - stop a running subagent
+    const agentStopMatch = path.match(/\/agent-runs\/([^/]+)\/stop$/);
+    if (agentStopMatch && method === "POST") {
+      const runId = agentStopMatch[1];
+      const result = await sql(
+        `UPDATE devx.subagent_runs SET status = 'failed', result = 'Stopped by user', completed_at = NOW()
+         WHERE id = $1 AND user_id = $2 AND status = 'running' RETURNING id`,
+        [runId, userId],
+      );
+      if (result.rows.length === 0) {
+        return Response.json({ error: "Not found or already completed" }, { status: 404, headers: corsHeaders });
+      }
+      return Response.json({ ok: true }, { headers: corsHeaders });
     }
 
     // --- Settings ---

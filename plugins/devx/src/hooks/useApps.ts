@@ -10,16 +10,37 @@ export function useApps() {
     try {
       const data = await api.listApps();
       setApps(data);
+      setLoading(false);
     } catch (err) {
       console.error("Failed to load apps:", err);
-    } finally {
-      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    let cancelled = false;
+    let timeout: ReturnType<typeof setTimeout>;
+
+    const tryLoad = async (attempt = 0) => {
+      try {
+        const data = await api.listApps();
+        if (!cancelled) {
+          setApps(data);
+          setLoading(false);
+        }
+      } catch {
+        // Retry with backoff (1s, 2s, 4s, max 5s) — backend may still be starting
+        if (!cancelled && attempt < 10) {
+          const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
+          timeout = setTimeout(() => tryLoad(attempt + 1), delay);
+        } else if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    tryLoad();
+    return () => { cancelled = true; clearTimeout(timeout); };
+  }, []);
 
   const create = useCallback(async (name: string, template?: string) => {
     const app = await api.createApp(name, template);

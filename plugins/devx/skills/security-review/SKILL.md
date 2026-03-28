@@ -1,10 +1,11 @@
 ---
 name: security-review
 slug: security-review
+aliases: ["security", "sec-review"]
 description: This skill should be used when the user asks to "run a security review",
   "check for vulnerabilities", "scan for security issues", "audit security", or
   "find security problems".
-version: 0.1.0
+version: 0.2.0
 mode: agent
 ---
 

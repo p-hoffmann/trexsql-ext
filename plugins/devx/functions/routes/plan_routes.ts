@@ -35,5 +35,41 @@ export async function handlePlanRoutes(path, method, req, userId, sql, corsHeade
     return Response.json({ ok: true }, { headers: corsHeaders });
   }
 
+  // GET /apps/:id/plans — list all plans for an app (via chats)
+  const appPlansMatch = path.match(/\/apps\/([^/]+)\/plans$/);
+  if (appPlansMatch && method === "GET") {
+    const appId = appPlansMatch[1];
+    const result = await sql(
+      `SELECT p.id, p.chat_id, p.content, p.status, p.created_at, p.updated_at, c.title as chat_title
+       FROM devx.plans p
+       JOIN devx.chats c ON c.id = p.chat_id
+       WHERE c.app_id = $1 AND c.user_id = $2
+       ORDER BY p.updated_at DESC`,
+      [appId, userId],
+    );
+    return Response.json(result.rows, { headers: corsHeaders });
+  }
+
+  // PATCH /plans/:id/status — update plan status
+  const statusMatch = path.match(/\/plans\/([^/]+)\/status$/);
+  if (statusMatch && method === "PATCH") {
+    const planId = statusMatch[1];
+    const body = await req.json();
+    const { status } = body;
+    if (!status || !["draft", "accepted", "rejected", "implemented"].includes(status)) {
+      return Response.json({ error: "Invalid status" }, { status: 400, headers: corsHeaders });
+    }
+    const result = await sql(
+      `UPDATE devx.plans SET status = $1, updated_at = NOW()
+       WHERE id = $2 AND chat_id IN (SELECT id FROM devx.chats WHERE user_id = $3)
+       RETURNING id, status`,
+      [status, planId, userId],
+    );
+    if (result.rows.length === 0) {
+      return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
+    }
+    return Response.json(result.rows[0], { headers: corsHeaders });
+  }
+
   return null;
 }

@@ -1,15 +1,18 @@
 import { useState, useEffect, useCallback } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Monitor, Code, AlertTriangle, GitBranch, ClipboardList, Package } from "lucide-react";
+import { Monitor, Code, AlertTriangle, GitBranch, ClipboardList, Package, Bot } from "lucide-react";
 import { PreviewTab } from "./PreviewTab";
 import { CodeTab } from "./CodeTab";
 import { ProblemsTab } from "./ProblemsTab";
+import { AgentsTab } from "./AgentsTab";
 import { GitTab } from "./GitTab";
 import { PlanTab } from "./PlanTab";
 import { PublishTab } from "./PublishTab";
 import { useFileTree } from "@/hooks/useFileTree";
 import { useDevServer } from "@/hooks/useDevServer";
 import { useGit } from "@/hooks/useGit";
+import { useReviewAgents } from "@/hooks/useReviewAgents";
+import { useAgentRuns } from "@/hooks/useAgentRuns";
 import type { App } from "@/lib/types";
 import * as api from "@/lib/api";
 
@@ -23,13 +26,15 @@ interface PreviewPanelProps {
   onFixPrompt?: (prompt: string) => void;
 }
 
-export function PreviewPanel({ appId, planContent, chatMode, onEditWithAI, onComponentsSelected, refreshSignal, onFixPrompt }: PreviewPanelProps) {
+export function PreviewPanel({ appId, planContent, chatMode: _chatMode, onEditWithAI, onComponentsSelected, refreshSignal, onFixPrompt }: PreviewPanelProps) {
   const [activeTab, setActiveTab] = useState("preview");
   const [app, setApp] = useState<App | null>(null);
   const [configRefresh, setConfigRefresh] = useState(0);
   const fileTree = useFileTree(appId);
   const devServer = useDevServer(appId);
   const git = useGit(appId);
+  const reviewAgents = useReviewAgents(appId || "");
+  const agentRuns = useAgentRuns(appId);
 
   useEffect(() => {
     if (appId) {
@@ -54,17 +59,6 @@ export function PreviewPanel({ appId, planContent, chatMode, onEditWithAI, onCom
     }
   }, [refreshSignal]);
 
-  if (!appId && chatMode !== "plan" && !planContent) {
-    return (
-      <div className="flex h-full items-center justify-center text-muted-foreground">
-        <div className="text-center space-y-2">
-          <Monitor className="h-10 w-10 mx-auto opacity-40" />
-          <p className="text-sm">Select an app to preview</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col h-full">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full">
@@ -81,12 +75,19 @@ export function PreviewPanel({ appId, planContent, chatMode, onEditWithAI, onCom
             <AlertTriangle className="h-3.5 w-3.5" />
             Checks
           </TabsTrigger>
-          {(chatMode === "plan" || planContent) && (
-            <TabsTrigger value="plan" className="gap-1.5 text-xs">
-              <ClipboardList className="h-3.5 w-3.5" />
-              Plan
-            </TabsTrigger>
-          )}
+          <TabsTrigger value="agents" className="gap-1.5 text-xs">
+            <Bot className="h-3.5 w-3.5" />
+            Agents
+            {reviewAgents.runningCount > 0 && (
+              <span className="ml-1 text-[10px] bg-blue-500/20 text-blue-600 px-1 rounded-full min-w-[16px] text-center">
+                {reviewAgents.runningCount}
+              </span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="plan" className="gap-1.5 text-xs">
+            <ClipboardList className="h-3.5 w-3.5" />
+            Plans
+          </TabsTrigger>
           <TabsTrigger value="git" className="gap-1.5 text-xs">
             <GitBranch className="h-3.5 w-3.5" />
             Git
@@ -118,19 +119,34 @@ export function PreviewPanel({ appId, planContent, chatMode, onEditWithAI, onCom
                   setActiveTab("code");
                 }}
                 onFixPrompt={onFixPrompt}
+                reviewAgents={reviewAgents}
+              />
+            </TabsContent>
+            <TabsContent value="agents" className="flex-1 m-0 overflow-hidden">
+              <AgentsTab
+                agents={reviewAgents.agents}
+                onStop={reviewAgents.stopAgent}
+                agentRuns={agentRuns.runStates}
+                onExpandRun={agentRuns.loadMessages}
+                onStopRun={agentRuns.stopRun}
               />
             </TabsContent>
             <TabsContent value="git" className="flex-1 m-0 overflow-hidden">
               <GitTab git={git} appId={appId} />
+            </TabsContent>
+            <TabsContent value="plan" className="flex-1 m-0 overflow-hidden">
+              <PlanTab appId={appId} livePlanContent={planContent} onFixPrompt={onFixPrompt} />
             </TabsContent>
             <TabsContent value="publish" className="flex-1 m-0 overflow-hidden">
               <PublishTab appId={appId} />
             </TabsContent>
           </>
         )}
-        <TabsContent value="plan" className="flex-1 m-0 overflow-hidden">
-          <PlanTab content={planContent ?? null} />
-        </TabsContent>
+        {!appId && (
+          <TabsContent value="plan" className="flex-1 m-0 overflow-hidden">
+            <PlanTab appId={null} livePlanContent={planContent} onFixPrompt={onFixPrompt} />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );

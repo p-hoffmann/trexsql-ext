@@ -418,9 +418,9 @@ export async function handleSkillsRoutes(path, method, req, userId, sql, corsHea
     const url = new URL(req.url);
     const q = (url.searchParams.get("q") || "").toLowerCase();
 
-    // Get skills with slugs
+    // Get skills with slugs and aliases
     const skills = await sql(
-      `SELECT slug, description, 'skill' as type, NULL as argument_hint
+      `SELECT slug, description, aliases, 'skill' as type, NULL as argument_hint
        FROM devx.skills
        WHERE slug IS NOT NULL AND enabled = true
          AND (user_id = $1 OR (is_builtin = true AND user_id IS NULL))`,
@@ -436,7 +436,38 @@ export async function handleSkillsRoutes(path, method, req, userId, sql, corsHea
       [userId],
     );
 
-    let items = [...skills.rows, ...commands.rows];
+    // Build alias entries from skill metadata
+    const aliasItems: any[] = [];
+    for (const s of skills.rows) {
+      if (s.aliases && Array.isArray(s.aliases)) {
+        for (const alias of s.aliases) {
+          aliasItems.push({
+            slug: alias,
+            description: s.description,
+            type: "skill",
+            argument_hint: null,
+          });
+        }
+      }
+    }
+
+    // Built-in meta-commands
+    const metaCommands = [
+      { slug: "agent", description: "Run a skill as an autonomous agent", type: "command", argument_hint: "/<skill>" },
+      { slug: "commands", description: "List all available commands", type: "command", argument_hint: null },
+      { slug: "skills", description: "List all available skills", type: "command", argument_hint: null },
+      { slug: "help", description: "Show available commands and skills", type: "command", argument_hint: null },
+    ];
+
+    let items = [...skills.rows, ...commands.rows, ...aliasItems, ...metaCommands];
+
+    // Deduplicate by slug (prefer earlier entries)
+    const seen = new Set();
+    items = items.filter((item) => {
+      if (seen.has(item.slug)) return false;
+      seen.add(item.slug);
+      return true;
+    });
 
     // Filter by query
     if (q) {

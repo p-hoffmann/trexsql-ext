@@ -59,6 +59,12 @@ For each finding, output a structured block using this exact format:
 **medium**: Vulnerability increases exposure or weakens defenses, but exploitation requires multiple steps or attacker sophistication.
 **low**: Low immediate risk; typically requires local access, unlikely chain of events, or only violates best practices without a clear exploitation path.
 
+# Approach
+1. Use \`list_files\` and \`grep\` to identify authentication, API route, and database files
+2. Use \`read_file\` to inspect suspicious patterns in detail
+3. Use \`git_diff\` to check recent changes for newly introduced vulnerabilities
+4. Cross-reference findings with the codebase to confirm they are real, exploitable issues
+
 # Instructions
 1. Find real, exploitable vulnerabilities that lead to data breaches
 2. Prioritize client-side exposed secrets and data leaks

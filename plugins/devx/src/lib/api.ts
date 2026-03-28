@@ -7,6 +7,8 @@ import type {
   SupabaseStatus, SupabaseDeployConfig, SupabaseProject, Deployment, DeployStep,
   SecurityReview,
   CodeReview,
+  QaTestReview,
+  DesignReview,
 } from "./types";
 
 function getAuthToken(): string | null {
@@ -360,6 +362,17 @@ export async function answerQuestionnaire(chatId: string, requestId: string, ans
   });
 }
 
+export async function listAppPlans(appId: string): Promise<Plan[]> {
+  return apiFetch(`/apps/${appId}/plans`);
+}
+
+export async function updatePlanStatus(planId: string, status: Plan["status"]): Promise<void> {
+  await apiFetch(`/plans/${planId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+}
+
 // Security
 export async function securityScan(appId: string): Promise<{ findings: { severity: string; title: string; description: string; file?: string }[] }> {
   return apiFetch(`/apps/${appId}/security/scan`, { method: "POST" });
@@ -503,6 +516,162 @@ export function streamCodeReview(appId: string, callbacks: CodeReviewCallbacks):
                   callbacks.onDone(parsed.review);
                   break;
                 case "code_review_error":
+                  callbacks.onError(parsed.error);
+                  break;
+              }
+            } catch { /* skip malformed */ }
+          }
+        }
+      }
+    })
+    .catch((err) => {
+      if (err.name !== "AbortError") {
+        callbacks.onError(err.message);
+      }
+    });
+
+  return controller;
+}
+
+// QA test review
+export async function getLatestQaReview(appId: string): Promise<QaTestReview | null> {
+  return apiFetch(`/apps/${appId}/qa/reviews`);
+}
+
+export interface QaReviewCallbacks {
+  onProgress: (message: string) => void;
+  onDone: (review: QaTestReview) => void;
+  onError: (error: string) => void;
+}
+
+export function streamQaReview(appId: string, callbacks: QaReviewCallbacks): AbortController {
+  const controller = new AbortController();
+
+  fetch(`${API_BASE}/apps/${appId}/qa/review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    signal: controller.signal,
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.text();
+        try {
+          const parsed = JSON.parse(body);
+          callbacks.onError(parsed.error || `API error ${res.status}`);
+        } catch {
+          callbacks.onError(`API error ${res.status}: ${body}`);
+        }
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) {
+        callbacks.onError("No response body");
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const parsed = JSON.parse(line.slice(6));
+              switch (parsed.type) {
+                case "qa_review_progress":
+                  callbacks.onProgress(parsed.message);
+                  break;
+                case "qa_review_done":
+                  callbacks.onDone(parsed.review);
+                  break;
+                case "qa_review_error":
+                  callbacks.onError(parsed.error);
+                  break;
+              }
+            } catch { /* skip malformed */ }
+          }
+        }
+      }
+    })
+    .catch((err) => {
+      if (err.name !== "AbortError") {
+        callbacks.onError(err.message);
+      }
+    });
+
+  return controller;
+}
+
+// Design review
+export async function getLatestDesignReview(appId: string): Promise<DesignReview | null> {
+  return apiFetch(`/apps/${appId}/design/reviews`);
+}
+
+export interface DesignReviewCallbacks {
+  onProgress: (message: string) => void;
+  onDone: (review: DesignReview) => void;
+  onError: (error: string) => void;
+}
+
+export function streamDesignReview(appId: string, callbacks: DesignReviewCallbacks): AbortController {
+  const controller = new AbortController();
+
+  fetch(`${API_BASE}/apps/${appId}/design/review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    signal: controller.signal,
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.text();
+        try {
+          const parsed = JSON.parse(body);
+          callbacks.onError(parsed.error || `API error ${res.status}`);
+        } catch {
+          callbacks.onError(`API error ${res.status}: ${body}`);
+        }
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) {
+        callbacks.onError("No response body");
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const parsed = JSON.parse(line.slice(6));
+              switch (parsed.type) {
+                case "design_review_progress":
+                  callbacks.onProgress(parsed.message);
+                  break;
+                case "design_review_done":
+                  callbacks.onDone(parsed.review);
+                  break;
+                case "design_review_error":
                   callbacks.onError(parsed.error);
                   break;
               }
@@ -850,4 +1019,87 @@ export async function deleteAgent(id: string): Promise<void> {
 
 export async function getSlashCompletions(query: string): Promise<SlashCompletion[]> {
   return apiFetch(`/slash-completions?q=${encodeURIComponent(query)}`);
+}
+
+// --- Subagent Runs ---
+
+import type { SubagentRun, SubagentMessage } from "./types";
+
+export async function listAgentRuns(appId?: string | null): Promise<SubagentRun[]> {
+  const qs = appId ? `?app_id=${appId}` : "";
+  return apiFetch(`/agent-runs${qs}`);
+}
+
+export async function getAgentMessages(runId: string): Promise<SubagentMessage[]> {
+  return apiFetch(`/agent-runs/${runId}/messages`);
+}
+
+export async function stopAgentRun(runId: string): Promise<void> {
+  await apiFetch(`/agent-runs/${runId}/stop`, { method: "POST" });
+}
+
+export function startAgentRun(
+  runId: string,
+  callbacks: {
+    onChunk: (content: string) => void;
+    onToolCall: (name: string, args: unknown) => void;
+    onStep: (step: number, maxSteps: number) => void;
+    onDone: (content: string) => void;
+    onError: (error: string) => void;
+  },
+): AbortController {
+  const controller = new AbortController();
+  const token = getAuthToken();
+
+  fetch(`${API_BASE}/agent-runs/${runId}/start`, {
+    method: "POST",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    credentials: "include",
+    signal: controller.signal,
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.text();
+        try {
+          callbacks.onError(JSON.parse(body).error || `API error ${res.status}`);
+        } catch {
+          callbacks.onError(`API error ${res.status}: ${body}`);
+        }
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) { callbacks.onError("No response body"); return; }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.type === "chunk") callbacks.onChunk(data.content);
+            else if (data.type === "tool_call_start") callbacks.onToolCall(data.name, data.args);
+            else if (data.type === "step") callbacks.onStep(data.step, data.maxSteps);
+            else if (data.type === "done") callbacks.onDone(data.content);
+            else if (data.type === "error") callbacks.onError(data.error);
+          } catch { /* skip */ }
+        }
+      }
+    })
+    .catch((err) => {
+      if (err.name !== "AbortError") callbacks.onError(err.message);
+    });
+
+  return controller;
 }

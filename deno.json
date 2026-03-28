@@ -1,4 +1,4 @@
 {
-  "workspace": ["./core", "./plugins/runtime"],
+  "workspace": ["./core", "./plugins/runtime", "./plugins-dev/devx", "./plugins-dev/devx/functions"],
   "nodeModulesDir": "auto"
 }

@@ -26,6 +26,7 @@ export interface SkillMetadata {
   id: string;
   name: string;
   slug: string | null;
+  aliases: string[] | null;
   description: string;
   allowed_tools: string[] | null;
   mode: string | null;

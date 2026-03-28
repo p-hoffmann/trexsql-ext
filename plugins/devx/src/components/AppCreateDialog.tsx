@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Loader2, CheckCircle2 } from "lucide-react";
 import type { App } from "@/lib/types";
 
 const TEMPLATES = [
@@ -22,21 +23,51 @@ interface AppCreateDialogProps {
   onCreateApp: (name: string, template?: string) => Promise<App>;
 }
 
+const CREATION_PHASES = [
+  "Creating project...",
+  "Setting up workspace...",
+  "Scaffolding template...",
+  "Configuring dev tools...",
+  "Installing dependencies...",
+];
+
 export function AppCreateDialog({ open, onOpenChange, onCreateApp }: AppCreateDialogProps) {
   const [name, setName] = useState("");
   const [template, setTemplate] = useState("react-vite");
   const [creating, setCreating] = useState(false);
+  const [done, setDone] = useState(false);
+  const [phase, setPhase] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const phaseTimer = useRef<ReturnType<typeof setInterval>>(undefined);
+
+  // Cycle through phases while creating
+  useEffect(() => {
+    if (creating) {
+      setPhase(0);
+      phaseTimer.current = setInterval(() => {
+        setPhase((p) => Math.min(p + 1, CREATION_PHASES.length - 1));
+      }, 600);
+    } else {
+      clearInterval(phaseTimer.current);
+    }
+    return () => clearInterval(phaseTimer.current);
+  }, [creating]);
 
   const handleCreate = async () => {
     if (!name.trim()) return;
     setCreating(true);
+    setDone(false);
     setError(null);
     try {
       await onCreateApp(name.trim(), template);
-      setName("");
-      setTemplate("react-vite");
-      onOpenChange(false);
+      setDone(true);
+      // Brief success state before closing
+      setTimeout(() => {
+        setName("");
+        setTemplate("react-vite");
+        setDone(false);
+        onOpenChange(false);
+      }, 800);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to create app";
       setError(msg.includes("401") ? "Not authenticated. Please sign in and try again." : msg);
@@ -99,12 +130,25 @@ export function AppCreateDialog({ open, onOpenChange, onCreateApp }: AppCreateDi
             <p className="text-sm text-destructive">{error}</p>
           )}
 
+          {(creating || done) && (
+            <div className="flex items-center gap-3 px-3 py-3 rounded-lg bg-muted/50 border">
+              {done ? (
+                <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+              ) : (
+                <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+              )}
+              <span className="text-sm text-muted-foreground">
+                {done ? "App created successfully!" : CREATION_PHASES[phase]}
+              </span>
+            </div>
+          )}
+
           <Button
             className="w-full"
             onClick={handleCreate}
-            disabled={!name.trim() || creating}
+            disabled={!name.trim() || creating || done}
           >
-            {creating ? "Creating..." : "Create App"}
+            {creating ? "Creating..." : done ? "Done" : "Create App"}
           </Button>
         </div>
       </DialogContent>

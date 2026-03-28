@@ -28,6 +28,7 @@ interface ChatInputProps {
   onModeChange: (mode: ChatMode) => void;
   todos: AgentTodo[];
   consentRequest: ConsentRequest | null;
+  consentError?: string | null;
   onConsentDecision: (decision: "allow" | "deny" | "always") => void;
   messages: Message[];
   tokenUsage?: { promptTokens?: number; completionTokens?: number } | null;
@@ -52,6 +53,7 @@ export function ChatInput({
   onModeChange,
   todos,
   consentRequest,
+  consentError,
   onConsentDecision,
   messages,
   tokenUsage,
@@ -126,8 +128,9 @@ export function ChatInput({
   }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Let slash popup handle navigation keys when visible
-    if (showSlash && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Tab")) {
+    const hasSlashItems = showSlash && slash.items.length > 0;
+    // Let slash popup handle navigation keys when visible with items
+    if (hasSlashItems && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Tab")) {
       return; // SlashCommandPopup handles these
     }
     if (showSlash && e.key === "Escape") {
@@ -136,9 +139,10 @@ export function ChatInput({
       return;
     }
     if (e.key === "Enter" && !e.shiftKey) {
-      if (showSlash) return; // Let popup handle Enter
+      if (hasSlashItems) return; // Let popup handle Enter only when it has items
       e.preventDefault();
       if (streaming) return;
+      setShowSlash(false);
       handleSubmit();
     }
   };
@@ -173,7 +177,7 @@ export function ChatInput({
   return (
     <div className="border-t bg-background">
       {consentRequest && (
-        <AgentConsentBanner consent={consentRequest} onDecision={onConsentDecision} />
+        <AgentConsentBanner consent={consentRequest} error={consentError} onDecision={onConsentDecision} />
       )}
       <TodoList todos={todos} />
       {showTokenBar && <TokenBar counts={tokenCounts} />}

@@ -7,9 +7,21 @@
  * the blocking poll in the SSE-stream worker.
  */
 import type { ToolDefinition } from "./types.ts";
+import { getAppWorkspacePath } from "./workspace.ts";
 
 const POLL_INTERVAL_MS = 500;
 const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
+/** Write plan content to specs/plan.md in the app workspace (best-effort). */
+async function writePlanToWorkspace(userId: string, appId: string | null | undefined, content: string) {
+  if (!appId) return;
+  try {
+    const wsPath = getAppWorkspacePath(userId, appId);
+    const specsDir = `${wsPath}/specs`;
+    await Deno.mkdir(specsDir, { recursive: true });
+    await Deno.writeTextFile(`${specsDir}/plan.md`, content);
+  } catch { /* best-effort — workspace may not exist yet */ }
+}
 
 /** Resolve a pending questionnaire by writing the answer to the DB */
 export async function resolveQuestionnaire(requestId, answers, userId, sql) {
@@ -144,6 +156,9 @@ export const writePlanTool: ToolDefinition<{ content: string }> = {
       [ctx.chatId, args.content],
     );
 
+    // Write plan to specs/plan.md in the app workspace
+    await writePlanToWorkspace(ctx.userId, ctx.appId, args.content);
+
     // Notify client
     ctx.send({ type: "plan_update", content: args.content });
 
@@ -178,6 +193,17 @@ export const exitPlanTool: ToolDefinition<{ confirmation: boolean }> = {
       `UPDATE devx.plans SET status = 'accepted', updated_at = NOW() WHERE chat_id = $1`,
       [ctx.chatId],
     );
+
+    // Write the accepted plan to specs/plan.md in the app workspace
+    try {
+      const planResult = await ctx.sql(
+        `SELECT content FROM devx.plans WHERE chat_id = $1`,
+        [ctx.chatId],
+      );
+      if (planResult.rows.length > 0 && planResult.rows[0].content) {
+        await writePlanToWorkspace(ctx.userId, ctx.appId, planResult.rows[0].content);
+      }
+    } catch { /* best-effort */ }
 
     // Switch chat mode to agent
     await ctx.sql(

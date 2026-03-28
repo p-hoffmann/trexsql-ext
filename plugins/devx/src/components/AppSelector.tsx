@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Box, Plus, ChevronDown, Trash2, Settings2 } from "lucide-react";
+import { Box, Plus, ChevronDown, Trash2, Settings2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -14,6 +14,7 @@ import { AppCreateDialog } from "./AppCreateDialog";
 
 interface AppSelectorProps {
   apps: App[];
+  loading?: boolean;
   activeAppId: string | null;
   onSelectApp: (appId: string | null) => void;
   onCreateApp: (name: string, template?: string) => Promise<App>;
@@ -22,6 +23,7 @@ interface AppSelectorProps {
 
 export function AppSelector({
   apps,
+  loading,
   activeAppId,
   onSelectApp,
   onCreateApp,
@@ -35,9 +37,13 @@ export function AppSelector({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" className="gap-1.5 max-w-48">
-            <Box className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{activeApp ? activeApp.name : "No app"}</span>
+          <Button variant="outline" size="sm" className="gap-1.5 max-w-48" disabled={loading}>
+            {loading ? (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            ) : (
+              <Box className="h-3.5 w-3.5 shrink-0" />
+            )}
+            <span className="truncate">{loading ? "Loading apps..." : activeApp ? activeApp.name : "No app"}</span>
             <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
           </Button>
         </DropdownMenuTrigger>

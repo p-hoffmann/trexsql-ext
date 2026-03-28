@@ -3,6 +3,10 @@ import { getAppWorkspacePath } from "../tools/workspace.ts";
 import { duckdb, escapeSql } from "../duckdb.ts";
 import { SECURITY_REVIEW_SYSTEM_PROMPT, parseSecurityFindings } from "../security_review_prompt.ts";
 import { CODE_REVIEW_SYSTEM_PROMPT, parseCodeReviewFindings } from "../code_review_prompt.ts";
+import { QA_REVIEW_SYSTEM_PROMPT, parseQaFindings } from "../qa_review_prompt.ts";
+import { DESIGN_REVIEW_SYSTEM_PROMPT, parseDesignFindings } from "../design_review_prompt.ts";
+import { gitOps } from "../git.ts";
+import { devServerManager } from "../dev_server.ts";
 
 const EXCLUDED_DIRS = new Set([
   "node_modules", ".git", "dist", "build", ".next", ".venv", "venv",
@@ -11,9 +15,21 @@ const EXCLUDED_DIRS = new Set([
 
 const CODE_EXTENSIONS = /\.(ts|tsx|js|jsx|mjs|cjs|json|env|yaml|yml|py|sql|html|css|vue|svelte)$/;
 
-const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
-const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
-const GOOGLE_GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+// Tool allowlists per review type
+const CODE_REVIEW_TOOLS = [
+  "read_file", "list_files", "grep", "code_search", "git_diff", "git_log", "git_status",
+];
+const SECURITY_REVIEW_TOOLS = [
+  "read_file", "list_files", "grep", "code_search", "git_diff", "git_log", "git_status",
+];
+const QA_REVIEW_TOOLS = [
+  "browser_navigate", "browser_click", "browser_fill", "browser_get_text", "browser_evaluate",
+  "read_file", "list_files", "grep", "git_diff",
+];
+const DESIGN_REVIEW_TOOLS = [
+  "browser_navigate", "browser_click", "browser_screenshot", "browser_get_text",
+  "read_file", "list_files", "grep", "git_diff",
+];
 
 export async function handleSecurityRoutes(path, method, req, userId, sql, corsHeaders) {
   // POST /apps/:id/security/scan — fast npm audit + secret scan (unchanged)
@@ -89,19 +105,20 @@ export async function handleSecurityRoutes(path, method, req, userId, sql, corsH
     return Response.json({ findings }, { headers: corsHeaders });
   }
 
-  // ── AI-powered review (shared logic) ──────────────────────────────
+  // ── Agent-powered review (shared logic) ────────────────────────────
 
-  // Helper: run an AI review and return SSE Response
-  async function runAIReview(opts: {
+  async function runAgentReview(opts: {
     appId: string;
     systemPrompt: string;
-    userMessagePrefix: string;
+    userMessage: string;
     parseFindings: (text: string) => { title: string; level: string; description: string }[];
     table: string;
     eventPrefix: string;
+    allowedTools: string[];
+    maxSteps?: number;
   }) {
     const settingsResult = await sql(
-      `SELECT provider, model, api_key, base_url FROM devx.settings WHERE user_id = $1 LIMIT 1`,
+      `SELECT provider, model, api_key, base_url, ai_rules, auto_approve, max_steps FROM devx.settings WHERE user_id = $1 LIMIT 1`,
       [userId],
     );
     if (settingsResult.rows.length === 0 || !settingsResult.rows[0].api_key) {
@@ -112,22 +129,13 @@ export async function handleSecurityRoutes(path, method, req, userId, sql, corsH
     }
 
     const settings = settingsResult.rows[0];
-    const wsPath = getAppWorkspacePath(userId, opts.appId);
-    const files = await collectCodeFiles(wsPath);
 
-    if (files.length === 0) {
-      return Response.json(
-        { error: "No code files found to review" },
-        { status: 400, headers: corsHeaders },
-      );
-    }
-
-    // Fetch previous review to include as reference
+    // Fetch previous review for context
     let previousContext = "";
     try {
       const prevResult = await sql(
-        `SELECT findings, created_at FROM devx.${opts.table} WHERE app_id = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT 1`,
-        [opts.appId, userId],
+        `SELECT findings, created_at FROM devx.agent_results WHERE app_id = $1 AND user_id = $2 AND result_type = $3 ORDER BY created_at DESC LIMIT 1`,
+        [opts.appId, userId, opts.table],
       );
       if (prevResult.rows.length > 0) {
         const prevFindings = typeof prevResult.rows[0].findings === "string"
@@ -137,13 +145,12 @@ export async function handleSecurityRoutes(path, method, req, userId, sql, corsH
           const prevList = prevFindings.map((f: any) =>
             `- [${f.level}] ${f.title}: ${f.description.substring(0, 200)}`
           ).join("\n");
-          previousContext = `\n\n---\n\nIMPORTANT: A previous review found these issues (from ${prevResult.rows[0].created_at}):\n\n${prevList}\n\nFor each previous finding, check if it is still present in the code. If it is still present, include it again in your findings. If it has been fixed, do NOT include it. Do NOT drop previous findings just because you want to report new ones — if the vulnerability still exists in the code, it MUST appear in your output. New findings should also be reported.`;
+          previousContext = `\n\n---\n\nIMPORTANT: A previous review found these issues (from ${prevResult.rows[0].created_at}):\n\n${prevList}\n\nFor each previous finding, check if it is still present. If it is still present, include it again in your findings. If it has been fixed, do NOT include it. Do NOT drop previous findings just because you want to report new ones — if the issue still exists, it MUST appear in your output. New findings should also be reported.`;
         }
       }
     } catch { /* ignore — first review */ }
 
-    const codeContext = files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
-    const userMessage = `${opts.userMessagePrefix}:\n\n${codeContext}${previousContext}`;
+    const fullUserMessage = `${opts.userMessage}${previousContext}`;
 
     const stream = new ReadableStream({
       async start(controller) {
@@ -152,15 +159,79 @@ export async function handleSecurityRoutes(path, method, req, userId, sql, corsH
         };
 
         try {
-          send({ type: `${opts.eventPrefix}_progress`, message: `Reviewing ${files.length} files...` });
+          send({ type: `${opts.eventPrefix}_progress`, message: "Starting review agent..." });
 
-          const fullResponse = await callAIProvider(settings, opts.systemPrompt, userMessage, send, opts.eventPrefix);
-          const findings = opts.parseFindings(fullResponse);
+          // Import streamAgentChat dynamically to avoid circular deps
+          const { streamAgentChat } = await import("../agent.ts");
 
+          // Create a send wrapper that forwards agent events as review progress
+          let lastProgressTime = 0;
+          const agentSend = (data: any) => {
+            if (data.type === "chunk") {
+              // Throttle progress updates to avoid overwhelming the client
+              const now = Date.now();
+              if (now - lastProgressTime > 2000) {
+                send({ type: `${opts.eventPrefix}_progress`, message: "Analyzing..." });
+                lastProgressTime = now;
+              }
+            } else if (data.type === "tool_call_start") {
+              // Show which tool the agent is using
+              const toolMessages: Record<string, string> = {
+                read_file: "Reading file...",
+                list_files: "Exploring project structure...",
+                grep: "Searching codebase...",
+                code_search: "Searching code...",
+                git_diff: "Checking recent changes...",
+                git_log: "Reading git history...",
+                git_status: "Checking git status...",
+                browser_navigate: "Navigating to app...",
+                browser_click: "Interacting with app...",
+                browser_fill: "Filling form...",
+                browser_get_text: "Reading page content...",
+                browser_screenshot: "Taking screenshot...",
+                browser_evaluate: "Running browser check...",
+              };
+              const msg = toolMessages[data.name] || `Using ${data.name}...`;
+              send({ type: `${opts.eventPrefix}_progress`, message: msg });
+            } else if (data.type === "step") {
+              send({ type: `${opts.eventPrefix}_progress`, message: `Step ${data.step}/${data.maxSteps}...` });
+            }
+          };
+
+          // Run the agent
+          const result = await streamAgentChat({
+            // Synthetic chatId — not a real chat row. Safe because auto_approve
+            // bypasses consent (which uses chatId for resolution), and hooks
+            // query by userId, not chatId.
+            chatId: `review-${opts.appId}-${Date.now()}`,
+            userId,
+            appId: opts.appId,
+            chatMode: "agent",
+            settings: {
+              ...settings,
+              max_steps: opts.maxSteps || 20,
+              auto_approve: true, // Auto-approve all tool calls for reviews
+            },
+            history: [{ role: "user", content: fullUserMessage }],
+            send: agentSend,
+            sqlFn: sql,
+            skillContext: opts.systemPrompt,
+            commandOverride: {
+              allowed_tools: opts.allowedTools,
+              model: null,
+              body: "",
+            },
+          });
+
+          // Parse findings from the agent's final response
+          const agentResponse = result.content || "";
+          const findings = opts.parseFindings(agentResponse);
+
+          // Store in DB
           const insertResult = await sql(
-            `INSERT INTO devx.${opts.table} (app_id, user_id, findings)
-             VALUES ($1, $2, $3) RETURNING id, created_at`,
-            [opts.appId, userId, JSON.stringify(findings)],
+            `INSERT INTO devx.agent_results (app_id, user_id, result_type, findings)
+             VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
+            [opts.appId, userId, opts.table, JSON.stringify(findings)],
           );
 
           send({
@@ -180,70 +251,201 @@ export async function handleSecurityRoutes(path, method, req, userId, sql, corsH
     });
   }
 
-  // POST /apps/:id/security/review — AI-powered security review
+  // Helper: check app ownership
+  async function checkApp(appId: string) {
+    const appCheck = await sql(`SELECT id FROM devx.apps WHERE id = $1 AND user_id = $2`, [appId, userId]);
+    return appCheck.rows.length > 0;
+  }
+
+  // Helper: get latest review by result type
+  async function getLatestReview(appId: string, resultType: string) {
+    const result = await sql(
+      `SELECT id, findings, created_at FROM devx.agent_results WHERE app_id = $1 AND user_id = $2 AND result_type = $3 ORDER BY created_at DESC LIMIT 1`,
+      [appId, userId, resultType],
+    );
+    return result.rows.length === 0 ? null : result.rows[0];
+  }
+
+  // Helper: build code context user message
+  async function buildCodeReviewMessage(appId: string, prefix: string) {
+    const wsPath = getAppWorkspacePath(userId, appId);
+    const files = await collectCodeFiles(wsPath);
+    if (files.length === 0) {
+      return null;
+    }
+    return `${prefix}\n\nThe project has ${files.length} code files. Use your tools (read_file, grep, git_diff, list_files) to explore the codebase in depth. Here is a summary of the files for context:\n\n${files.map((f) => `- ${f.path} (${f.content.length} chars)`).join("\n")}`;
+  }
+
+  // Helper: build QA/Design review message with git diff and app URL.
+  // Returns { error } on failure or { message, appUrl } on success.
+  async function buildBrowserReviewMessage(appId: string, prefix: string): Promise<{ error: string } | { message: string; appUrl: string }> {
+    const wsPath = getAppWorkspacePath(userId, appId);
+
+    // Get dev server status - require it to be running
+    const serverStatus = await devServerManager.getStatus(userId, appId);
+    if (serverStatus.status !== "running" || !serverStatus.port) {
+      return { error: "Dev server must be running to perform this review. Start the dev server first." };
+    }
+
+    const appUrl = `http://localhost:${serverStatus.port}`;
+
+    // Get git diff for change context
+    let gitDiff = "";
+    try {
+      gitDiff = await gitOps.diff(wsPath);
+    } catch { /* no git */ }
+
+    // Get file list for context
+    const files = await collectCodeFiles(wsPath);
+    const fileList = files.map((f) => `- ${f.path}`).join("\n");
+
+    let message = `${prefix}\n\n**App URL**: ${appUrl}\n\n`;
+    if (gitDiff) {
+      message += `**Recent Changes (git diff)**:\n\`\`\`\n${gitDiff.slice(0, 20000)}\n\`\`\`\n\n`;
+    }
+    message += `**Project Files**:\n${fileList}\n\nStart by navigating to ${appUrl} and testing the application.`;
+
+    return { message, appUrl };
+  }
+
+  // ── POST /apps/:id/security/review ─────────────────────────────────
+
   const secReviewMatch = path.match(/\/apps\/([^/]+)\/security\/review$/);
   if (secReviewMatch && method === "POST") {
     const appId = secReviewMatch[1];
-    const appCheck = await sql(`SELECT id FROM devx.apps WHERE id = $1 AND user_id = $2`, [appId, userId]);
-    if (appCheck.rows.length === 0) {
+    if (!await checkApp(appId)) {
       return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
     }
-    return runAIReview({
+    const userMessage = await buildCodeReviewMessage(appId, "Perform a thorough security review of this codebase. Use your tools to explore files, search for patterns, and check git history.");
+    if (!userMessage) {
+      return Response.json({ error: "No code files found to review" }, { status: 400, headers: corsHeaders });
+    }
+    return runAgentReview({
       appId,
       systemPrompt: SECURITY_REVIEW_SYSTEM_PROMPT,
-      userMessagePrefix: "Review the following codebase for security vulnerabilities",
+      userMessage,
       parseFindings: parseSecurityFindings,
-      table: "security_reviews",
+      table: "security-review",
       eventPrefix: "review",
+      allowedTools: SECURITY_REVIEW_TOOLS,
+      maxSteps: 20,
     });
   }
 
-  // GET /apps/:id/security/reviews — get latest security review
+  // ── GET /apps/:id/security/reviews ─────────────────────────────────
+
   const secReviewsMatch = path.match(/\/apps\/([^/]+)\/security\/reviews$/);
   if (secReviewsMatch && method === "GET") {
     const appId = secReviewsMatch[1];
-    const appCheck = await sql(`SELECT id FROM devx.apps WHERE id = $1 AND user_id = $2`, [appId, userId]);
-    if (appCheck.rows.length === 0) {
+    if (!await checkApp(appId)) {
       return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
     }
-    const result = await sql(
-      `SELECT id, findings, created_at FROM devx.security_reviews WHERE app_id = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT 1`,
-      [appId, userId],
-    );
-    return Response.json(result.rows.length === 0 ? null : result.rows[0], { headers: corsHeaders });
+    return Response.json(await getLatestReview(appId, "security-review"), { headers: corsHeaders });
   }
 
-  // POST /apps/:id/code/review — AI-powered code review
+  // ── POST /apps/:id/code/review ─────────────────────────────────────
+
   const codeReviewMatch = path.match(/\/apps\/([^/]+)\/code\/review$/);
   if (codeReviewMatch && method === "POST") {
     const appId = codeReviewMatch[1];
-    const appCheck = await sql(`SELECT id FROM devx.apps WHERE id = $1 AND user_id = $2`, [appId, userId]);
-    if (appCheck.rows.length === 0) {
+    if (!await checkApp(appId)) {
       return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
     }
-    return runAIReview({
+    const userMessage = await buildCodeReviewMessage(appId, "Perform a thorough code review of this codebase. Use your tools to explore files, search for patterns, and check git history for recent changes.");
+    if (!userMessage) {
+      return Response.json({ error: "No code files found to review" }, { status: 400, headers: corsHeaders });
+    }
+    return runAgentReview({
       appId,
       systemPrompt: CODE_REVIEW_SYSTEM_PROMPT,
-      userMessagePrefix: "Review the following codebase for bugs, logic errors, and code quality issues",
+      userMessage,
       parseFindings: parseCodeReviewFindings,
-      table: "code_reviews",
+      table: "code-review",
       eventPrefix: "code_review",
+      allowedTools: CODE_REVIEW_TOOLS,
+      maxSteps: 20,
     });
   }
 
-  // GET /apps/:id/code/reviews — get latest code review
+  // ── GET /apps/:id/code/reviews ─────────────────────────────────────
+
   const codeReviewsMatch = path.match(/\/apps\/([^/]+)\/code\/reviews$/);
   if (codeReviewsMatch && method === "GET") {
     const appId = codeReviewsMatch[1];
-    const appCheck = await sql(`SELECT id FROM devx.apps WHERE id = $1 AND user_id = $2`, [appId, userId]);
-    if (appCheck.rows.length === 0) {
+    if (!await checkApp(appId)) {
       return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
     }
-    const result = await sql(
-      `SELECT id, findings, created_at FROM devx.code_reviews WHERE app_id = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT 1`,
-      [appId, userId],
-    );
-    return Response.json(result.rows.length === 0 ? null : result.rows[0], { headers: corsHeaders });
+    return Response.json(await getLatestReview(appId, "code-review"), { headers: corsHeaders });
+  }
+
+  // ── POST /apps/:id/qa/review ───────────────────────────────────────
+
+  const qaReviewMatch = path.match(/\/apps\/([^/]+)\/qa\/review$/);
+  if (qaReviewMatch && method === "POST") {
+    const appId = qaReviewMatch[1];
+    if (!await checkApp(appId)) {
+      return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
+    }
+    const result = await buildBrowserReviewMessage(appId, "Perform functional QA testing on the running web application. Use Playwright browser tools to navigate, click, fill forms, and verify behavior.");
+    if (result.error) {
+      return Response.json({ error: result.error }, { status: 400, headers: corsHeaders });
+    }
+    return runAgentReview({
+      appId,
+      systemPrompt: QA_REVIEW_SYSTEM_PROMPT,
+      userMessage: result.message,
+      parseFindings: parseQaFindings,
+      table: "qa-test",
+      eventPrefix: "qa_review",
+      allowedTools: QA_REVIEW_TOOLS,
+      maxSteps: 30,
+    });
+  }
+
+  // ── GET /apps/:id/qa/reviews ───────────────────────────────────────
+
+  const qaReviewsMatch = path.match(/\/apps\/([^/]+)\/qa\/reviews$/);
+  if (qaReviewsMatch && method === "GET") {
+    const appId = qaReviewsMatch[1];
+    if (!await checkApp(appId)) {
+      return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
+    }
+    return Response.json(await getLatestReview(appId, "qa-test"), { headers: corsHeaders });
+  }
+
+  // ── POST /apps/:id/design/review ───────────────────────────────────
+
+  const designReviewMatch = path.match(/\/apps\/([^/]+)\/design\/review$/);
+  if (designReviewMatch && method === "POST") {
+    const appId = designReviewMatch[1];
+    if (!await checkApp(appId)) {
+      return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
+    }
+    const result = await buildBrowserReviewMessage(appId, "Perform a visual design review of the running web application. Use Playwright browser tools to navigate and take screenshots for analysis.");
+    if (result.error) {
+      return Response.json({ error: result.error }, { status: 400, headers: corsHeaders });
+    }
+    return runAgentReview({
+      appId,
+      systemPrompt: DESIGN_REVIEW_SYSTEM_PROMPT,
+      userMessage: result.message,
+      parseFindings: parseDesignFindings,
+      table: "design-review",
+      eventPrefix: "design_review",
+      allowedTools: DESIGN_REVIEW_TOOLS,
+      maxSteps: 25,
+    });
+  }
+
+  // ── GET /apps/:id/design/reviews ───────────────────────────────────
+
+  const designReviewsMatch = path.match(/\/apps\/([^/]+)\/design\/reviews$/);
+  if (designReviewsMatch && method === "GET") {
+    const appId = designReviewsMatch[1];
+    if (!await checkApp(appId)) {
+      return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
+    }
+    return Response.json(await getLatestReview(appId, "design-review"), { headers: corsHeaders });
   }
 
   return null;
@@ -283,256 +485,4 @@ async function collectCodeFiles(wsPath: string): Promise<{ path: string; content
 
   await walk(wsPath);
   return files;
-}
-
-// ── AI Provider Calls ─────────────────────────────────────────────
-
-async function callAIProvider(
-  settings: { provider: string; model: string; api_key: string; base_url?: string },
-  systemPrompt: string,
-  userMessage: string,
-  send: (data: any) => void,
-  eventPrefix: string,
-): Promise<string> {
-  if (settings.provider === "anthropic") {
-    return callAnthropic(settings, systemPrompt, userMessage, send, eventPrefix);
-  } else if (settings.provider === "google") {
-    return callGoogle(settings, systemPrompt, userMessage, send, eventPrefix);
-  } else if (settings.provider === "bedrock") {
-    return callBedrock(settings, systemPrompt, userMessage, send, eventPrefix);
-  } else {
-    return callOpenAI(settings, systemPrompt, userMessage, send, eventPrefix);
-  }
-}
-
-async function callAnthropic(
-  settings: { model: string; api_key: string },
-  systemPrompt: string,
-  userMessage: string,
-  send: (data: any) => void,
-  eventPrefix: string,
-): Promise<string> {
-  const response = await fetch(ANTHROPIC_MESSAGES_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": settings.api_key,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: settings.model,
-      max_tokens: 8192,
-      stream: true,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userMessage }],
-    }),
-  });
-
-  if (!response.ok) {
-    const errBody = await response.text();
-    throw new Error(`Anthropic API error ${response.status}: ${errBody}`);
-  }
-
-  return readSSEStream(response, () => {
-    send({ type: `${eventPrefix}_progress`, message: "Analyzing code..." });
-  }, "anthropic");
-}
-
-async function callOpenAI(
-  settings: { model: string; api_key: string; base_url?: string },
-  systemPrompt: string,
-  userMessage: string,
-  send: (data: any) => void,
-  eventPrefix: string,
-): Promise<string> {
-  const baseUrl = settings.base_url
-    ? `${settings.base_url}/v1/chat/completions`
-    : OPENAI_CHAT_URL;
-
-  const response = await fetch(baseUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${settings.api_key}`,
-    },
-    body: JSON.stringify({
-      model: settings.model,
-      stream: true,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
-      ],
-    }),
-  });
-
-  if (!response.ok) {
-    const errBody = await response.text();
-    throw new Error(`OpenAI API error ${response.status}: ${errBody}`);
-  }
-
-  return readSSEStream(response, () => {
-    send({ type: `${eventPrefix}_progress`, message: "Analyzing code..." });
-  }, "openai");
-}
-
-async function callGoogle(
-  settings: { model: string; api_key: string },
-  systemPrompt: string,
-  userMessage: string,
-  send: (data: any) => void,
-  eventPrefix: string,
-): Promise<string> {
-  const googleUrl = `${GOOGLE_GENERATE_URL}/${settings.model}:streamGenerateContent?alt=sse&key=${settings.api_key}`;
-
-  const response = await fetch(googleUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: "user", parts: [{ text: userMessage }] }],
-    }),
-  });
-
-  if (!response.ok) {
-    const errBody = await response.text();
-    throw new Error(`Google API error ${response.status}: ${errBody}`);
-  }
-
-  return readSSEStream(response, () => {
-    send({ type: `${eventPrefix}_progress`, message: "Analyzing code..." });
-  }, "google");
-}
-
-async function callBedrock(
-  settings: { model: string; api_key: string; base_url?: string },
-  systemPrompt: string,
-  userMessage: string,
-  send: (data: any) => void,
-  eventPrefix: string,
-): Promise<string> {
-  const region = settings.base_url || "us-east-1";
-
-  // Extract bearer token from api_key (JSON credentials)
-  let bearerToken = "";
-  try {
-    const creds = JSON.parse(settings.api_key);
-    bearerToken = creds.bearerToken || "";
-  } catch { /* not JSON */ }
-  if (!bearerToken) {
-    bearerToken = Deno.env.get("AWS_BEARER_TOKEN_BEDROCK") || "";
-  }
-  if (!bearerToken) {
-    throw new Error("AWS Bearer Token not configured for Bedrock");
-  }
-
-  const host = `bedrock-runtime.${region}.amazonaws.com`;
-  const url = `https://${host}/model/${settings.model}/converse-stream`;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${bearerToken}`,
-    },
-    body: JSON.stringify({
-      system: [{ text: systemPrompt }],
-      messages: [{ role: "user", content: [{ text: userMessage }] }],
-      inferenceConfig: { maxTokens: 8192 },
-    }),
-  });
-
-  if (!response.ok) {
-    const errBody = await response.text();
-    throw new Error(`Bedrock API error ${response.status}: ${errBody}`);
-  }
-
-  // Parse AWS event stream binary protocol
-  let fullContent = "";
-  const reader = response.body!.getReader();
-  let buf = new Uint8Array(0);
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    const newBuf = new Uint8Array(buf.length + value.length);
-    newBuf.set(buf);
-    newBuf.set(value, buf.length);
-    buf = newBuf;
-
-    while (buf.length >= 12) {
-      const view = new DataView(buf.buffer, buf.byteOffset);
-      const totalLen = view.getUint32(0);
-      if (buf.length < totalLen) break;
-
-      const headersLen = view.getUint32(4);
-      const payloadOffset = 12 + headersLen;
-      const payloadLen = totalLen - payloadOffset - 4;
-
-      if (payloadLen > 0) {
-        try {
-          const payloadStr = new TextDecoder().decode(buf.slice(payloadOffset, payloadOffset + payloadLen));
-          const payload = JSON.parse(payloadStr);
-          const text = payload.delta?.text ?? payload.contentBlockDelta?.delta?.text;
-          if (text) {
-            fullContent += text;
-            send({ type: `${eventPrefix}_progress`, message: "Analyzing code..." });
-          }
-        } catch { /* skip */ }
-      }
-      buf = buf.slice(totalLen);
-    }
-  }
-
-  return fullContent;
-}
-
-/**
- * Read an SSE stream and extract text content from provider-specific format.
- */
-async function readSSEStream(
-  response: Response,
-  onChunk: (text: string) => void,
-  provider: "anthropic" | "openai" | "google",
-): Promise<string> {
-  let fullContent = "";
-  const reader = response.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      const data = line.slice(6).trim();
-      if (data === "[DONE]") continue;
-
-      try {
-        const parsed = JSON.parse(data);
-        let text = "";
-
-        if (provider === "anthropic") {
-          if (parsed.type === "content_block_delta" && parsed.delta?.text) {
-            text = parsed.delta.text;
-          }
-        } else if (provider === "openai") {
-          text = parsed.choices?.[0]?.delta?.content || "";
-        } else if (provider === "google") {
-          text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        }
-
-        if (text) {
-          fullContent += text;
-          onChunk(text);
-        }
-      } catch { /* skip malformed */ }
-    }
-  }
-
-  return fullContent;
 }

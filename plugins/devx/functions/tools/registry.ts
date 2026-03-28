@@ -50,6 +50,11 @@ import {
 } from "./knowledge_base.ts";
 // Subagents
 import { spawnAgentTool } from "./spawn_agent.ts";
+// Playwright browser tools
+import {
+  browserNavigateTool, browserClickTool, browserFillTool,
+  browserGetTextTool, browserScreenshotTool, browserEvaluateTool,
+} from "./playwright.ts";
 
 /** All registered tools */
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
@@ -115,6 +120,13 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   kbFindSymbolsTool,
   // Subagents
   spawnAgentTool,
+  // Playwright browser tools
+  browserNavigateTool,
+  browserClickTool,
+  browserFillTool,
+  browserGetTextTool,
+  browserScreenshotTool,
+  browserEvaluateTool,
 ];
 
 /**

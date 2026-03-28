@@ -25,7 +25,7 @@ export default function ChatPage() {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [activeAppId, setActiveAppId] = useState<string | null>(null);
   const { chats, create, remove, updateMode } = useChats(activeAppId);
-  const { apps, create: createApp, remove: removeApp } = useApps();
+  const { apps, loading: appsLoading, create: createApp, remove: removeApp } = useApps();
   useSettings(); // pre-load settings for navigation to settings page
   const [isResizing, setIsResizing] = useState(false);
   const [modeOverride, setModeOverride] = useState<ChatMode | null>(null);
@@ -155,6 +155,7 @@ export default function ChatPage() {
           <h1 className="text-sm font-semibold">DevX</h1>
           <AppSelector
             apps={apps}
+            loading={appsLoading}
             activeAppId={activeAppId}
             onSelectApp={setActiveAppId}
             onCreateApp={handleCreateApp}

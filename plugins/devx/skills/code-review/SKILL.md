@@ -1,9 +1,10 @@
 ---
 name: code-review
 slug: code-review
+aliases: ["review"]
 description: This skill should be used when the user asks to "review code", "find bugs",
   "check code quality", "audit code", "review for issues", or "code review".
-version: 0.1.0
+version: 0.2.0
 mode: agent
 ---
 

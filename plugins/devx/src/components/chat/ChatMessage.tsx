@@ -1,7 +1,7 @@
 import { memo, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Bot, User, Copy, Check } from "lucide-react";
+import { Bot, User, Copy, Check, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -173,21 +173,30 @@ function InlineToolCallContent({
     return map;
   }, [toolCalls]);
 
-  const parts = useMemo(() => {
-    const result: { type: "markdown"; text: string }[] | { type: "tool"; tc: ToolCall }[] = [];
+  type InlinePart =
+    | { type: "markdown"; text: string }
+    | { type: "tool"; tc: ToolCall }
+    | { type: "tool_loading"; callId: string };
+
+  const parts = useMemo<InlinePart[]>(() => {
+    const result: InlinePart[] = [];
     let lastIndex = 0;
     const re = new RegExp(TOOL_MARKER_RE_G.source, "g");
     let match: RegExpExecArray | null;
     while ((match = re.exec(content)) !== null) {
       const before = stripDevxTags(content.slice(lastIndex, match.index)).trim();
-      if (before) (result as { type: string; text?: string; tc?: ToolCall }[]).push({ type: "markdown", text: before });
+      if (before) result.push({ type: "markdown", text: before });
       const tc = toolCallMap.get(match[1]);
-      if (tc) (result as { type: string; text?: string; tc?: ToolCall }[]).push({ type: "tool", tc });
+      if (tc) {
+        result.push({ type: "tool", tc });
+      } else {
+        result.push({ type: "tool_loading", callId: match[1] });
+      }
       lastIndex = re.lastIndex;
     }
     const remaining = stripDevxTags(content.slice(lastIndex)).trim();
-    if (remaining) (result as { type: string; text?: string; tc?: ToolCall }[]).push({ type: "markdown", text: remaining });
-    return result as ({ type: "markdown"; text: string } | { type: "tool"; tc: ToolCall })[];
+    if (remaining) result.push({ type: "markdown", text: remaining });
+    return result;
   }, [content, toolCallMap]);
 
   return (
@@ -197,8 +206,13 @@ function InlineToolCallContent({
           <div key={i} className="prose prose-sm dark:prose-invert max-w-none break-words text-sm">
             <MarkdownContent content={part.text} />
           </div>
-        ) : (
+        ) : part.type === "tool" ? (
           <ToolCallCard key={part.tc.callId} toolCall={part.tc} />
+        ) : (
+          <div key={part.callId} className="flex items-center gap-2 my-1.5 rounded-md border bg-muted/50 px-3 py-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">Running tool...</span>
+          </div>
         ),
       )}
     </>
@@ -238,7 +252,11 @@ export const ChatMessage = memo(function ChatMessage({
     () => (useInlineTags ? parseDevxTags(rawContent) : []),
     [useInlineTags, rawContent],
   );
-  const content = useInlineTags ? "" : (isAssistant ? stripDevxTags(rawContent) : rawContent);
+  // Strip legacy bracket notation from older user messages (e.g. "[Visual edit target: ...]")
+  const cleanedContent = isAssistant ? rawContent : rawContent
+    .replace(/^\[Visual edit target: [^\]]+\]\n?/, "")
+    .replace(/^\[Selected components: [^\]]+\]\n?/, "");
+  const content = useInlineTags ? "" : (isAssistant ? stripDevxTags(cleanedContent) : cleanedContent);
   const hasToolMarkers = TOOL_MARKER_RE.test(content);
   // Strip tool markers for display — only when not rendering inline
   const contentWithoutMarkers = content.replace(TOOL_MARKER_RE_G, "").trim();
@@ -311,9 +329,14 @@ export const ChatMessage = memo(function ChatMessage({
               <span className="inline-block h-4 w-1.5 animate-pulse bg-foreground/50 ml-0.5" />
             )}
           </>
-        ) : isAssistant && !isStreaming && hasToolCalls && hasToolMarkers ? (
-          /* Completed messages: render tool calls inline at their marker positions */
-          <InlineToolCallContent content={content} toolCalls={completedToolCalls!} />
+        ) : isAssistant && hasToolMarkers && hasToolCalls ? (
+          /* Render tool calls inline at their marker positions (streaming + completed) */
+          <>
+            <InlineToolCallContent content={content} toolCalls={completedToolCalls!} />
+            {isStreaming && (
+              <span className="inline-block h-4 w-1.5 animate-pulse bg-foreground/50 ml-0.5" />
+            )}
+          </>
         ) : contentWithoutMarkers ? (
           <div className="prose prose-sm dark:prose-invert max-w-none break-words text-sm">
             {isAssistant ? (
@@ -328,12 +351,11 @@ export const ChatMessage = memo(function ChatMessage({
             )}
           </div>
         ) : null}
-        {!contentWithoutMarkers && !useInlineTags && isStreaming && !hasToolCalls && (
+        {!contentWithoutMarkers && !useInlineTags && isStreaming && !hasToolCalls && !hasToolMarkers && (
           <StreamingLoader />
         )}
-        {/* During streaming: show tool calls below text as they complete */}
-        {/* After completion: show only if no inline markers (fallback for old messages) */}
-        {hasToolCalls && (isStreaming || !hasToolMarkers) && (
+        {/* Fallback: show tool calls below text only for messages without inline markers */}
+        {hasToolCalls && !hasToolMarkers && (
           <div className="space-y-1.5 my-2">
             {completedToolCalls!.map((tc) => (
               <ToolCallCard key={tc.callId} toolCall={tc} />
