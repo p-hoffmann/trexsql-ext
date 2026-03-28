@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
   PanelGroup,
@@ -53,6 +53,13 @@ export default function ChatPage() {
   const handleFixPrompt = useCallback((prompt: string) => {
     sendRef.current?.(prompt);
   }, []);
+
+  // Auto-select the first chat when chats load and none is selected
+  useEffect(() => {
+    if (!activeChatId && chats.length > 0) {
+      setActiveChatId(chats[0].id);
+    }
+  }, [chats, activeChatId]);
 
   const activeChat = chats.find((c) => c.id === activeChatId);
   const currentMode: ChatMode = modeOverride ?? activeChat?.mode ?? "agent";
@@ -235,6 +242,7 @@ export default function ChatPage() {
             onAppCommand={handleAppCommand}
             onBuildAction={handleBuildAction}
             sendRef={sendRef}
+            onNewChat={handleNewChat}
           />
         </Panel>
 

@@ -182,6 +182,11 @@ export function useMessages(chatId: string | null, options?: { onAppCommand?: (c
             toolCallsRef.current = next;
             return next;
           });
+          // Trigger file refresh when agent writes/edits files
+          const fileTools = new Set(["write_file", "edit_file", "create_file", "delete_file"]);
+          if (fileTools.has(toolCall.name) && !toolCall.error) {
+            options?.onBuildAction?.({ action: "file_change" });
+          }
         },
         onConsentRequest(request) {
           setConsentRequest(request);

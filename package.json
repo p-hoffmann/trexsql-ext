@@ -17,6 +17,8 @@
     "@trex/tpm": "latest",
     "@trex/transform": "latest",
     "@trex/docs": "latest",
-    "@trex/web": "latest"
+    "@trex/web": "latest",
+    "@trex/devx-ext": "latest",
+    "@trex/pool": "latest"
   }
 }

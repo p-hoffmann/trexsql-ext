@@ -139,9 +139,6 @@ COPY --from=devx-builder /build/dist/ ./plugins-dev/devx/dist/
 COPY plugins/web/ ./plugins-dev/web/
 COPY plugins/storage/ ./plugins-dev/storage/
 
-# Copy locally-built devx extension if present (no-op in CI where it comes via extensions/)
-COPY plugins/devx-ext/build/release/devx_ext.tre[x] /usr/lib/trexsql/extensions/
-
 # Generate self-signed TLS cert for HTTPS
 RUN openssl req -new -x509 -days 3650 -nodes \
       -out /usr/src/server.crt -keyout /usr/src/server.key \
