@@ -4,12 +4,12 @@ export interface S3Result {
   bucket: aws.s3.BucketV2;
 }
 
-export function createS3(): S3Result {
-  const bucket = new aws.s3.BucketV2("trex-storage", {
+export function createS3(env: string): S3Result {
+  const bucket = new aws.s3.BucketV2(`trex-${env}-storage`, {
     forceDestroy: false,
   });
 
-  new aws.s3.BucketPublicAccessBlock("trex-storage-block", {
+  new aws.s3.BucketPublicAccessBlock(`trex-${env}-storage-block`, {
     bucket: bucket.id,
     blockPublicAcls: true,
     blockPublicPolicy: true,
@@ -17,7 +17,7 @@ export function createS3(): S3Result {
     restrictPublicBuckets: true,
   });
 
-  new aws.s3.BucketServerSideEncryptionConfigurationV2("trex-storage-enc", {
+  new aws.s3.BucketServerSideEncryptionConfigurationV2(`trex-${env}-storage-enc`, {
     bucket: bucket.id,
     rules: [
       {

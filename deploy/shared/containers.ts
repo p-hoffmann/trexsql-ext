@@ -49,8 +49,14 @@ export function buildTrexEnvVars(opts: {
   databaseUrl: string;
   authSecret: string;
   endpointUrl: string;
+  pluginsInformationUrl?: string;
+  tpmRegistryUrl?: string;
+  s3Bucket?: string;
+  s3Region?: string;
+  s3Endpoint?: string;
+  s3ForcePathStyle?: boolean;
 }): Record<string, string> {
-  return {
+  const env: Record<string, string> = {
     DATABASE_URL: opts.databaseUrl,
     BETTER_AUTH_SECRET: opts.authSecret,
     BETTER_AUTH_URL: `${opts.endpointUrl}/trex`,
@@ -63,6 +69,16 @@ export function buildTrexEnvVars(opts: {
     SWARM_CONFIG: buildSwarmConfig(8001, TREX_PORT),
     SWARM_NODE: "cloud",
   };
+  if (opts.pluginsInformationUrl) env.PLUGINS_INFORMATION_URL = opts.pluginsInformationUrl;
+  if (opts.tpmRegistryUrl) env.TPM_REGISTRY_URL = opts.tpmRegistryUrl;
+  if (opts.s3Bucket) {
+    env.STORAGE_BACKEND = "s3";
+    env.STORAGE_S3_BUCKET = opts.s3Bucket;
+    env.STORAGE_S3_REGION = opts.s3Region || "us-east-1";
+    if (opts.s3Endpoint) env.STORAGE_S3_ENDPOINT = opts.s3Endpoint;
+    if (opts.s3ForcePathStyle) env.STORAGE_S3_FORCE_PATH_STYLE = "true";
+  }
+  return env;
 }
 
 export function buildPostgrestEnvVars(opts: {
@@ -87,7 +103,7 @@ export function buildPostgrestEnvVars(opts: {
 }
 
 export const TREX_HEALTH_CHECK = {
-  path: "/trex/health",
+  path: "/trex/_internal/health",
   port: TREX_PORT,
   intervalSeconds: 30,
   timeoutSeconds: 10,

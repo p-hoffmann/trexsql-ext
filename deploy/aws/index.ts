@@ -8,19 +8,21 @@ import { createSecrets } from "./secrets";
 import { createEcs } from "./ecs";
 
 export function deployAws(config: DeployConfig) {
-  const sizing = getSizing("aws", config.environment);
+  const env = config.environment;
+  const sizing = getSizing("aws", env);
 
   // Secrets (DB password, auth secret)
-  const secrets = createSecrets();
+  const secrets = createSecrets(env);
 
-  // ACM certificate — user must provide ARN via config or create one
-  const certArn = new pulumi.Config("deploy").require("certificateArn");
+  // ACM certificate — optional; if not set, ALB uses HTTP only
+  const certArn = new pulumi.Config("deploy").get("certificateArn");
 
   // Networking (VPC, ALB, security groups, EFS)
-  const networking = createNetworking(sizing, certArn);
+  const networking = createNetworking(env, sizing, certArn);
 
   // RDS PostgreSQL
   const rds = createRds(
+    env,
     sizing,
     networking.vpc.vpcId,
     networking.vpc.privateSubnetIds,
@@ -29,12 +31,14 @@ export function deployAws(config: DeployConfig) {
   );
 
   // S3 bucket for storage plugin
-  const s3 = createS3();
+  const s3 = createS3(env);
 
   // ECS Fargate
-  const endpointUrl = pulumi.interpolate`https://${networking.alb.dnsName}`;
+  const protocol = certArn ? "https" : "http";
+  const endpointUrl = pulumi.interpolate`${protocol}://${networking.alb.dnsName}`;
 
   const ecs = createEcs({
+    env,
     sizing,
     ghcrImage: config.ghcrImage,
     vpcId: networking.vpc.vpcId,
@@ -47,6 +51,8 @@ export function deployAws(config: DeployConfig) {
     authSecret: secrets.authSecretPlain,
     endpointUrl,
     s3BucketName: s3.bucket.bucket,
+    pluginsInformationUrl: config.pluginsInformationUrl,
+    tpmRegistryUrl: config.tpmRegistryUrl,
   });
 
   const outputs: StackOutputs = {

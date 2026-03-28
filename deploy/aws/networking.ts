@@ -11,7 +11,7 @@ export interface NetworkingResult {
   rdsSecurityGroup: aws.ec2.SecurityGroup;
   alb: aws.lb.LoadBalancer;
   targetGroup: aws.lb.TargetGroup;
-  httpsListener: aws.lb.Listener;
+  httpsListener?: aws.lb.Listener;
   efs: aws.efs.FileSystem;
   efsSecurityGroup: aws.ec2.SecurityGroup;
   efsMountTargets: aws.efs.MountTarget[];
@@ -19,16 +19,19 @@ export interface NetworkingResult {
 }
 
 export function createNetworking(
+  env: string,
   sizing: Sizing,
-  certificateArn: pulumi.Input<string>
+  certificateArn?: pulumi.Input<string>
 ): NetworkingResult {
-  const vpc = new awsx.ec2.Vpc("trex-vpc", {
+  const vpc = new awsx.ec2.Vpc(`trex-${env}-vpc`, {
     numberOfAvailabilityZones: 2,
     natGateways: { strategy: awsx.ec2.NatGatewayStrategy.Single },
+    enableDnsHostnames: true,
+    enableDnsSupport: true,
   });
 
   // Security Groups
-  const albSecurityGroup = new aws.ec2.SecurityGroup("trex-alb-sg", {
+  const albSecurityGroup = new aws.ec2.SecurityGroup(`trex-${env}-alb-sg`, {
     vpcId: vpc.vpcId,
     ingress: [
       { protocol: "tcp", fromPort: 443, toPort: 443, cidrBlocks: ["0.0.0.0/0"] },
@@ -39,7 +42,7 @@ export function createNetworking(
     ],
   });
 
-  const ecsSecurityGroup = new aws.ec2.SecurityGroup("trex-ecs-sg", {
+  const ecsSecurityGroup = new aws.ec2.SecurityGroup(`trex-${env}-ecs-sg`, {
     vpcId: vpc.vpcId,
     ingress: [
       {
@@ -54,7 +57,7 @@ export function createNetworking(
     ],
   });
 
-  const rdsSecurityGroup = new aws.ec2.SecurityGroup("trex-rds-sg", {
+  const rdsSecurityGroup = new aws.ec2.SecurityGroup(`trex-${env}-rds-sg`, {
     vpcId: vpc.vpcId,
     ingress: [
       {
@@ -70,7 +73,7 @@ export function createNetworking(
   });
 
   // EFS for DuckDB workspace persistence
-  const efsSecurityGroup = new aws.ec2.SecurityGroup("trex-efs-sg", {
+  const efsSecurityGroup = new aws.ec2.SecurityGroup(`trex-${env}-efs-sg`, {
     vpcId: vpc.vpcId,
     ingress: [
       {
@@ -85,15 +88,15 @@ export function createNetworking(
     ],
   });
 
-  const efs = new aws.efs.FileSystem("trex-efs", {
+  const efs = new aws.efs.FileSystem(`trex-${env}-efs`, {
     encrypted: true,
-    tags: { Name: "trex-workspaces" },
+    tags: { Name: `trex-${env}-workspaces` },
   });
 
   const efsMountTargets = vpc.privateSubnetIds.apply((subnetIds) =>
     subnetIds.map(
       (subnetId, i) =>
-        new aws.efs.MountTarget(`trex-efs-mt-${i}`, {
+        new aws.efs.MountTarget(`trex-${env}-efs-mt-${i}`, {
           fileSystemId: efs.id,
           subnetId,
           securityGroups: [efsSecurityGroup.id],
@@ -101,7 +104,7 @@ export function createNetworking(
     )
   );
 
-  const efsAccessPoint = new aws.efs.AccessPoint("trex-efs-ap", {
+  const efsAccessPoint = new aws.efs.AccessPoint(`trex-${env}-efs-ap`, {
     fileSystemId: efs.id,
     rootDirectory: {
       path: "/devx-workspaces",
@@ -111,20 +114,20 @@ export function createNetworking(
   });
 
   // Application Load Balancer
-  const alb = new aws.lb.LoadBalancer("trex-alb", {
+  const alb = new aws.lb.LoadBalancer(`trex-${env}-alb`, {
     securityGroups: [albSecurityGroup.id],
     subnets: vpc.publicSubnetIds,
     loadBalancerType: "application",
   });
 
-  const targetGroup = new aws.lb.TargetGroup("trex-tg", {
-    port: TREX_PORT,
+  const targetGroup = new aws.lb.TargetGroup(`trex-${env}-tg`, {
+    port: 8001,
     protocol: "HTTP",
     vpcId: vpc.vpcId,
     targetType: "ip",
     healthCheck: {
       path: TREX_HEALTH_CHECK.path,
-      port: String(TREX_HEALTH_CHECK.port),
+      port: "8001",
       interval: TREX_HEALTH_CHECK.intervalSeconds,
       timeout: TREX_HEALTH_CHECK.timeoutSeconds,
       healthyThreshold: TREX_HEALTH_CHECK.healthyThreshold,
@@ -132,26 +135,38 @@ export function createNetworking(
     },
   });
 
-  // HTTP → HTTPS redirect
-  new aws.lb.Listener("trex-http-redirect", {
-    loadBalancerArn: alb.arn,
-    port: 80,
-    protocol: "HTTP",
-    defaultActions: [
-      {
-        type: "redirect",
-        redirect: { port: "443", protocol: "HTTPS", statusCode: "HTTP_301" },
-      },
-    ],
-  });
+  let httpsListener: aws.lb.Listener | undefined;
 
-  const httpsListener = new aws.lb.Listener("trex-https", {
-    loadBalancerArn: alb.arn,
-    port: 443,
-    protocol: "HTTPS",
-    certificateArn,
-    defaultActions: [{ type: "forward", targetGroupArn: targetGroup.arn }],
-  });
+  if (certificateArn) {
+    // HTTP → HTTPS redirect
+    new aws.lb.Listener(`trex-${env}-http-redirect`, {
+      loadBalancerArn: alb.arn,
+      port: 80,
+      protocol: "HTTP",
+      defaultActions: [
+        {
+          type: "redirect",
+          redirect: { port: "443", protocol: "HTTPS", statusCode: "HTTP_301" },
+        },
+      ],
+    });
+
+    httpsListener = new aws.lb.Listener(`trex-${env}-https`, {
+      loadBalancerArn: alb.arn,
+      port: 443,
+      protocol: "HTTPS",
+      certificateArn,
+      defaultActions: [{ type: "forward", targetGroupArn: targetGroup.arn }],
+    });
+  } else {
+    // HTTP only (no TLS certificate provided)
+    new aws.lb.Listener(`trex-${env}-http`, {
+      loadBalancerArn: alb.arn,
+      port: 80,
+      protocol: "HTTP",
+      defaultActions: [{ type: "forward", targetGroupArn: targetGroup.arn }],
+    });
+  }
 
   return {
     vpc,

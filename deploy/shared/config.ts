@@ -8,6 +8,8 @@ export interface DeployConfig {
   environment: Environment;
   ghcrImage: string;
   region: string;
+  pluginsInformationUrl?: string;
+  tpmRegistryUrl?: string;
 }
 
 export interface Sizing {
@@ -70,6 +72,8 @@ export function getConfig(): DeployConfig {
     environment: config.require("environment") as Environment,
     ghcrImage: config.require("ghcrImage"),
     region: config.require("region"),
+    pluginsInformationUrl: config.get("pluginsInformationUrl"),
+    tpmRegistryUrl: config.get("tpmRegistryUrl"),
   };
 }
 

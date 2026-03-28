@@ -654,6 +654,12 @@ jobs:
           name: ext-trexas
           path: plugins/runtime/build/debug/extension/trexas/
 
+      - name: Create workspace stubs
+        run: |
+          mkdir -p plugins-dev/devx/functions
+          echo '{}' > plugins-dev/devx/deno.json
+          echo '{}' > plugins-dev/devx/functions/deno.json
+
       - name: Setup test environment
         run: make configure
         working-directory: integration-tests

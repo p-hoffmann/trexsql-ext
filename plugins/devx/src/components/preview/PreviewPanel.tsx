@@ -106,7 +106,7 @@ export function PreviewPanel({ appId, planContent, chatMode: _chatMode, onEditWi
         {appId && (
           <>
             <TabsContent value="preview" className="flex-1 m-0 overflow-hidden">
-              <PreviewTab appId={appId} app={app} devServer={devServer} onEditWithAI={onEditWithAI} onComponentsSelected={onComponentsSelected} refreshSignal={(refreshSignal || 0) + configRefresh} appConfig={app?.config} onConfigChanged={handleConfigChanged} />
+              <PreviewTab appId={appId} app={app} devServer={devServer} onEditWithAI={onEditWithAI} onComponentsSelected={onComponentsSelected} refreshSignal={(refreshSignal || 0) + configRefresh} appConfig={app?.config} onConfigChanged={handleConfigChanged} onOpenFile={(path) => { fileTree.selectFile(path); setActiveTab("code"); }} />
             </TabsContent>
             <TabsContent value="code" className="flex-1 m-0 overflow-hidden">
               <CodeTab fileTree={fileTree} />

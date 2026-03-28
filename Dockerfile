@@ -111,10 +111,14 @@ RUN curl -sLO https://github.com/posit-dev/shinylive/releases/download/v${SHINYL
 RUN mkdir -p ./plugins && \
     ln -sf $(pwd)/node_modules/@trex ./plugins/@trex
 
-# Copy core and install dependencies
-COPY core/ ./core/
+# Copy core package manifests first and install dependencies (cache-friendly)
+COPY core/server/package.json core/server/package-lock.json ./core/server/
+COPY core/event/package.json core/event/package-lock.json ./core/event/
 RUN cd /usr/src/core/server && npm install --omit=dev && \
     cd /usr/src/core/event && npm install --omit=dev
+
+# Copy remaining core source
+COPY core/ ./core/
 
 # Install Playwright with headless Chromium only for QA/design review tools
 ENV PLAYWRIGHT_BROWSERS_PATH=/usr/lib/playwright-browsers

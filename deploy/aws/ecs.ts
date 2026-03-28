@@ -17,6 +17,7 @@ export interface EcsResult {
 }
 
 export function createEcs(opts: {
+  env: string;
   sizing: Sizing;
   ghcrImage: string;
   vpcId: pulumi.Input<string>;
@@ -29,13 +30,15 @@ export function createEcs(opts: {
   authSecret: pulumi.Input<string>;
   endpointUrl: pulumi.Input<string>;
   s3BucketName: pulumi.Input<string>;
+  pluginsInformationUrl?: string;
+  tpmRegistryUrl?: string;
 }): EcsResult {
-  const cluster = new aws.ecs.Cluster("trex-cluster", {
+  const cluster = new aws.ecs.Cluster(`trex-${opts.env}-cluster`, {
     settings: [{ name: "containerInsights", value: "enabled" }],
   });
 
   // IAM roles
-  const executionRole = new aws.iam.Role("trex-execution-role", {
+  const executionRole = new aws.iam.Role(`trex-${opts.env}-execution-role`, {
     assumeRolePolicy: JSON.stringify({
       Version: "2012-10-17",
       Statement: [
@@ -48,12 +51,12 @@ export function createEcs(opts: {
     }),
   });
 
-  new aws.iam.RolePolicyAttachment("trex-execution-policy", {
+  new aws.iam.RolePolicyAttachment(`trex-${opts.env}-execution-policy`, {
     role: executionRole.name,
     policyArn: "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
   });
 
-  const taskRole = new aws.iam.Role("trex-task-role", {
+  const taskRole = new aws.iam.Role(`trex-${opts.env}-task-role`, {
     assumeRolePolicy: JSON.stringify({
       Version: "2012-10-17",
       Statement: [
@@ -67,7 +70,7 @@ export function createEcs(opts: {
   });
 
   // S3 access for storage plugin
-  new aws.iam.RolePolicy("trex-task-s3-policy", {
+  new aws.iam.RolePolicy(`trex-${opts.env}-task-s3-policy`, {
     role: taskRole.name,
     policy: pulumi.output(opts.s3BucketName).apply((bucket) =>
       JSON.stringify({
@@ -83,16 +86,48 @@ export function createEcs(opts: {
     ),
   });
 
+  // EFS access for workspace persistence
+  new aws.iam.RolePolicy(`trex-${opts.env}-task-efs-policy`, {
+    role: taskRole.name,
+    policy: pulumi.output(opts.efsId).apply((efsId) =>
+      JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Action: [
+              "elasticfilesystem:ClientMount",
+              "elasticfilesystem:ClientWrite",
+              "elasticfilesystem:ClientRootAccess",
+            ],
+            Resource: `arn:aws:elasticfilesystem:*:*:file-system/${efsId}`,
+          },
+        ],
+      })
+    ),
+  });
+
   // CloudWatch log group
-  const logGroup = new aws.cloudwatch.LogGroup("trex-logs", {
+  const logGroup = new aws.cloudwatch.LogGroup(`trex-${opts.env}-logs`, {
+    name: `/ecs/trex-${opts.env}-${pulumi.getStack()}`,
     retentionInDays: 30,
   });
 
   // Build environment variables
-  const trexEnv = pulumi.all([opts.databaseUrl, opts.authSecret, opts.endpointUrl]).apply(
-    ([dbUrl, secret, endpoint]) =>
-      buildTrexEnvVars({ databaseUrl: dbUrl, authSecret: secret, endpointUrl: endpoint })
-  );
+  const region = aws.getRegionOutput().name;
+  const trexEnv = pulumi
+    .all([opts.databaseUrl, opts.authSecret, opts.endpointUrl, opts.s3BucketName, region])
+    .apply(([dbUrl, secret, endpoint, bucket, awsRegion]) =>
+      buildTrexEnvVars({
+        databaseUrl: dbUrl,
+        authSecret: secret,
+        endpointUrl: endpoint,
+        pluginsInformationUrl: opts.pluginsInformationUrl,
+        tpmRegistryUrl: opts.tpmRegistryUrl,
+        s3Bucket: bucket,
+        s3Region: awsRegion,
+      })
+    );
 
   const postgrestEnv = pulumi.all([opts.databaseUrl, opts.authSecret, opts.endpointUrl]).apply(
     ([dbUrl, secret, endpoint]) =>
@@ -100,19 +135,20 @@ export function createEcs(opts: {
   );
 
   // Task definition
+  const logGroupName = logGroup.name;
   const containerDefinitions = pulumi
-    .all([trexEnv, postgrestEnv, opts.s3BucketName])
-    .apply(([tEnv, pEnv, bucketName]) =>
+    .all([trexEnv, postgrestEnv, opts.s3BucketName, logGroupName, region])
+    .apply(([tEnv, pEnv, bucketName, lgName, awsRegion]) =>
       JSON.stringify([
         {
           name: "trex",
           image: opts.ghcrImage,
           essential: true,
-          portMappings: [{ containerPort: TREX_PORT, protocol: "tcp" }],
-          environment: [
-            ...Object.entries(tEnv).map(([name, value]) => ({ name, value })),
-            { name: "STORAGE_S3_BUCKET", value: bucketName },
+          portMappings: [
+            { containerPort: 8001, protocol: "tcp" },
+            { containerPort: TREX_PORT, protocol: "tcp" },
           ],
+          environment: Object.entries(tEnv).map(([name, value]) => ({ name, value })),
           mountPoints: [
             {
               sourceVolume: "devx-workspaces",
@@ -120,16 +156,17 @@ export function createEcs(opts: {
             },
           ],
           healthCheck: {
-            command: ["CMD-SHELL", `curl -f http://localhost:${TREX_PORT}${TREX_HEALTH_CHECK.path} || exit 1`],
+            command: ["CMD-SHELL", `curl -sf http://localhost:8001${TREX_HEALTH_CHECK.path} || exit 1`],
             interval: TREX_HEALTH_CHECK.intervalSeconds,
             timeout: TREX_HEALTH_CHECK.timeoutSeconds,
             retries: TREX_HEALTH_CHECK.unhealthyThreshold,
+            startPeriod: 120,
           },
           logConfiguration: {
             logDriver: "awslogs",
             options: {
-              "awslogs-group": logGroup.name,
-              "awslogs-region": aws.getRegionOutput().name,
+              "awslogs-group": lgName,
+              "awslogs-region": awsRegion,
               "awslogs-stream-prefix": "trex",
             },
           },
@@ -137,7 +174,8 @@ export function createEcs(opts: {
         {
           name: "postgrest",
           image: POSTGREST_IMAGE,
-          essential: true,
+          essential: false,
+          dependsOn: [{ containerName: "trex", condition: "HEALTHY" }],
           portMappings: [{ containerPort: POSTGREST_PORT, protocol: "tcp" }],
           environment: Object.entries(pEnv).map(([name, value]) => ({
             name,
@@ -146,8 +184,8 @@ export function createEcs(opts: {
           logConfiguration: {
             logDriver: "awslogs",
             options: {
-              "awslogs-group": logGroup.name,
-              "awslogs-region": aws.getRegionOutput().name,
+              "awslogs-group": lgName,
+              "awslogs-region": awsRegion,
               "awslogs-stream-prefix": "postgrest",
             },
           },
@@ -155,8 +193,8 @@ export function createEcs(opts: {
       ])
     );
 
-  const taskDefinition = new aws.ecs.TaskDefinition("trex-task", {
-    family: "trex",
+  const taskDefinition = new aws.ecs.TaskDefinition(`trex-${opts.env}-task`, {
+    family: `trex-${opts.env}`,
     networkMode: "awsvpc",
     requiresCompatibilities: ["FARGATE"],
     cpu: String(opts.sizing.cpu),
@@ -179,7 +217,7 @@ export function createEcs(opts: {
     ],
   });
 
-  const service = new aws.ecs.Service("trex-service", {
+  const service = new aws.ecs.Service(`trex-${opts.env}-service`, {
     cluster: cluster.arn,
     taskDefinition: taskDefinition.arn,
     desiredCount: opts.sizing.minReplicas,
@@ -193,7 +231,7 @@ export function createEcs(opts: {
       {
         targetGroupArn: opts.targetGroupArn,
         containerName: "trex",
-        containerPort: TREX_PORT,
+        containerPort: 8001,
       },
     ],
   });

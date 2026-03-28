@@ -2,7 +2,7 @@ config:
   aws:region: us-east-1
   deploy:cloud: aws
   deploy:environment: prod
-  deploy:ghcrImage: ghcr.io/nicokoenig/trexsql-ext:latest
+  deploy:ghcrImage: ghcr.io/p-hoffmann/trexsql:latest
   deploy:region: us-east-1
   deploy:certificateArn: "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERT_ID"
 encryptionsalt: v1:B6DXEJhR/QE=:v1:cHPafq1YdUZzhyLz:FQNrRExamII4+M8EaDlJpcKEBw1TKQ==

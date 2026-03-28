@@ -3,4 +3,5 @@ runtime:
   name: nodejs
   options:
     typescript: true
+    nodeargs: "--max-old-space-size=4096"
 description: Infrastructure for Trex on AWS and Azure

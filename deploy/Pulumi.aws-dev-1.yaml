@@ -1,0 +1,7 @@
+encryptionsalt: v1:u9JqbavSWwM=:v1:Q9jps5sbEdheo5Rw:p5RySm3wWflcJMdbiN9bcSAiWZRKlQ==
+config:
+  deploy:cloud: aws
+  deploy:environment: dev
+  deploy:region: ap-southeast-1
+  aws:region: ap-southeast-1
+  deploy:ghcrImage: ghcr.io/p-hoffmann/trexsql:latest
