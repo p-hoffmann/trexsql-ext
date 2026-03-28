@@ -1,0 +1,6 @@
+config:
+  azure-native:location: eastus
+  deploy:cloud: azure
+  deploy:environment: prod
+  deploy:ghcrImage: ghcr.io/nicokoenig/trexsql-ext:latest
+  deploy:region: eastus
