@@ -1,0 +1,23 @@
+{
+  "name": "trexsql-deploy",
+  "version": "1.0.0",
+  "description": "Pulumi infrastructure for Trex on AWS and Azure",
+  "main": "index.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "NODE_OPTIONS='--max-old-space-size=4096' tsc --noEmit --skipLibCheck",
+    "preview": "NODE_OPTIONS='--max-old-space-size=4096' pulumi preview",
+    "up": "NODE_OPTIONS='--max-old-space-size=4096' pulumi up",
+    "destroy": "NODE_OPTIONS='--max-old-space-size=4096' pulumi destroy"
+  },
+  "dependencies": {
+    "@pulumi/pulumi": "^3",
+    "@pulumi/aws": "^6",
+    "@pulumi/awsx": "^2",
+    "@pulumi/azure-native": "^2"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5"
+  }
+}

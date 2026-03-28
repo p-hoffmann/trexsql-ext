@@ -1,0 +1,6 @@
+name: trexsql-deploy
+runtime:
+  name: nodejs
+  options:
+    typescript: true
+description: Infrastructure for Trex on AWS and Azure
