@@ -8,6 +8,7 @@ export interface PostgresResult {
 }
 
 export function createPostgres(opts: {
+  env: string;
   sizing: Sizing;
   resourceGroupName: pulumi.Input<string>;
   location: pulumi.Input<string>;
@@ -15,13 +16,13 @@ export function createPostgres(opts: {
   vnetId: pulumi.Input<string>;
   adminPassword: pulumi.Input<string>;
 }): PostgresResult {
-  const privateDnsZone = new azure.network.PrivateZone("trex-pg-dns", {
+  const privateDnsZone = new azure.network.PrivateZone(`trex-${opts.env}-pg-dns`, {
     resourceGroupName: opts.resourceGroupName,
     location: "Global",
-    privateZoneName: "trex.postgres.database.azure.com",
+    privateZoneName: `trex-${opts.env}.postgres.database.azure.com`,
   });
 
-  new azure.network.VirtualNetworkLink("trex-pg-dns-link", {
+  new azure.network.VirtualNetworkLink(`trex-${opts.env}-pg-dns-link`, {
     resourceGroupName: opts.resourceGroupName,
     privateZoneName: privateDnsZone.name,
     location: "Global",
@@ -29,7 +30,7 @@ export function createPostgres(opts: {
     registrationEnabled: false,
   });
 
-  const server = new azure.dbforpostgresql.Server("trex-pg", {
+  const server = new azure.dbforpostgresql.Server(`trex-${opts.env}-pg`, {
     resourceGroupName: opts.resourceGroupName,
     location: opts.location,
     version: "16",
@@ -56,7 +57,7 @@ export function createPostgres(opts: {
   });
 
   // Create the trex database
-  new azure.dbforpostgresql.Database("trex-db", {
+  new azure.dbforpostgresql.Database(`trex-${opts.env}-db`, {
     resourceGroupName: opts.resourceGroupName,
     serverName: server.name,
     databaseName: "trex",

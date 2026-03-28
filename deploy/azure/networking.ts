@@ -9,19 +9,20 @@ export interface NetworkingResult {
 }
 
 export function createNetworking(
+  env: string,
   region: string
 ): NetworkingResult {
-  const resourceGroup = new azure.resources.ResourceGroup("trex-rg", {
+  const resourceGroup = new azure.resources.ResourceGroup(`trex-${env}-rg`, {
     location: region,
   });
 
-  const vnet = new azure.network.VirtualNetwork("trex-vnet", {
+  const vnet = new azure.network.VirtualNetwork(`trex-${env}-vnet`, {
     resourceGroupName: resourceGroup.name,
     location: resourceGroup.location,
     addressSpace: { addressPrefixes: ["10.0.0.0/16"] },
   });
 
-  const containerAppsSubnet = new azure.network.Subnet("trex-aca-subnet", {
+  const containerAppsSubnet = new azure.network.Subnet(`trex-${env}-aca-subnet`, {
     resourceGroupName: resourceGroup.name,
     virtualNetworkName: vnet.name,
     addressPrefix: "10.0.0.0/23",
@@ -33,7 +34,7 @@ export function createNetworking(
     ],
   });
 
-  const postgresSubnet = new azure.network.Subnet("trex-pg-subnet", {
+  const postgresSubnet = new azure.network.Subnet(`trex-${env}-pg-subnet`, {
     resourceGroupName: resourceGroup.name,
     virtualNetworkName: vnet.name,
     addressPrefix: "10.0.2.0/24",

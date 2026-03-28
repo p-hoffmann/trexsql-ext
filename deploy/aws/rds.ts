@@ -8,17 +8,18 @@ export interface RdsResult {
 }
 
 export function createRds(
+  env: string,
   sizing: Sizing,
   vpcId: pulumi.Input<string>,
   subnetIds: pulumi.Input<string[]>,
   securityGroupId: pulumi.Input<string>,
   dbPassword: pulumi.Input<string>
 ): RdsResult {
-  const subnetGroup = new aws.rds.SubnetGroup("trex-db-subnet", {
+  const subnetGroup = new aws.rds.SubnetGroup(`trex-${env}-db-subnet`, {
     subnetIds,
   });
 
-  const instance = new aws.rds.Instance("trex-db", {
+  const instance = new aws.rds.Instance(`trex-${env}-db`, {
     engine: "postgres",
     engineVersion: "16",
     instanceClass: sizing.dbInstanceClass,
@@ -32,11 +33,11 @@ export function createRds(
     multiAz: sizing.dbMultiAz,
     backupRetentionPeriod: sizing.dbMultiAz ? 7 : 1,
     skipFinalSnapshot: !sizing.dbMultiAz,
-    finalSnapshotIdentifier: sizing.dbMultiAz ? "trex-db-final" : undefined,
+    finalSnapshotIdentifier: sizing.dbMultiAz ? `trex-${env}-db-final` : undefined,
     publiclyAccessible: false,
   });
 
-  const connectionString = pulumi.interpolate`postgres://${instance.username}:${dbPassword}@${instance.endpoint}/${instance.dbName}`;
+  const connectionString = pulumi.interpolate`postgres://${instance.username}:${dbPassword}@${instance.endpoint}/${instance.dbName}?sslmode=require`;
 
   return { instance, connectionString };
 }

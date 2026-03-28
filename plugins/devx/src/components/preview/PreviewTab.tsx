@@ -1,11 +1,11 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import {
   PanelGroup,
   Panel,
   PanelResizeHandle,
 } from "react-resizable-panels";
 import type { ImperativePanelHandle } from "react-resizable-panels";
-import { RefreshCw, Smartphone, Tablet, Monitor, Play, Square, MousePointer2, Terminal, Sparkles } from "lucide-react";
+import { RefreshCw, Smartphone, Tablet, Monitor, Play, Square, MousePointer2, Terminal, Sparkles, Plus, Layers, ZoomIn, ZoomOut, Maximize, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { API_BASE } from "@/lib/config";
@@ -13,11 +13,15 @@ import type { useDevServer } from "@/hooks/useDevServer";
 import { PreviewAnnotator } from "./PreviewAnnotator";
 import { VisualEditingToolbar } from "./VisualEditingToolbar";
 import { VisualEditingChangesDialog } from "./VisualEditingChangesDialog";
+import { InsertElementToolbar } from "./InsertElementToolbar";
+import { LayersPanel } from "./LayersPanel";
+import { ElementContextMenu } from "./ElementContextMenu";
 import { ConsoleTab } from "./ConsoleTab";
 import type { SelectedElement, SelectedComponent, PendingChange } from "@/lib/visual-editing-types";
 import * as api from "@/lib/api";
 import { PreviewConfigBar } from "./PreviewConfigBar";
 import type { App } from "@/lib/types";
+import { createIframeRpc } from "@/lib/visual-editing-rpc";
 
 const VIEWPORT_PRESETS = [
   { label: "Mobile", icon: Smartphone, width: 375 },
@@ -34,18 +38,43 @@ interface PreviewTabProps {
   refreshSignal?: number;
   appConfig?: Record<string, string> | null;
   onConfigChanged?: (config: Record<string, string>) => void;
+  onOpenFile?: (path: string) => void;
 }
 
-export function PreviewTab({ appId, app, devServer, onEditWithAI, onComponentsSelected, refreshSignal, appConfig, onConfigChanged }: PreviewTabProps) {
+export function PreviewTab({ appId, app, devServer, onEditWithAI, onComponentsSelected, refreshSignal, appConfig, onConfigChanged, onOpenFile }: PreviewTabProps) {
   const { status, start, stop } = devServer;
   const [viewportWidth, setViewportWidth] = useState(0);
   const [annotatorEnabled, setAnnotatorEnabled] = useState(false);
   const [multiSelectEnabled, setMultiSelectEnabled] = useState(false);
   const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null);
   const [pendingChanges, setPendingChanges] = useState<PendingChange[] | null>(null);
+  const [insertToolbarVisible, setInsertToolbarVisible] = useState(false);
+  const [layersPanelVisible, setLayersPanelVisible] = useState(false);
   const [consoleVisible, setConsoleVisible] = useState(false);
+  const [copiedElementHTML, setCopiedElementHTML] = useState<string | null>(null);
+  const [previewMode, setPreviewMode] = useState(false);
+  const [canvasScale, setCanvasScale] = useState(1);
+  const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 });
+  const isPanningRef = useRef(false);
+  const panStartRef = useRef({ x: 0, y: 0 });
+  const spaceHeldRef = useRef(false);
+  const [contextMenu, setContextMenu] = useState<{
+    position: { x: number; y: number };
+    devxId: string;
+    devxName: string;
+  } | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const consolePanelRef = useRef<ImperativePanelHandle>(null);
+  const layersRpcRef = useRef<ReturnType<typeof createIframeRpc> | null>(null);
+  const layersRpc = useMemo(() => {
+    layersRpcRef.current?.destroy();
+    const rpc = createIframeRpc(iframeRef.current);
+    layersRpcRef.current = rpc;
+    return rpc;
+  }, [iframeRef.current, layersPanelVisible]);
+  useEffect(() => {
+    return () => { layersRpcRef.current?.destroy(); };
+  }, []);
 
   const isRunning = status.status === "running";
   const isStarting = status.status === "starting";
@@ -149,6 +178,127 @@ export function PreviewTab({ appId, app, devServer, onEditWithAI, onComponentsSe
     };
   }, [multiSelectEnabled, onComponentsSelected]);
 
+  // Listen for context menu events from iframe
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe?.contentWindow) return;
+    const contentWindow = iframe.contentWindow;
+
+    function handleContextMenu(e: MessageEvent) {
+      if (e.source !== contentWindow) return;
+      if (e.data?.type !== "devx-context-menu") return;
+      setContextMenu({
+        position: e.data.position,
+        devxId: e.data.devxId,
+        devxName: e.data.devxName,
+      });
+    }
+
+    window.addEventListener("message", handleContextMenu);
+    return () => window.removeEventListener("message", handleContextMenu);
+  }, []);
+
+  // Listen for drag-to-reorder events from iframe and apply them via RPC
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe?.contentWindow) return;
+    const contentWindow = iframe.contentWindow;
+
+    function handleDragMove(e: MessageEvent) {
+      if (e.source !== contentWindow) return;
+      if (e.data?.type !== "devx-element-moved") return;
+
+      const { devxId, parentDevxId, fromIndex, toIndex } = e.data;
+      if (!devxId || fromIndex === toIndex) return;
+
+      // Move element in DOM via RPC
+      const rpc = createIframeRpc(iframe);
+      rpc.moveElement(devxId, parentDevxId, toIndex).catch(() => {}).finally(() => rpc.destroy());
+
+      // Build a PendingChange for save
+      // Parse parent's devxId for file/line info
+      const parts = parentDevxId.split(":");
+      const col = parseInt(parts.pop() || "1", 10);
+      const line = parseInt(parts.pop() || "0", 10);
+      const filePath = parts.join(":");
+      if (filePath && line > 0) {
+        setPendingChanges([{
+          componentId: parentDevxId,
+          componentName: "parent",
+          filePath,
+          line,
+          col,
+          styles: {},
+          moveChild: { fromIndex, toIndex },
+        }]);
+      }
+    }
+
+    window.addEventListener("message", handleDragMove);
+    return () => window.removeEventListener("message", handleDragMove);
+  }, []);
+
+  // Listen for resize events from iframe
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe?.contentWindow) return;
+    const contentWindow = iframe.contentWindow;
+
+    function handleResize(e: MessageEvent) {
+      if (e.source !== contentWindow) return;
+      if (e.data?.type !== "devx-element-resized") return;
+
+      const { devxId, width, height } = e.data;
+      if (!devxId) return;
+
+      const parts = devxId.split(":");
+      const col = parseInt(parts.pop() || "1", 10);
+      const line = parseInt(parts.pop() || "0", 10);
+      const filePath = parts.join(":");
+      if (filePath && line > 0) {
+        setPendingChanges([{
+          componentId: devxId,
+          componentName: "element",
+          filePath,
+          line,
+          col,
+          styles: { sizing: { width, height } },
+        }]);
+      }
+    }
+
+    window.addEventListener("message", handleResize);
+    return () => window.removeEventListener("message", handleResize);
+  }, []);
+
+  // Handle element insertion
+  const handleInsertElement = useCallback((parentDevxId: string, index: number, tagName: string, classes: string, text: string) => {
+    // Insert in DOM via RPC
+    const iframe = iframeRef.current;
+    if (iframe) {
+      const rpc = createIframeRpc(iframe);
+      rpc.insertElement(parentDevxId, index, tagName, classes, text).catch(() => {}).finally(() => rpc.destroy());
+    }
+
+    // Parse parent's devxId for file/line info
+    const parts = parentDevxId.split(":");
+    const col = parseInt(parts.pop() || "1", 10);
+    const line = parseInt(parts.pop() || "0", 10);
+    const filePath = parts.join(":");
+    if (filePath && line > 0) {
+      setPendingChanges([{
+        componentId: parentDevxId,
+        componentName: "parent",
+        filePath,
+        line,
+        col,
+        styles: {},
+        insertChild: { index, tagName, classes, text },
+      }]);
+    }
+    setInsertToolbarVisible(false);
+  }, []);
+
   const handleSaveChanges = useCallback((changes: PendingChange[]) => {
     setPendingChanges(changes);
   }, []);
@@ -168,6 +318,242 @@ export function PreviewTab({ appId, app, devServer, onEditWithAI, onComponentsSe
 
   const handleCancelSave = useCallback(() => {
     setPendingChanges(null);
+  }, []);
+
+  // === Keyboard shortcuts ===
+  useEffect(() => {
+    function parseDevxId(devxId: string) {
+      const parts = devxId.split(":");
+      const col = parseInt(parts.pop() || "1", 10);
+      const line = parseInt(parts.pop() || "0", 10);
+      const filePath = parts.join(":");
+      return { filePath, line, col };
+    }
+
+    async function handleKeyDown(e: KeyboardEvent) {
+      const mod = e.ctrlKey || e.metaKey;
+      const iframe = iframeRef.current;
+      if (!iframe) return;
+
+      // Delete selected element
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedElement && !mod) {
+        // Don't intercept if user is typing in an input
+        if ((e.target as HTMLElement)?.tagName === "INPUT" || (e.target as HTMLElement)?.tagName === "TEXTAREA") return;
+        e.preventDefault();
+        const rpc = createIframeRpc(iframe);
+        try {
+          const parentInfo = await rpc.getParentInfo(selectedElement.devxId);
+          if (!parentInfo) return;
+          await rpc.removeElement(selectedElement.devxId);
+          const { filePath, line, col } = parseDevxId(parentInfo.parentDevxId);
+          if (filePath && line > 0) {
+            setPendingChanges([{
+              componentId: parentInfo.parentDevxId,
+              componentName: "parent",
+              filePath, line, col,
+              styles: {},
+              removeChild: { index: parentInfo.index },
+            }]);
+          }
+          setSelectedElement(null);
+        } finally { rpc.destroy(); }
+      }
+
+      // Copy element (Ctrl+C)
+      if (mod && e.key === "c" && selectedElement) {
+        e.preventDefault();
+        const rpc = createIframeRpc(iframe);
+        try {
+          const html = await rpc.getElementHTML(selectedElement.devxId);
+          setCopiedElementHTML(html);
+        } finally { rpc.destroy(); }
+      }
+
+      // Paste element (Ctrl+V)
+      if (mod && e.key === "v" && copiedElementHTML && selectedElement) {
+        e.preventDefault();
+        const rpc = createIframeRpc(iframe);
+        try {
+          const parentInfo = await rpc.getParentInfo(selectedElement.devxId);
+          if (!parentInfo) return;
+          await rpc.pasteHTML(parentInfo.parentDevxId, parentInfo.index + 1, copiedElementHTML);
+          const { filePath, line, col } = parseDevxId(parentInfo.parentDevxId);
+          if (filePath && line > 0) {
+            setPendingChanges([{
+              componentId: parentInfo.parentDevxId,
+              componentName: "parent",
+              filePath, line, col,
+              styles: {},
+              insertChild: { index: parentInfo.index + 1, tagName: "div", classes: "", text: "" },
+            }]);
+          }
+        } finally { rpc.destroy(); }
+      }
+
+      // Duplicate element (Ctrl+D)
+      if (mod && e.key === "d" && selectedElement) {
+        e.preventDefault();
+        const rpc = createIframeRpc(iframe);
+        try {
+          const html = await rpc.getElementHTML(selectedElement.devxId);
+          const parentInfo = await rpc.getParentInfo(selectedElement.devxId);
+          if (!parentInfo) return;
+          await rpc.pasteHTML(parentInfo.parentDevxId, parentInfo.index + 1, html);
+          const { filePath, line, col } = parseDevxId(parentInfo.parentDevxId);
+          if (filePath && line > 0) {
+            setPendingChanges([{
+              componentId: parentInfo.parentDevxId,
+              componentName: "parent",
+              filePath, line, col,
+              styles: {},
+              insertChild: { index: parentInfo.index + 1, tagName: "div", classes: "", text: "" },
+            }]);
+          }
+        } finally { rpc.destroy(); }
+      }
+
+      // Cut element (Ctrl+X)
+      if (mod && e.key === "x" && selectedElement) {
+        e.preventDefault();
+        const rpc = createIframeRpc(iframe);
+        try {
+          const html = await rpc.getElementHTML(selectedElement.devxId);
+          setCopiedElementHTML(html);
+          const parentInfo = await rpc.getParentInfo(selectedElement.devxId);
+          if (parentInfo) {
+            await rpc.removeElement(selectedElement.devxId);
+            const { filePath, line, col } = parseDevxId(parentInfo.parentDevxId);
+            if (filePath && line > 0) {
+              setPendingChanges([{
+                componentId: parentInfo.parentDevxId,
+                componentName: "parent",
+                filePath, line, col,
+                styles: {},
+                removeChild: { index: parentInfo.index },
+              }]);
+            }
+          }
+          setSelectedElement(null);
+        } finally { rpc.destroy(); }
+      }
+
+      // Group element (Ctrl+G)
+      if (mod && e.key === "g" && !e.shiftKey && selectedElement) {
+        e.preventDefault();
+        const rpc = createIframeRpc(iframe);
+        try { await rpc.groupElement(selectedElement.devxId); } finally { rpc.destroy(); }
+      }
+
+      // Ungroup element (Ctrl+Shift+G)
+      if (mod && e.key === "g" && e.shiftKey && selectedElement) {
+        e.preventDefault();
+        const rpc = createIframeRpc(iframe);
+        try { await rpc.ungroupElement(selectedElement.devxId); } finally { rpc.destroy(); }
+      }
+
+      const notTyping = !(e.target as HTMLElement)?.closest("input,textarea,select,[contenteditable]");
+
+      // Toggle preview mode (P key)
+      if (e.key === "p" && !mod && notTyping) {
+        e.preventDefault();
+        setPreviewMode((prev) => !prev);
+      }
+
+      // R key: activate insert div mode
+      if (e.key === "r" && !mod && notTyping) {
+        e.preventDefault();
+        setInsertToolbarVisible(true);
+      }
+
+      // T key: activate insert text mode
+      if (e.key === "t" && !mod && notTyping) {
+        e.preventDefault();
+        setInsertToolbarVisible(true);
+      }
+
+      // Enter: enable text editing on selected element
+      if (e.key === "Enter" && !mod && selectedElement && notTyping) {
+        e.preventDefault();
+        const rpc = createIframeRpc(iframe);
+        rpc.enableTextEditing(selectedElement.devxId).catch(() => {}).finally(() => rpc.destroy());
+      }
+
+      // Shift+ArrowUp/Down: move element up/down in DOM
+      if (e.shiftKey && !mod && (e.key === "ArrowUp" || e.key === "ArrowDown") && selectedElement && notTyping) {
+        e.preventDefault();
+        const rpc = createIframeRpc(iframe);
+        (async () => {
+          try {
+            const parentInfo = await rpc.getParentInfo(selectedElement.devxId);
+            if (!parentInfo) return;
+            const newIndex = e.key === "ArrowUp" ? Math.max(0, parentInfo.index - 1) : parentInfo.index + 1;
+            if (newIndex !== parentInfo.index) {
+              await rpc.moveElement(selectedElement.devxId, parentInfo.parentDevxId, newIndex);
+            }
+          } finally { rpc.destroy(); }
+        })();
+      }
+
+      // Zoom shortcuts
+      if (mod && (e.key === "0" || e.key === "=" || e.key === "-") && notTyping) {
+        e.preventDefault();
+        if (e.key === "0") { setCanvasScale(1); setCanvasPan({ x: 0, y: 0 }); }
+        else if (e.key === "=") setCanvasScale((s) => Math.min(3, +(s + 0.1).toFixed(2)));
+        else if (e.key === "-") setCanvasScale((s) => Math.max(0.25, +(s - 0.1).toFixed(2)));
+      }
+
+      // Escape to deselect
+      if (e.key === "Escape" && selectedElement) {
+        setSelectedElement(null);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedElement, copiedElementHTML]);
+
+  // Track Space key for pan mode
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.code === "Space" && !(e.target as HTMLElement)?.closest("input,textarea,select,[contenteditable]")) {
+        spaceHeldRef.current = true;
+      }
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.code === "Space") spaceHeldRef.current = false;
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
+
+  // Zoom/pan handlers
+  const handleCanvasWheel = useCallback((e: React.WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.05 : 0.05;
+      setCanvasScale((s) => Math.max(0.25, Math.min(3, +(s + delta).toFixed(2))));
+    }
+  }, []);
+
+  const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button === 1 || (e.button === 0 && spaceHeldRef.current)) {
+      e.preventDefault();
+      isPanningRef.current = true;
+      panStartRef.current = { x: e.clientX - canvasPan.x, y: e.clientY - canvasPan.y };
+    }
+  }, [canvasPan]);
+
+  const handleCanvasMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!isPanningRef.current) return;
+    setCanvasPan({ x: e.clientX - panStartRef.current.x, y: e.clientY - panStartRef.current.y });
+  }, []);
+
+  const handleCanvasMouseUp = useCallback(() => {
+    isPanningRef.current = false;
   }, []);
 
   return (
@@ -208,6 +594,20 @@ export function PreviewTab({ appId, app, devServer, onEditWithAI, onComponentsSe
               </span>
             </div>
 
+            {/* Zoom controls */}
+            <div className="flex items-center gap-0.5">
+              <Button variant="ghost" size="icon" className="h-7 w-7" title="Zoom out" onClick={() => setCanvasScale((s) => Math.max(0.25, +(s - 0.1).toFixed(2)))}>
+                <ZoomOut className="h-3.5 w-3.5" />
+              </Button>
+              <span className="text-[10px] text-muted-foreground w-8 text-center">{Math.round(canvasScale * 100)}%</span>
+              <Button variant="ghost" size="icon" className="h-7 w-7" title="Zoom in" onClick={() => setCanvasScale((s) => Math.min(3, +(s + 0.1).toFixed(2)))}>
+                <ZoomIn className="h-3.5 w-3.5" />
+              </Button>
+              <Button variant="ghost" size="icon" className="h-7 w-7" title="Reset zoom" onClick={() => { setCanvasScale(1); setCanvasPan({ x: 0, y: 0 }); }}>
+                <Maximize className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+
             <div className="flex-1" />
 
             {/* Settings popover */}
@@ -224,6 +624,18 @@ export function PreviewTab({ appId, app, devServer, onEditWithAI, onComponentsSe
               onClick={toggleConsole}
             >
               <Terminal className="h-3.5 w-3.5" />
+            </Button>
+
+            {/* Layers panel toggle */}
+            <Button
+              variant={layersPanelVisible ? "secondary" : "ghost"}
+              size="icon"
+              className="h-7 w-7"
+              title="Layers panel"
+              onClick={() => setLayersPanelVisible(!layersPanelVisible)}
+              disabled={!isRunning}
+            >
+              <Layers className="h-3.5 w-3.5" />
             </Button>
 
             {/* AI Select toggle */}
@@ -248,6 +660,38 @@ export function PreviewTab({ appId, app, devServer, onEditWithAI, onComponentsSe
               <Sparkles className="h-3.5 w-3.5" />
             </Button>
 
+            {/* Insert element toggle */}
+            <Button
+              variant={insertToolbarVisible ? "secondary" : "ghost"}
+              size="icon"
+              className="h-7 w-7"
+              title="Insert element"
+              onClick={() => {
+                const next = !insertToolbarVisible;
+                setInsertToolbarVisible(next);
+                if (next) {
+                  setAnnotatorEnabled(false);
+                  setMultiSelectEnabled(false);
+                  setSelectedElement(null);
+                }
+              }}
+              disabled={!isRunning}
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </Button>
+
+            {/* Preview mode toggle */}
+            <Button
+              variant={previewMode ? "secondary" : "ghost"}
+              size="icon"
+              className="h-7 w-7"
+              title="Preview mode (P)"
+              onClick={() => setPreviewMode(!previewMode)}
+              disabled={!isRunning}
+            >
+              <Eye className="h-3.5 w-3.5" />
+            </Button>
+
             {/* Annotator toggle */}
             <Button
               variant={annotatorEnabled ? "secondary" : "ghost"}
@@ -261,6 +705,7 @@ export function PreviewTab({ appId, app, devServer, onEditWithAI, onComponentsSe
                   setMultiSelectEnabled(false);
                   onComponentsSelected?.([]);
                 }
+                if (next) setInsertToolbarVisible(false);
                 if (!next) {
                   setSelectedElement(null);
                 }
@@ -297,20 +742,34 @@ export function PreviewTab({ appId, app, devServer, onEditWithAI, onComponentsSe
           </div>
 
           {/* iframe */}
-          <div className="flex-1 flex items-start justify-center bg-muted/30 overflow-auto relative">
+          <div
+            className="flex-1 flex items-start justify-center bg-muted/30 overflow-hidden relative"
+            onWheel={handleCanvasWheel}
+            onMouseDown={handleCanvasMouseDown}
+            onMouseMove={handleCanvasMouseMove}
+            onMouseUp={handleCanvasMouseUp}
+            onMouseLeave={handleCanvasMouseUp}
+          >
             {isRunning ? (
               <>
+                <div style={{
+                  transform: `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasScale})`,
+                  transformOrigin: "center top",
+                  width: viewportWidth > 0 ? `${viewportWidth}px` : "100%",
+                  height: "100%",
+                }}>
                 <iframe
                   ref={iframeRef}
                   src={proxyUrl}
                   className="bg-white border-x border-b"
                   style={{
-                    width: viewportWidth > 0 ? `${viewportWidth}px` : "100%",
+                    width: "100%",
                     height: "100%",
                   }}
                   title="App Preview"
                 />
-                {multiSelectEnabled && (
+                </div>
+                {!previewMode && multiSelectEnabled && (
                   <div className="absolute top-2 right-2 z-20 flex items-center gap-2">
                     <div className="bg-background/90 border rounded-lg px-3 py-1.5 text-xs flex items-center gap-2 shadow-lg">
                       <Sparkles className="h-3.5 w-3.5 text-indigo-500" />
@@ -318,20 +777,115 @@ export function PreviewTab({ appId, app, devServer, onEditWithAI, onComponentsSe
                     </div>
                   </div>
                 )}
-                {annotatorEnabled && (
+                {!previewMode && annotatorEnabled && (
                   <PreviewAnnotator
                     iframeRef={iframeRef}
                     onSelectElement={handleSelectElement}
                     onClose={handleCloseAnnotator}
                   />
                 )}
-                {selectedElement && (
+                {!previewMode && selectedElement && (
                   <VisualEditingToolbar
                     element={selectedElement}
                     iframeRef={iframeRef}
                     onEditWithAI={handleEditWithAI}
                     onSave={handleSaveChanges}
                     onClose={handleCloseToolbar}
+                    onOpenFile={onOpenFile}
+                  />
+                )}
+                {insertToolbarVisible && (
+                  <InsertElementToolbar
+                    iframeRef={iframeRef}
+                    onInsert={handleInsertElement}
+                    onClose={() => setInsertToolbarVisible(false)}
+                  />
+                )}
+                {layersPanelVisible && (
+                  <LayersPanel
+                    rpc={layersRpc}
+                    selectedDevxId={selectedElement?.devxId}
+                    onSelectElement={handleSelectElement}
+                    onClose={() => setLayersPanelVisible(false)}
+                  />
+                )}
+                {contextMenu && (
+                  <ElementContextMenu
+                    position={contextMenu.position}
+                    elementName={contextMenu.devxName}
+                    canPaste={!!copiedElementHTML}
+                    onEditWithAI={() => {
+                      // Select the element first, then trigger AI edit
+                      const parts = contextMenu.devxId.split(":");
+                      const col = parseInt(parts.pop() || "1", 10);
+                      const line = parseInt(parts.pop() || "0", 10);
+                      const filePath = parts.join(":");
+                      const el: SelectedElement = {
+                        devxId: contextMenu.devxId,
+                        devxName: contextMenu.devxName,
+                        tagName: "div",
+                        filePath, line, col,
+                        boundingRect: { top: 0, left: 0, width: 0, height: 0 },
+                      };
+                      setSelectedElement(el);
+                      onEditWithAI?.(el);
+                    }}
+                    onEditText={() => {
+                      const rpc = createIframeRpc(iframeRef.current);
+                      rpc.enableTextEditing(contextMenu.devxId).catch(() => {}).finally(() => rpc.destroy());
+                    }}
+                    onCopy={async () => {
+                      const rpc = createIframeRpc(iframeRef.current);
+                      try {
+                        const html = await rpc.getElementHTML(contextMenu.devxId);
+                        setCopiedElementHTML(html);
+                      } finally { rpc.destroy(); }
+                    }}
+                    onPaste={async () => {
+                      if (!copiedElementHTML) return;
+                      const rpc = createIframeRpc(iframeRef.current);
+                      try {
+                        const parentInfo = await rpc.getParentInfo(contextMenu.devxId);
+                        if (!parentInfo) return;
+                        await rpc.pasteHTML(parentInfo.parentDevxId, parentInfo.index + 1, copiedElementHTML);
+                      } finally { rpc.destroy(); }
+                    }}
+                    onDuplicate={async () => {
+                      const rpc = createIframeRpc(iframeRef.current);
+                      try {
+                        const html = await rpc.getElementHTML(contextMenu.devxId);
+                        const parentInfo = await rpc.getParentInfo(contextMenu.devxId);
+                        if (!parentInfo) return;
+                        await rpc.pasteHTML(parentInfo.parentDevxId, parentInfo.index + 1, html);
+                      } finally { rpc.destroy(); }
+                    }}
+                    onCut={async () => {
+                      const rpc = createIframeRpc(iframeRef.current);
+                      try {
+                        const html = await rpc.getElementHTML(contextMenu.devxId);
+                        setCopiedElementHTML(html);
+                        await rpc.removeElement(contextMenu.devxId);
+                        setSelectedElement(null);
+                      } finally { rpc.destroy(); }
+                    }}
+                    onDelete={async () => {
+                      const rpc = createIframeRpc(iframeRef.current);
+                      try {
+                        const parentInfo = await rpc.getParentInfo(contextMenu.devxId);
+                        if (!parentInfo) return;
+                        await rpc.removeElement(contextMenu.devxId);
+                        setSelectedElement(null);
+                      } finally { rpc.destroy(); }
+                    }}
+                    onGroup={async () => {
+                      const rpc = createIframeRpc(iframeRef.current);
+                      try { await rpc.groupElement(contextMenu.devxId); } finally { rpc.destroy(); }
+                    }}
+                    onUngroup={async () => {
+                      const rpc = createIframeRpc(iframeRef.current);
+                      try { await rpc.ungroupElement(contextMenu.devxId); } finally { rpc.destroy(); }
+                    }}
+                    onClose={() => setContextMenu(null)}
                   />
                 )}
                 {pendingChanges && (

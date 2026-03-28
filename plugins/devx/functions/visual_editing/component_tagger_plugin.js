@@ -32,25 +32,55 @@ export default function devxComponentTagger() {
 function transformJsx(code, id) {
   try {
     const relPath = getRelativePath(id);
-    const jsxOpeningTagRegex = /<([A-Z][A-Za-z0-9_.]*)\s/g;
+    // Match ALL JSX opening tags: both components (<Button ) and HTML elements (<div , <h1 , <p )
+    // Also match self-closing tags with space before /> (e.g., <img ... />)
+    const jsxOpeningTagRegex = /<([A-Za-z][A-Za-z0-9_.:-]*)(?=\s|>)/g;
     let match;
     const insertions = [];
 
     while ((match = jsxOpeningTagRegex.exec(code)) !== null) {
       const tagName = match[1];
-      const insertPos = match.index + match[0].length;
+      const afterTag = match.index + match[0].length;
 
-      // Skip TypeScript generics
+      // Skip closing tags (</div>)
+      if (match.index > 0 && code[match.index - 1] === "/") continue;
+
+      // Skip TypeScript generics (word character immediately before <)
       if (match.index > 0 && /\w/.test(code[match.index - 1])) continue;
+
+      // Skip HTML comments, doctype, script/style in templates
+      if (tagName === "!--" || tagName.startsWith("!")) continue;
+
+      // Need a space after the tag to insert our attributes
+      // If the next char is '>' we need to insert a space too
+      const nextChar = code[afterTag];
+
+      let insertPos;
+      let prefix = "";
+      if (nextChar === " " || nextChar === "\n" || nextChar === "\r" || nextChar === "\t") {
+        insertPos = afterTag + 1;
+      } else if (nextChar === ">") {
+        // <div> — insert space + attrs before >
+        insertPos = afterTag;
+        prefix = " ";
+      } else if (nextChar === "/" && code[afterTag + 1] === ">") {
+        // <br/> — insert space + attrs before />
+        insertPos = afterTag;
+        prefix = " ";
+      } else {
+        // Unexpected — skip
+        continue;
+      }
 
       const lines = code.slice(0, match.index).split("\n");
       const line = lines.length;
       const col = lines[lines.length - 1].length + 1;
 
       const devxId = relPath + ":" + line + ":" + col;
+      const devxName = tagName.includes(".") ? tagName.split(".").pop() : tagName;
       insertions.push({
         pos: insertPos,
-        text: 'data-devx-id="' + devxId + '" data-devx-name="' + tagName + '" ',
+        text: prefix + 'data-devx-id="' + devxId + '" data-devx-name="' + devxName + '" ',
       });
     }
 
@@ -81,7 +111,7 @@ function transformVue(code, id) {
     const templateContent = templateMatch[1];
     const templateOffset = templateStart + templateMatch[0].indexOf(templateContent);
 
-    const vueTagRegex = /<([A-Z][A-Za-z0-9-]*|v-[a-z][a-z0-9-]*)\s/g;
+    const vueTagRegex = /<([A-Za-z][A-Za-z0-9:._-]*)\s/g;
     let match;
     const insertions = [];
 

@@ -9,10 +9,11 @@ export interface StorageResult {
 }
 
 export function createStorage(opts: {
+  env: string;
   resourceGroupName: pulumi.Input<string>;
   location: pulumi.Input<string>;
 }): StorageResult {
-  const account = new azure.storage.StorageAccount("trexstorage", {
+  const account = new azure.storage.StorageAccount(`trex${opts.env}storage`, {
     resourceGroupName: opts.resourceGroupName,
     location: opts.location,
     sku: { name: "Standard_LRS" },
@@ -28,10 +29,10 @@ export function createStorage(opts: {
     },
   });
 
-  const container = new azure.storage.BlobContainer("trex-storage-container", {
+  const container = new azure.storage.BlobContainer(`trex-${opts.env}-storage-container`, {
     resourceGroupName: opts.resourceGroupName,
     accountName: account.name,
-    containerName: "trex-storage",
+    containerName: `trex-${opts.env}-storage`,
     publicAccess: "None",
   });
 

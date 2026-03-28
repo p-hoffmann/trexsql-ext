@@ -5,6 +5,7 @@ import {
   stylesToTailwindClasses,
   deduplicateClasses,
 } from "../visual_editing/tailwind_mapper.ts";
+import { applyEdits, type CodeEdit } from "../visual_editing/ast_writer.ts";
 
 export async function handleVisualEditingRoutes(
   path: string,
@@ -34,53 +35,68 @@ export async function handleVisualEditingRoutes(
     const changes = body.changes || [];
     const results = [];
 
+    // Group changes by file for batched AST edits
+    const changesByFile = new Map<string, typeof changes>();
     for (const change of changes) {
-      try {
-        const filePath = safeJoin(wsPath, change.filePath);
-        const source = await Deno.readTextFile(filePath);
-        const lines = source.split("\n");
-        const targetLine = change.line - 1; // 0-indexed
+      const key = change.filePath;
+      if (!changesByFile.has(key)) changesByFile.set(key, []);
+      changesByFile.get(key)!.push(change);
+    }
 
-        if (targetLine < 0 || targetLine >= lines.length) {
-          results.push({
-            filePath: change.filePath,
-            success: false,
-            error: "Line out of range",
-          });
-          continue;
+    for (const [relPath, fileChanges] of changesByFile) {
+      try {
+        const filePath = safeJoin(wsPath, relPath);
+        const source = await Deno.readTextFile(filePath);
+
+        // Build AST edits
+        const edits: CodeEdit[] = [];
+        for (const change of fileChanges) {
+          const edit: CodeEdit = {
+            line: change.line,
+            col: change.col || 1,
+          };
+          if (change.styles) {
+            const newClasses = stylesToTailwindClasses(change.styles);
+            if (newClasses.length > 0) edit.tailwindClasses = newClasses;
+          }
+          if (change.textContent !== undefined) {
+            edit.textContent = change.textContent;
+          }
+          if (change.insertChild) edit.insertChild = change.insertChild;
+          if (change.removeChild) edit.removeChild = change.removeChild;
+          if (change.moveChild) edit.moveChild = change.moveChild;
+          edits.push(edit);
         }
 
-        let modified = source;
+        // Try AST-based approach first
+        let modified = applyEdits(source, edits);
 
-        // Apply style changes as Tailwind classes
-        if (change.styles) {
-          const newClasses = stylesToTailwindClasses(change.styles);
-          if (newClasses.length > 0) {
-            modified = applyTailwindClasses(
-              modified,
-              targetLine,
-              newClasses,
-            );
+        // Fall back to regex-based approach if AST fails
+        if (modified === null) {
+          modified = source;
+          for (const change of fileChanges) {
+            const targetLine = change.line - 1;
+            if (targetLine < 0 || targetLine >= modified.split("\n").length) continue;
+            if (change.styles) {
+              const newClasses = stylesToTailwindClasses(change.styles);
+              if (newClasses.length > 0) {
+                modified = applyTailwindClasses(modified, targetLine, newClasses);
+              }
+            }
+            if (change.textContent !== undefined) {
+              modified = applyTextContent(modified, targetLine, change.textContent);
+            }
           }
         }
 
-        // Apply text content changes
-        if (change.textContent !== undefined) {
-          modified = applyTextContent(
-            modified,
-            targetLine,
-            change.textContent,
-          );
-        }
-
         await Deno.writeTextFile(filePath, modified);
-        results.push({ filePath: change.filePath, success: true });
+        for (const change of fileChanges) {
+          results.push({ filePath: change.filePath, success: true });
+        }
       } catch (err) {
-        results.push({
-          filePath: change.filePath,
-          success: false,
-          error: err.message,
-        });
+        for (const change of fileChanges) {
+          results.push({ filePath: change.filePath, success: false, error: err.message });
+        }
       }
     }
 

@@ -16,6 +16,7 @@ export interface ContainerAppsResult {
 }
 
 export function createContainerApps(opts: {
+  env: string;
   sizing: Sizing;
   ghcrImage: string;
   resourceGroupName: pulumi.Input<string>;
@@ -26,15 +27,17 @@ export function createContainerApps(opts: {
   s3Endpoint: pulumi.Input<string>;
   s3AccessKey: pulumi.Input<string>;
   s3BucketName: string;
+  pluginsInformationUrl?: string;
+  tpmRegistryUrl?: string;
 }): ContainerAppsResult {
-  const logAnalytics = new azure.operationalinsights.Workspace("trex-logs", {
+  const logAnalytics = new azure.operationalinsights.Workspace(`trex-${opts.env}-logs`, {
     resourceGroupName: opts.resourceGroupName,
     location: opts.location,
     sku: { name: "PerGB2018" },
     retentionInDays: 30,
   });
 
-  const environment = new azure.app.ManagedEnvironment("trex-env", {
+  const environment = new azure.app.ManagedEnvironment(`trex-${opts.env}-env`, {
     resourceGroupName: opts.resourceGroupName,
     location: opts.location,
     vnetConfiguration: {
@@ -57,12 +60,17 @@ export function createContainerApps(opts: {
 
   // Build environment variables
   const trexEnvVars = pulumi
-    .all([opts.databaseUrl, opts.authSecret])
-    .apply(([dbUrl, secret]) => {
+    .all([opts.databaseUrl, opts.authSecret, opts.s3Endpoint])
+    .apply(([dbUrl, secret, s3Endpoint]) => {
       const env = buildTrexEnvVars({
         databaseUrl: dbUrl,
         authSecret: secret,
         endpointUrl: "https://placeholder", // Will be updated after app creation
+        pluginsInformationUrl: opts.pluginsInformationUrl,
+        tpmRegistryUrl: opts.tpmRegistryUrl,
+        s3Bucket: opts.s3BucketName,
+        s3Endpoint,
+        s3ForcePathStyle: true,
       });
       return Object.entries(env).map(([name, value]) => ({ name, value }));
     });
@@ -78,14 +86,14 @@ export function createContainerApps(opts: {
       return Object.entries(env).map(([name, value]) => ({ name, value }));
     });
 
-  const app = new azure.app.ContainerApp("trex-app", {
+  const app = new azure.app.ContainerApp(`trex-${opts.env}-app`, {
     resourceGroupName: opts.resourceGroupName,
     location: opts.location,
     managedEnvironmentId: environment.id,
     configuration: {
       ingress: {
         external: true,
-        targetPort: TREX_PORT,
+        targetPort: 8001,
         transport: "auto",
         allowInsecure: false,
       },
@@ -115,8 +123,6 @@ export function createContainerApps(opts: {
           },
           env: trexEnvVars.apply((vars) => [
             ...vars,
-            { name: "STORAGE_S3_ENDPOINT", value: opts.s3Endpoint as string },
-            { name: "STORAGE_S3_BUCKET", value: opts.s3BucketName },
             { name: "AWS_ACCESS_KEY_ID", secretRef: "s3-access-key" },
           ]),
           probes: [
@@ -124,7 +130,7 @@ export function createContainerApps(opts: {
               type: "liveness",
               httpGet: {
                 path: TREX_HEALTH_CHECK.path,
-                port: TREX_HEALTH_CHECK.port,
+                port: 8001,
               },
               periodSeconds: TREX_HEALTH_CHECK.intervalSeconds,
               timeoutSeconds: TREX_HEALTH_CHECK.timeoutSeconds,
@@ -134,7 +140,7 @@ export function createContainerApps(opts: {
               type: "readiness",
               httpGet: {
                 path: TREX_HEALTH_CHECK.path,
-                port: TREX_HEALTH_CHECK.port,
+                port: 8001,
               },
               periodSeconds: 10,
               timeoutSeconds: 5,

@@ -42,6 +42,7 @@ import {
 // Load bridge scripts lazily for injection into proxied HTML.
 // import.meta.url resolves to the Deno sandbox compile path where .js files
 // aren't copied, so we try multiple paths including the plugin mount point.
+let rpcBridgeScript = "";
 let selectorClientScript = "";
 let visualEditorClientScript = "";
 let _visualEditingScriptsLoaded = false;
@@ -56,9 +57,12 @@ function loadVisualEditingScripts() {
   for (const path of candidates) {
     try {
       selectorClientScript = Deno.readTextFileSync(path);
-      // Same directory for the editor script
+      // Same directory for the editor and RPC bridge scripts
       visualEditorClientScript = Deno.readTextFileSync(
         path.replace("selector_client.js", "visual_editor_client.js"),
+      );
+      rpcBridgeScript = Deno.readTextFileSync(
+        path.replace("selector_client.js", "rpc_bridge.js"),
       );
       break;
     } catch {
@@ -1491,7 +1495,7 @@ Deno.serve(async (req: Request) => {
         loadVisualEditingScripts();
         if (ct && ct.includes("text/html") && selectorClientScript) {
           const html = await proxyRes.text();
-          const injectedScripts = `<script>${selectorClientScript}</script><script>${visualEditorClientScript}</script>`;
+          const injectedScripts = `<script>${rpcBridgeScript}</script><script>${selectorClientScript}</script><script>${visualEditorClientScript}</script>`;
           const finalHtml = html.includes("</head>")
             ? html.replace("</head>", `${injectedScripts}</head>`)
             : html.includes("</body>")

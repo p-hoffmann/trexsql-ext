@@ -11,27 +11,27 @@ export interface SecretsResult {
   authSecretPlain: pulumi.Output<string>;
 }
 
-export function createSecrets(): SecretsResult {
+export function createSecrets(env: string): SecretsResult {
   // Generate random passwords
   const dbPasswordPlain = new pulumi.Config("deploy").getSecret("dbPassword") ??
     pulumi.output("change-me-in-production-32chars!!");
   const authSecretPlain = new pulumi.Config("deploy").getSecret("authSecret") ??
     pulumi.output("change-me-auth-secret-32chars!!!");
 
-  const dbPassword = new aws.secretsmanager.Secret("trex-db-password", {
-    name: "trex/db-password",
+  const dbPassword = new aws.secretsmanager.Secret(`trex-${env}-db-password`, {
+    name: `trex-${env}/db-password`,
   });
 
-  const dbPasswordValue = new aws.secretsmanager.SecretVersion("trex-db-password-val", {
+  const dbPasswordValue = new aws.secretsmanager.SecretVersion(`trex-${env}-db-password-val`, {
     secretId: dbPassword.id,
     secretString: dbPasswordPlain,
   });
 
-  const authSecret = new aws.secretsmanager.Secret("trex-auth-secret", {
-    name: "trex/auth-secret",
+  const authSecret = new aws.secretsmanager.Secret(`trex-${env}-auth-secret`, {
+    name: `trex-${env}/auth-secret`,
   });
 
-  const authSecretValue = new aws.secretsmanager.SecretVersion("trex-auth-secret-val", {
+  const authSecretValue = new aws.secretsmanager.SecretVersion(`trex-${env}-auth-secret-val`, {
     secretId: authSecret.id,
     secretString: authSecretPlain,
   });

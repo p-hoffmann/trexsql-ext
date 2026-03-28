@@ -8,16 +8,18 @@ import { createSecrets } from "./secrets";
 import { createContainerApps } from "./container-apps";
 
 export function deployAzure(config: DeployConfig) {
-  const sizing = getSizing("azure", config.environment);
+  const env = config.environment;
+  const sizing = getSizing("azure", env);
 
   // Secrets
   const secrets = createSecrets();
 
   // Networking (resource group, VNet, subnets)
-  const networking = createNetworking(config.region);
+  const networking = createNetworking(env, config.region);
 
   // PostgreSQL Flexible Server
   const postgres = createPostgres({
+    env,
     sizing,
     resourceGroupName: networking.resourceGroup.name,
     location: networking.resourceGroup.location,
@@ -28,12 +30,14 @@ export function deployAzure(config: DeployConfig) {
 
   // Blob Storage with S3-compatible access
   const storage = createStorage({
+    env,
     resourceGroupName: networking.resourceGroup.name,
     location: networking.resourceGroup.location,
   });
 
   // Container Apps
   const containerApps = createContainerApps({
+    env,
     sizing,
     ghcrImage: config.ghcrImage,
     resourceGroupName: networking.resourceGroup.name,
@@ -43,7 +47,9 @@ export function deployAzure(config: DeployConfig) {
     authSecret: secrets.authSecretPlain,
     s3Endpoint: storage.s3Endpoint,
     s3AccessKey: storage.accessKey,
-    s3BucketName: "trex-storage",
+    s3BucketName: `trex-${env}-storage`,
+    pluginsInformationUrl: config.pluginsInformationUrl,
+    tpmRegistryUrl: config.tpmRegistryUrl,
   });
 
   const endpointUrl = containerApps.app.latestRevisionFqdn.apply(
