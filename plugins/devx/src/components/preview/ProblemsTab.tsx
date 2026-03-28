@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import {
   FileCode,
   Shield,
@@ -11,17 +11,21 @@ import {
   Loader2,
   CheckCircle2,
   Wand2,
+  TestTube2,
+  Palette,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
-import type { Problem, SecurityReview, CodeReview } from "@/lib/types";
+import type { Problem } from "@/lib/types";
+import type { UseReviewAgentsReturn } from "@/hooks/useReviewAgents";
 import * as api from "@/lib/api";
 
 interface ProblemsTabProps {
   appId: string;
   onOpenFile: (path: string) => void;
   onFixPrompt?: (prompt: string) => void;
+  reviewAgents: UseReviewAgentsReturn;
 }
 
 // ── Severity helpers ────────────────────────────────────────────────
@@ -248,7 +252,14 @@ function ReviewSection({
 
 // ── Main component ──────────────────────────────────────────────────
 
-export function ProblemsTab({ appId, onOpenFile, onFixPrompt }: ProblemsTabProps) {
+export function ProblemsTab({ appId, onOpenFile, onFixPrompt, reviewAgents }: ProblemsTabProps) {
+  const {
+    secReview, codeReview, qaReview, designReview,
+    secReviewing, codeReviewing, qaReviewing, designReviewing,
+    secProgress, codeProgress, qaProgress, designProgress,
+    runSecurityReview, runCodeReview, runQaReview, runDesignReview,
+  } = reviewAgents;
+
   // Type check state
   const [problems, setProblems] = useState<Problem[]>([]);
   const [summary, setSummary] = useState<string | null>(null);
@@ -259,22 +270,6 @@ export function ProblemsTab({ appId, onOpenFile, onFixPrompt }: ProblemsTabProps
   const [quickFindings, setQuickFindings] = useState<{ severity: string; title: string; description: string; file?: string }[]>([]);
   const [scanning, setScanning] = useState(false);
   const [scanned, setScanned] = useState(false);
-
-  // AI security review state
-  const [secReview, setSecReview] = useState<SecurityReview | null>(null);
-  const [secReviewing, setSecReviewing] = useState(false);
-  const [secProgress, setSecProgress] = useState("");
-
-  // AI code review state
-  const [codeReview, setCodeReview] = useState<CodeReview | null>(null);
-  const [codeReviewing, setCodeReviewing] = useState(false);
-  const [codeProgress, setCodeProgress] = useState("");
-
-  // Load latest reviews on mount
-  useEffect(() => {
-    api.getLatestSecurityReview(appId).then((r) => { if (r) setSecReview(r); }).catch(() => {});
-    api.getLatestCodeReview(appId).then((r) => { if (r) setCodeReview(r); }).catch(() => {});
-  }, [appId]);
 
   const runCheck = useCallback(async () => {
     setLoading(true);
@@ -302,28 +297,6 @@ export function ProblemsTab({ appId, onOpenFile, onFixPrompt }: ProblemsTabProps
     }
   }, [appId]);
 
-  const runSecurityReview = useCallback(() => {
-    if (secReviewing) return;
-    setSecReviewing(true);
-    setSecProgress("Starting security review...");
-    api.streamSecurityReview(appId, {
-      onProgress: (msg) => setSecProgress(msg),
-      onDone: (r) => { setSecReview(r); setSecReviewing(false); setSecProgress(""); },
-      onError: (err) => { setSecReviewing(false); setSecProgress(`Error: ${err}`); },
-    });
-  }, [appId, secReviewing]);
-
-  const runCodeReview = useCallback(() => {
-    if (codeReviewing) return;
-    setCodeReviewing(true);
-    setCodeProgress("Starting code review...");
-    api.streamCodeReview(appId, {
-      onProgress: (msg) => setCodeProgress(msg),
-      onDone: (r) => { setCodeReview(r); setCodeReviewing(false); setCodeProgress(""); },
-      onError: (err) => { setCodeReviewing(false); setCodeProgress(`Error: ${err}`); },
-    });
-  }, [appId, codeReviewing]);
-
   const toggleSelect = (idx: number) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -339,6 +312,8 @@ export function ProblemsTab({ appId, onOpenFile, onFixPrompt }: ProblemsTabProps
   const scanCount = quickFindings.length;
   const codeCount = codeReview?.findings?.length ?? 0;
   const secCount = secReview?.findings?.length ?? 0;
+  const qaCount = qaReview?.findings?.length ?? 0;
+  const designCount = designReview?.findings?.length ?? 0;
 
   const sectionStatus = (running: boolean, count: number, hasResult: boolean, review?: ReviewData | null) => {
     if (running) return <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />;
@@ -585,6 +560,96 @@ export function ProblemsTab({ appId, onOpenFile, onFixPrompt }: ProblemsTabProps
               isRunning={secReviewing}
               progress={secProgress}
               onRun={runSecurityReview}
+              onFix={onFixPrompt}
+            />
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* QA Test */}
+        <AccordionItem value="qa-test">
+          <AccordionTrigger>
+            <TestTube2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-xs">QA Test</span>
+            {sectionStatus(qaReviewing, qaCount, qaReview !== null, qaReview)}
+            <span className="flex items-center gap-1 ml-auto mr-1">
+              {onFixPrompt && qaReview && qaCount > 0 && (
+                <Button
+                  size="sm" variant="ghost" className="h-5 text-[10px] px-1.5 gap-1"
+                  title="Fix all issues"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const summary = qaReview.findings.map((f: any) => `[${f.level}] ${f.title}: ${f.description}`).join("\n\n");
+                    onFixPrompt(`Fix the following QA test issues:\n\n${summary}`);
+                  }}
+                >
+                  <Wand2 className="h-3 w-3" />
+                  Fix All
+                </Button>
+              )}
+              <Button
+                size="sm" variant="ghost" className="h-5 text-[10px] px-1.5 gap-1"
+                onClick={(e) => { e.stopPropagation(); runQaReview(); }}
+                disabled={qaReviewing}
+              >
+                {qaReviewing ? <Loader2 className="h-3 w-3 animate-spin" /> : <TestTube2 className="h-3 w-3" />}
+                {qaReviewing ? "Testing..." : "Test"}
+              </Button>
+            </span>
+          </AccordionTrigger>
+          <AccordionContent>
+            <ReviewSection
+              icon={TestTube2}
+              label="QA Test"
+              emptyDescription="AI-powered functional testing. Uses Playwright to interact with your running app and find broken flows, edge cases, and bugs."
+              review={qaReview}
+              isRunning={qaReviewing}
+              progress={qaProgress}
+              onRun={runQaReview}
+              onFix={onFixPrompt}
+            />
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Design Review */}
+        <AccordionItem value="design-review">
+          <AccordionTrigger>
+            <Palette className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-xs">Design Review</span>
+            {sectionStatus(designReviewing, designCount, designReview !== null, designReview)}
+            <span className="flex items-center gap-1 ml-auto mr-1">
+              {onFixPrompt && designReview && designCount > 0 && (
+                <Button
+                  size="sm" variant="ghost" className="h-5 text-[10px] px-1.5 gap-1"
+                  title="Fix all issues"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const summary = designReview.findings.map((f: any) => `[${f.level}] ${f.title}: ${f.description}`).join("\n\n");
+                    onFixPrompt(`Fix the following design review issues:\n\n${summary}`);
+                  }}
+                >
+                  <Wand2 className="h-3 w-3" />
+                  Fix All
+                </Button>
+              )}
+              <Button
+                size="sm" variant="ghost" className="h-5 text-[10px] px-1.5 gap-1"
+                onClick={(e) => { e.stopPropagation(); runDesignReview(); }}
+                disabled={designReviewing}
+              >
+                {designReviewing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Palette className="h-3 w-3" />}
+                {designReviewing ? "Reviewing..." : "Review"}
+              </Button>
+            </span>
+          </AccordionTrigger>
+          <AccordionContent>
+            <ReviewSection
+              icon={Palette}
+              label="Design Review"
+              emptyDescription="AI-powered design review. Screenshots your running app and checks layout, styling, and visual consistency."
+              review={designReview}
+              isRunning={designReviewing}
+              progress={designProgress}
+              onRun={runDesignReview}
               onFix={onFixPrompt}
             />
           </AccordionContent>

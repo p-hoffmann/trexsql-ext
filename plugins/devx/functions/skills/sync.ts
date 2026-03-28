@@ -58,6 +58,7 @@ async function syncSkills(skillsDir: string, sqlFn: SqlFn): Promise<void> {
     const version = String(metadata.version || "0.1.0");
     const mode = metadata.mode ? String(metadata.mode) : null;
     const allowedTools = parseStringArray(metadata["allowed-tools"]);
+    const aliases = parseStringArray(metadata.aliases);
 
     if (!description) {
       console.warn(`[sync] Skipping skill "${name}": missing description`);
@@ -76,16 +77,16 @@ async function syncSkills(skillsDir: string, sqlFn: SqlFn): Promise<void> {
         await sqlFn(
           `UPDATE devx.skills
            SET slug = $1, description = $2, version = $3, body = $4,
-               allowed_tools = $5, mode = $6, updated_at = NOW()
-           WHERE is_builtin = true AND name = $7`,
-          [slug, description, version, body, allowedTools, mode, name],
+               allowed_tools = $5, mode = $6, aliases = $7, updated_at = NOW()
+           WHERE is_builtin = true AND name = $8`,
+          [slug, description, version, body, allowedTools, mode, aliases, name],
         );
       }
     } else {
       await sqlFn(
-        `INSERT INTO devx.skills (user_id, name, slug, description, version, body, allowed_tools, mode, is_builtin)
-         VALUES (NULL, $1, $2, $3, $4, $5, $6, $7, true)`,
-        [name, slug, description, version, body, allowedTools, mode],
+        `INSERT INTO devx.skills (user_id, name, slug, description, version, body, allowed_tools, mode, aliases, is_builtin)
+         VALUES (NULL, $1, $2, $3, $4, $5, $6, $7, $8, true)`,
+        [name, slug, description, version, body, allowedTools, mode, aliases],
       );
     }
   }

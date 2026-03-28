@@ -42,7 +42,14 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs && \
 COPY src/ /usr/src/trexsql/src/
 RUN cargo build --release
 
-# Stage 2: Runtime
+# Stage 2: Build devx frontend
+FROM node:20-trixie-slim AS devx-builder
+WORKDIR /build
+COPY plugins/devx/package.json plugins/devx/package-lock.json plugins/devx/tsconfig*.json plugins/devx/vite.config.ts plugins/devx/index.html ./
+COPY plugins/devx/src/ ./src/
+RUN npm install && npm run build
+
+# Stage 3: Runtime
 FROM node:20-trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -109,11 +116,22 @@ COPY core/ ./core/
 RUN cd /usr/src/core/server && npm install --omit=dev && \
     cd /usr/src/core/event && npm install --omit=dev
 
+# Install Playwright with headless Chromium only for QA/design review tools
+ENV PLAYWRIGHT_BROWSERS_PATH=/usr/lib/playwright-browsers
+ENV NODE_PATH=/usr/lib/node_modules
+RUN npm install -g playwright@latest && \
+    npx playwright install --with-deps chromium && \
+    rm -rf /tmp/* /root/.cache/ms-playwright-*
+
 # Copy functions
 COPY functions/ ./functions/
 
-# Copy dev plugins
+# Create plugins/runtime workspace member stub (referenced by deno.json workspace)
+RUN mkdir -p ./plugins/runtime && echo '{"nodeModulesDir":"auto"}' > ./plugins/runtime/deno.json
+
+# Copy dev plugins (use pre-built dist from devx-builder stage)
 COPY plugins/devx/ ./plugins-dev/devx/
+COPY --from=devx-builder /build/dist/ ./plugins-dev/devx/dist/
 COPY plugins/web/ ./plugins-dev/web/
 COPY plugins/storage/ ./plugins-dev/storage/
 
@@ -129,6 +147,9 @@ RUN openssl req -new -x509 -days 3650 -nodes \
 
 ENV SCHEMA_DIR=/usr/src/core/schema
 ENV DUCKDB_EXTENSION_DIRECTORY=/usr/share/trexsql/extensions
+
+# Ensure workspace directory exists and is writable by node user
+RUN mkdir -p /tmp/devx-workspaces && chown node:node /tmp/devx-workspaces
 
 EXPOSE 8001 8000
 USER node

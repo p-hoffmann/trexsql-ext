@@ -33,6 +33,7 @@ export function ChatPanel({ chatId, mode, onModeChange, onPlanContentChange, vis
     completedBuildTags,
     buildActions,
     consentRequest,
+    consentError,
     questionnaire,
     planContent,
     tokenUsage,
@@ -88,6 +89,7 @@ export function ChatPanel({ chatId, mode, onModeChange, onPlanContentChange, vis
         onModeChange={onModeChange}
         todos={todos}
         consentRequest={consentRequest}
+        consentError={consentError}
         onConsentDecision={resolveConsent}
         messages={messages}
         tokenUsage={tokenUsage}

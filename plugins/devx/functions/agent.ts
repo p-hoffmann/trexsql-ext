@@ -17,31 +17,25 @@ import { loadHooks, runPreToolHooks, runPostToolHooks, runStopHooks } from "./sk
 
 const DEFAULT_MAX_STEPS = 25;
 
-// In-memory consent resolution map (requestId → { resolve, decision })
-const pendingConsents = new Map();
-
 /** Clean up all pending consents for a given chat (called on stream abort) */
-export function clearPendingConsents(chatId) {
-  for (const [requestId, entry] of pendingConsents.entries()) {
-    if (entry.chatId === chatId) {
-      entry.resolve("deny");
-      pendingConsents.delete(requestId);
-    }
+export async function clearPendingConsents(chatId, sqlFn?) {
+  if (sqlFn) {
+    await sqlFn(
+      `UPDATE devx.pending_consents SET decision = 'deny' WHERE chat_id = $1 AND decision IS NULL`,
+      [chatId],
+    );
   }
 }
 
-export function resolveConsent(requestId, decision, userId) {
-  const entry = pendingConsents.get(requestId);
-  if (entry) {
-    // Validate that the user resolving the consent is the same user who created it
-    if (entry.userId && entry.userId !== userId) {
-      return false;
-    }
-    entry.resolve(decision);
-    pendingConsents.delete(requestId);
-    return true;
-  }
-  return false;
+export async function resolveConsent(requestId, decision, userId, sqlFn?) {
+  if (!sqlFn) return false;
+  const result = await sqlFn(
+    `UPDATE devx.pending_consents SET decision = $1
+     WHERE request_id = $2 AND user_id = $3 AND decision IS NULL
+     RETURNING request_id`,
+    [decision, requestId, userId],
+  );
+  return result.rows.length > 0;
 }
 
 function createModel(settings) {
@@ -136,6 +130,7 @@ export async function streamAgentChat({
   // Skills/commands/hooks integration
   skillContext,
   commandOverride,
+  hasComponentSelection,
 }) {
   const mode = chatMode || "agent";
   const maxSteps = settings.max_steps || DEFAULT_MAX_STEPS;
@@ -158,7 +153,10 @@ export async function streamAgentChat({
     } catch { /* no AI_RULES.md, use DB setting or default */ }
   }
 
-  const systemPrompt = constructSystemPrompt(mode, aiRules, skillContext);
+  let systemPrompt = constructSystemPrompt(mode, aiRules, skillContext);
+  if (hasComponentSelection) {
+    systemPrompt += "\nThe user has selected specific components for editing. Component details and code snippets are in the user's message. Focus your modifications on those components.";
+  }
 
   // Load user consent preferences
   const consentResult = await sqlFn(
@@ -214,20 +212,39 @@ export async function streamAgentChat({
             if (userConsent === "always") return true;
             if (!userConsent && toolDef.defaultConsent === "always") return true;
 
-            // Send consent request to client and wait
+            // Send consent request to client and wait (DB-backed for cross-isolate support)
             const requestId = crypto.randomUUID();
+            await sqlFn(
+              `INSERT INTO devx.pending_consents (request_id, chat_id, user_id) VALUES ($1, $2, $3)`,
+              [requestId, chatId, userId],
+            );
             send({ type: "consent_request", requestId, toolName: params.toolName, inputPreview: params.inputPreview });
 
+            // Poll DB for decision
             const decision = await new Promise((resolve) => {
-              pendingConsents.set(requestId, { resolve, userId, chatId });
-              // Timeout after 5 minutes
-              setTimeout(() => {
-                if (pendingConsents.has(requestId)) {
-                  pendingConsents.delete(requestId);
-                  resolve("deny");
+              const startTime = Date.now();
+              const poll = async () => {
+                const result = await sqlFn(
+                  `SELECT decision FROM devx.pending_consents WHERE request_id = $1`,
+                  [requestId],
+                );
+                const row = result.rows[0];
+                if (row?.decision) {
+                  resolve(row.decision);
+                  return;
                 }
-              }, 5 * 60 * 1000);
+                // Timeout after 5 minutes
+                if (Date.now() - startTime > 5 * 60 * 1000) {
+                  await sqlFn(`DELETE FROM devx.pending_consents WHERE request_id = $1`, [requestId]);
+                  resolve("deny");
+                  return;
+                }
+                setTimeout(poll, 500);
+              };
+              poll();
             });
+            // Clean up
+            await sqlFn(`DELETE FROM devx.pending_consents WHERE request_id = $1`, [requestId]);
 
             if (decision === "always") {
               // Persist "always" consent
@@ -271,6 +288,8 @@ export async function streamAgentChat({
         }
 
         const callId = toolCallId;
+        // Inject tool marker into the content stream so frontend can render it inline
+        send({ type: "chunk", content: `<!--tool:${callId}-->` });
         send({ type: "tool_call_start", callId, name, args: effectiveArgs });
         try {
           let result = await toolDef.execute(effectiveArgs, ctx);
@@ -332,11 +351,30 @@ export async function streamAgentChat({
             // Consent check for MCP tools
             const approved = settings.auto_approve || userMcpConsent === "always" || await (async () => {
               const requestId = crypto.randomUUID();
+              await sqlFn(
+                `INSERT INTO devx.pending_consents (request_id, chat_id, user_id) VALUES ($1, $2, $3)`,
+                [requestId, chatId, userId],
+              );
               send({ type: "consent_request", requestId, toolName, inputPreview: JSON.stringify(args).slice(0, 200) });
               const decision = await new Promise((resolve) => {
-                pendingConsents.set(requestId, { resolve, userId, chatId });
-                setTimeout(() => { if (pendingConsents.has(requestId)) { pendingConsents.delete(requestId); resolve("deny"); } }, 5 * 60 * 1000);
+                const startTime = Date.now();
+                const poll = async () => {
+                  const result = await sqlFn(
+                    `SELECT decision FROM devx.pending_consents WHERE request_id = $1`,
+                    [requestId],
+                  );
+                  const row = result.rows[0];
+                  if (row?.decision) { resolve(row.decision); return; }
+                  if (Date.now() - startTime > 5 * 60 * 1000) {
+                    await sqlFn(`DELETE FROM devx.pending_consents WHERE request_id = $1`, [requestId]);
+                    resolve("deny");
+                    return;
+                  }
+                  setTimeout(poll, 500);
+                };
+                poll();
               });
+              await sqlFn(`DELETE FROM devx.pending_consents WHERE request_id = $1`, [requestId]);
               if (decision === "always") {
                 await sqlFn(
                   `INSERT INTO devx.mcp_tool_consents (user_id, server_name, tool_name, consent)
@@ -351,6 +389,7 @@ export async function streamAgentChat({
             if (!approved) return "Tool call denied by user.";
 
             const callId = crypto.randomUUID();
+            send({ type: "chunk", content: `<!--tool:${callId}-->` });
             send({ type: "tool_call_start", callId, name: toolName, args });
             try {
               const result = await mcpManager.executeTool(userId, mcpTool.serverName, mcpTool.name, args);

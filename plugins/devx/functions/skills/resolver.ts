@@ -82,7 +82,7 @@ export async function loadSkillMetadata(
   sqlFn: SqlFn,
 ): Promise<SkillMetadata[]> {
   const result = await sqlFn(
-    `SELECT id, name, slug, description, allowed_tools, mode, is_builtin
+    `SELECT id, name, slug, description, allowed_tools, mode, aliases, is_builtin
      FROM devx.skills
      WHERE enabled = true
        AND (user_id = $1 OR (is_builtin = true AND user_id IS NULL))`,
@@ -92,7 +92,7 @@ export async function loadSkillMetadata(
 }
 
 /**
- * Find a skill by exact slug match.
+ * Find a skill by exact slug match, including aliases defined in skill metadata.
  */
 export function matchSkillBySlug(
   slug: string,
@@ -101,7 +101,13 @@ export function matchSkillBySlug(
   // Prefer user skill over built-in when slugs collide
   const userMatch = skills.find((s) => s.slug === slug && !s.is_builtin);
   if (userMatch) return userMatch;
-  return skills.find((s) => s.slug === slug) || null;
+  const direct = skills.find((s) => s.slug === slug);
+  if (direct) return direct;
+
+  // Check aliases defined in skill metadata
+  const byAlias = skills.find((s) => s.aliases?.includes(slug) && !s.is_builtin);
+  if (byAlias) return byAlias;
+  return skills.find((s) => s.aliases?.includes(slug)) || null;
 }
 
 /**
@@ -217,8 +223,8 @@ export async function enrichSkillContext(
 
     // Load previous findings
     const prev = await sqlFn(
-      `SELECT findings FROM devx.security_reviews
-       WHERE app_id = $1 AND user_id = $2
+      `SELECT findings FROM devx.agent_results
+       WHERE app_id = $1 AND user_id = $2 AND result_type = 'security-review'
        ORDER BY created_at DESC LIMIT 1`,
       [appId, userId],
     );
@@ -229,8 +235,8 @@ export async function enrichSkillContext(
 
   if (skillName === "code-review" && appId) {
     const prev = await sqlFn(
-      `SELECT findings FROM devx.code_reviews
-       WHERE app_id = $1 AND user_id = $2
+      `SELECT findings FROM devx.agent_results
+       WHERE app_id = $1 AND user_id = $2 AND result_type = 'code-review'
        ORDER BY created_at DESC LIMIT 1`,
       [appId, userId],
     );

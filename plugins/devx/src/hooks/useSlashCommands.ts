@@ -10,7 +10,7 @@ export function useSlashCommands() {
   const [items, setItems] = useState<SlashCompletion[]>([]);
   const [loading, setLoading] = useState(false);
   const cacheRef = useRef<Map<string, SlashCompletion[]>>(new Map());
-  const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const timeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const fetchCompletions = useCallback(async (query: string) => {
     // Check cache

@@ -164,6 +164,34 @@ export interface CodeReview {
   created_at: string;
 }
 
+// QA test review types
+
+export interface QaTestFinding {
+  title: string;
+  level: "critical" | "high" | "medium" | "low";
+  description: string;
+}
+
+export interface QaTestReview {
+  id: string;
+  findings: QaTestFinding[];
+  created_at: string;
+}
+
+// Design review types
+
+export interface DesignFinding {
+  title: string;
+  level: "critical" | "high" | "medium" | "low";
+  description: string;
+}
+
+export interface DesignReview {
+  id: string;
+  findings: DesignFinding[];
+  created_at: string;
+}
+
 export interface DevServerStatus {
   status: "stopped" | "starting" | "running" | "error";
   port?: number;
@@ -260,9 +288,10 @@ export interface Plan {
   id: string;
   chat_id: string;
   content: string;
-  status: "draft" | "accepted" | "rejected";
+  status: "draft" | "accepted" | "rejected" | "implemented";
   created_at: string;
   updated_at: string;
+  chat_title?: string;
 }
 
 export interface PlanQuestion {
@@ -347,10 +376,12 @@ export interface DevxAgent {
 
 export interface SubagentRun {
   id: string;
+  parent_chat_id?: string;
   agent_name: string;
+  skill_name?: string | null;
   task: string;
   status: "running" | "completed" | "failed";
-  result: string | null;
+  result?: string | null;
   created_at: string;
   completed_at: string | null;
 }
@@ -361,6 +392,15 @@ export interface SlashCompletion {
   description: string | null;
   type: "skill" | "command";
   argument_hint?: string | null;
+}
+
+export interface SubagentMessage {
+  id: string;
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  tool_name?: string | null;
+  tool_call_id?: string | null;
+  created_at: string;
 }
 
 // Prompt templates
@@ -398,10 +438,6 @@ export const PROVIDERS: ProviderConfig[] = [
     name: "Anthropic",
     models: [
       "claude-sonnet-4-6-20250627",
-      "claude-sonnet-4-20250514",
-      "claude-opus-4-20250514",
-      "claude-haiku-4-20250514",
-      "claude-3-5-sonnet-20241022",
     ],
     requiresApiKey: true,
     requiresBaseUrl: false,
@@ -442,9 +478,11 @@ export const PROVIDERS: ProviderConfig[] = [
     name: "AWS Bedrock",
     models: [
       "us.anthropic.claude-sonnet-4-6",
-      "us.anthropic.claude-sonnet-4",
-      "us.anthropic.claude-opus-4",
-      "us.anthropic.claude-haiku-4",
+      "mistral.devstral-2-123b",
+      "minimax.minimax-m2.5",
+      "qwen.qwen3-coder-next",
+      "moonshotai.kimi-k2.5",
+      "zai.glm-5",
     ],
     requiresApiKey: false,
     requiresBaseUrl: false,

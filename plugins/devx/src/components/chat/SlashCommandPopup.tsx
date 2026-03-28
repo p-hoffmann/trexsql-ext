@@ -28,6 +28,9 @@ export function SlashCommandPopup({
   useEffect(() => {
     if (!visible) return;
 
+    // Don't capture keys when there are no items to navigate
+    if (items.length === 0) return;
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -66,25 +69,24 @@ export function SlashCommandPopup({
     <div
       ref={listRef}
       className="absolute bottom-full left-0 mb-1 w-80 max-h-60 overflow-y-auto
-                 bg-[var(--color-bg-secondary)] border border-[var(--color-border)]
-                 rounded-lg shadow-lg z-50"
+                 bg-popover border rounded-lg shadow-lg z-50"
     >
       {items.map((item, idx) => (
         <button
           key={item.slug}
           className={`w-full text-left px-3 py-2 flex items-start gap-2 text-sm
-                     hover:bg-[var(--color-bg-hover)] transition-colors
-                     ${idx === selectedIndex ? "bg-[var(--color-bg-hover)]" : ""}`}
+                     hover:bg-accent transition-colors
+                     ${idx === selectedIndex ? "bg-accent" : ""}`}
           onClick={() => onSelect(item)}
           onMouseEnter={() => setSelectedIndex(idx)}
         >
-          <span className="font-mono text-[var(--color-text-primary)] shrink-0">
+          <span className="font-mono text-foreground shrink-0">
             /{item.slug}
           </span>
-          <span className="text-[var(--color-text-secondary)] text-xs truncate">
+          <span className="text-muted-foreground text-xs truncate">
             {item.description || ""}
           </span>
-          <span className="ml-auto text-[10px] uppercase text-[var(--color-text-tertiary)] shrink-0">
+          <span className="ml-auto text-[10px] uppercase text-muted-foreground/60 shrink-0">
             {item.type}
           </span>
         </button>

@@ -106,6 +106,8 @@ export function useMessages(chatId: string | null, options?: { onAppCommand?: (c
           setStreamingContent("");
           setStreaming(false);
           setToolCalls([]);
+          setConsentRequest(null);
+          setConsentError(null);
           toolCallsRef.current = [];
           streamingContentRef.current = "";
           if (chatIdRef.current !== sentChatId) return;
@@ -142,6 +144,8 @@ export function useMessages(chatId: string | null, options?: { onAppCommand?: (c
           console.error("Stream error:", error);
           setStreaming(false);
           setStreamingContent("");
+          setConsentRequest(null);
+          setConsentError(null);
           // Extract readable message from API error JSON
           let msg = error;
           try {
@@ -221,13 +225,28 @@ export function useMessages(chatId: string | null, options?: { onAppCommand?: (c
     setConsentRequest(null);
   }, []);
 
+  const [consentError, setConsentError] = useState<string | null>(null);
+
   const resolveConsent = useCallback(
     async (decision: "allow" | "deny" | "always") => {
       if (!chatId || !consentRequest) return;
+      setConsentError(null);
       try {
         await api.respondToConsent(chatId, consentRequest.requestId, decision);
         setConsentRequest(null);
-      } catch (err) {
+      } catch (err: any) {
+        const errMsg = err?.message || "";
+        let msg: string;
+        if (errMsg.includes("429")) {
+          msg = "Rate limited — too many requests. Please wait a moment and try again.";
+        } else if (errMsg.includes("404")) {
+          msg = "Consent request expired or the agent has moved on. This can happen if the server restarted.";
+          // Auto-dismiss stale consent after a moment
+          setTimeout(() => setConsentRequest(null), 3000);
+        } else {
+          msg = `Failed to send decision: ${errMsg || "Unknown error"}`;
+        }
+        setConsentError(msg);
         console.error("Failed to send consent decision:", err);
       }
     },
@@ -260,6 +279,7 @@ export function useMessages(chatId: string | null, options?: { onAppCommand?: (c
     completedToolCalls,
     completedBuildTags,
     consentRequest,
+    consentError,
     questionnaire,
     planContent,
     tokenUsage,

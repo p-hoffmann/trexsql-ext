@@ -65,6 +65,13 @@ await db.transaction(async (tx) => {
 **medium**: Code quality issue that increases maintenance burden or makes bugs more likely in the future.
 **low**: Style issue, minor improvement opportunity, or best practice violation with low immediate impact.
 
+# Approach
+1. Use \`git_diff\` to understand what recently changed
+2. Use \`list_files\` to understand the project structure
+3. Use \`grep\` and \`code_search\` to find patterns of concern
+4. Use \`read_file\` to inspect specific files in detail
+5. Cross-reference findings to confirm they are real, actionable issues
+
 # Instructions
 1. Focus on real, actionable issues — not style nitpicks
 2. Prioritize bugs and logic errors over cosmetic issues
