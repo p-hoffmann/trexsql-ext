@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && vite build --config vite.config.parcel.ts && cp dist/assets/index-*.css dist/assets/notebook.css",
+    "build": "tsc -b && vite build && vite build --config vite.config.parcel.ts && sed '/:root,:host{/,/}/d' dist/assets/index-*.css > dist/assets/notebook.css",
     "prepack": "npm run build",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
