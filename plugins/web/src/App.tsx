@@ -41,6 +41,7 @@ import { Subscriptions } from "@/pages/admin/Subscriptions";
 import { Analytics } from "@/pages/admin/Analytics";
 import { AnalyticsDetail } from "@/pages/admin/AnalyticsDetail";
 import { EmbedPage } from "@/pages/EmbedPage";
+import { SingleSpaMount } from "@/pages/SingleSpaMount";
 
 function HomeRedirect() {
   const { data: session, isPending } = useSession();
@@ -65,7 +66,7 @@ export default function App() {
         <Route element={<Layout />}>
           <Route path="/profile" element={<Profile />} />
           <Route path="/docs" element={<EmbedPage plugin="docs" />} />
-          <Route path="/devx" element={<EmbedPage plugin="devx" />} />
+          <Route path="/devx/*" element={<SingleSpaMount plugin="devx" basePath={`${UI_BASE_PATH}/devx`} />} />
 
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<Navigate to="users" replace />} />

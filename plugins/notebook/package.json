@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && vite build --config vite.config.parcel.ts && sed '/:root,:host{/,/}/d' dist/assets/index-*.css > dist/assets/notebook.css",
     "prepack": "npm run build",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
@@ -40,6 +40,7 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-window": "^2.2.3",
+    "single-spa-react": "^6.0.0",
     "tailwind-merge": "^3.4.0",
     "webr": "^0.5.8"
   },

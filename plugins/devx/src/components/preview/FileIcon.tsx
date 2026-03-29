@@ -27,6 +27,7 @@ const EXT_COLORS: Record<string, string> = {
   env: "text-yellow-600",
   sh: "text-green-600",
   dockerfile: "text-blue-400",
+  ipynb: "text-orange-500",
 };
 
 interface FileIconProps {

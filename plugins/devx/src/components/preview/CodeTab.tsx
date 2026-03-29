@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { FileTree, FileTreeActions } from "./FileTree";
 import { CodeViewer } from "./CodeViewer";
+import { NotebookViewer } from "./NotebookViewer";
 import { EditorTabBar } from "./EditorTabBar";
 import { QuickOpen } from "./QuickOpen";
 import { SearchPanel } from "./SearchPanel";
@@ -233,13 +234,21 @@ export function CodeTab({ appId, fileTree, problems, onFixPrompt }: CodeTabProps
           {/* Primary pane */}
           <div className={`flex-1 overflow-hidden ${splitFile ? "min-w-0" : ""}`}>
             {selectedFile && fileContent !== null ? (
-              <CodeViewer
-                content={fileContent}
-                filePath={selectedFile}
-                onSave={saveFile}
-                problems={problems}
-                onFixPrompt={onFixPrompt}
-              />
+              selectedFile.endsWith(".ipynb") ? (
+                <NotebookViewer
+                  content={fileContent}
+                  filePath={selectedFile}
+                  onSave={saveFile}
+                />
+              ) : (
+                <CodeViewer
+                  content={fileContent}
+                  filePath={selectedFile}
+                  onSave={saveFile}
+                  problems={problems}
+                  onFixPrompt={onFixPrompt}
+                />
+              )
             ) : (
               <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
                 {editorTabs.tabs.length === 0
@@ -251,13 +260,21 @@ export function CodeTab({ appId, fileTree, problems, onFixPrompt }: CodeTabProps
           {/* Split pane */}
           {splitFile && splitContent !== null && (
             <div className="flex-1 min-w-0 overflow-hidden">
-              <CodeViewer
-                content={splitContent}
-                filePath={splitFile}
-                onSave={saveFile}
-                problems={problems}
-                onFixPrompt={onFixPrompt}
-              />
+              {splitFile.endsWith(".ipynb") ? (
+                <NotebookViewer
+                  content={splitContent}
+                  filePath={splitFile}
+                  onSave={saveFile}
+                />
+              ) : (
+                <CodeViewer
+                  content={splitContent}
+                  filePath={splitFile}
+                  onSave={saveFile}
+                  problems={problems}
+                  onFixPrompt={onFixPrompt}
+                />
+              )}
             </div>
           )}
         </div>

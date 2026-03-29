@@ -45,7 +45,7 @@ RUN cargo build --release
 # Stage 2: Build devx frontend
 FROM node:20-trixie-slim AS devx-builder
 WORKDIR /build
-COPY plugins/devx/package.json plugins/devx/package-lock.json plugins/devx/tsconfig*.json plugins/devx/vite.config.ts plugins/devx/index.html ./
+COPY plugins/devx/package.json plugins/devx/package-lock.json plugins/devx/tsconfig*.json plugins/devx/vite.config.ts plugins/devx/vite.config.spa.ts plugins/devx/index.html ./
 COPY plugins/devx/src/ ./src/
 RUN npm install && npm run build
 
@@ -59,7 +59,7 @@ RUN npm install && npm run build
 # Stage 4: Build notebook frontend
 FROM node:20-trixie-slim AS notebook-builder
 WORKDIR /build
-COPY plugins/notebook/package.json plugins/notebook/package-lock.json plugins/notebook/tsconfig*.json plugins/notebook/vite.config.ts plugins/notebook/index.html ./
+COPY plugins/notebook/package.json plugins/notebook/package-lock.json plugins/notebook/tsconfig*.json plugins/notebook/vite.config.ts plugins/notebook/vite.config.parcel.ts plugins/notebook/index.html ./
 COPY plugins/notebook/src/ ./src/
 COPY plugins/notebook/public/ ./public/
 RUN npm install && npm run build
@@ -77,7 +77,7 @@ RUN npm install && npm run build
 FROM node:20-trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      libssl3 libgomp1 ca-certificates libvulkan1 curl && \
+      libssl3 libgomp1 ca-certificates libvulkan1 curl git && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy trex binary, libtrexsql, and libtrexsql_engine
