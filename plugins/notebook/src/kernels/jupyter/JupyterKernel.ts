@@ -142,7 +142,7 @@ export class JupyterKernel implements KernelPlugin {
         session: this.sessionId,
         msg_type: 'execute_request',
         version: '5.4',
-        username: 'react-notebook',
+        username: 'trex-notebook',
         date: new Date().toISOString(),
       },
       parent_header: {},
