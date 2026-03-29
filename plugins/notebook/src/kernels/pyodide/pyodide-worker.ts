@@ -60,7 +60,7 @@ async function initialize(indexUrl?: string, preloadPackages?: string[], envVars
         try {
           await micropip.install(pkg)
         } catch (e) {
-          console.warn(`Failed to install ${pkg}:`, e)
+          console.warn('Failed to install %s:', pkg, e)
         }
       }
     }
@@ -97,10 +97,12 @@ def _capture_open_figures():
         // Convert import path (e.g. "./pyqe/api/base.py") to FS path
         const fsPath = '/home/pyodide/' + importPath.replace('./', '')
         const dir = fsPath.substring(0, fsPath.lastIndexOf('/'))
+        pyodide.globals.set('__mkdir_path__', dir)
         pyodide.runPython(`
 import os
-os.makedirs("${dir}", exist_ok=True)
+os.makedirs(__mkdir_path__, exist_ok=True)
 `)
+        pyodide.globals.delete('__mkdir_path__')
         pyodide.FS.writeFile(fsPath, source)
       }
       // Add to Python path so "import pyqe" works
@@ -133,10 +135,14 @@ del _pyqe_deps, _dep
     // Set Python environment variables (e.g. PYQE_URL, TOKEN)
     if (envVars && Object.keys(envVars).length > 0) {
       try {
-        const envEntries = Object.entries(envVars)
-          .map(([key, value]) => `os.environ['${key}'] = '''${value}'''`)
-          .join('\n')
-        pyodide.runPython(`import os\n${envEntries}`)
+        pyodide.globals.set('__env_vars__', pyodide.toPy(envVars))
+        pyodide.runPython(`
+import os
+for _k, _v in __env_vars__.items():
+    os.environ[_k] = _v
+del _k, _v
+`)
+        pyodide.globals.delete('__env_vars__')
       } catch (e) {
         console.warn('Failed to set environment variables:', e)
       }
@@ -252,9 +258,11 @@ except ImportError:
         } catch {
           // Not in Pyodide distribution, try micropip
           try {
+            pyodide.globals.set('__pkg_name__', packageName)
             await pyodide.runPythonAsync(
-              `import micropip; await micropip.install("${packageName}")`
+              `import micropip; await micropip.install(__pkg_name__)`
             )
+            pyodide.globals.delete('__pkg_name__')
           } catch {
             throw execError // Can't install, propagate original error
           }

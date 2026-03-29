@@ -34,7 +34,7 @@ export function MarkdownCell({
       const rawHtml = marked.parse(source, { async: false }) as string
       return DOMPurify.sanitize(rawHtml)
     } catch {
-      return `<pre>${source}</pre>`
+      return DOMPurify.sanitize(`<pre>${source}</pre>`)
     }
   }, [source])
 
