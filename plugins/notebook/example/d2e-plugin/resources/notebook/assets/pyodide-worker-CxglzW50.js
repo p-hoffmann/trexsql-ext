@@ -1,4 +1,4 @@
-var f=`"""
+var u=`"""
 Module \`pyqe\` is the python interface to QE. The goal of
 this module is to help researchers to build rule-based cohorts for
 further analysis.
@@ -61,7 +61,7 @@ __all__ = [
     'OriginSelection',
     'TargetSelection'
 ]
-`,u=`"""
+`,f=`"""
 About
 -------------
 \`pyqe.api\` submodule of \`pyqe\` contains all api classes
@@ -355,7 +355,7 @@ class Cohort(_EncodeQueryStringMixin, _AuthApi):
 
         response = await self._post('/analytics-svc/api/services/cohort', json=cohort_definition)
         return response.string()
-`,y=`import logging
+`,h=`import logging
 import json
 from typing import List, Optional
 from pyqe.api.base import _AuthApi
@@ -542,7 +542,7 @@ class Concept:
     def __init__(self, concept_code: str, include_descendants: bool = True):
         self.concept_code = concept_code
         self.include_descendants = include_descendants
-`,h=`import os
+`,y=`import os
 import logging
 import json
 import pandas as pd
@@ -736,7 +736,7 @@ class PAConfig(_AuthApi):
         response = await self._get('/analytics-svc/pa/services/analytics.xsjs', params)
         if response.ok:
             return await response.json()
-`,T=`import logging
+`,C=`import logging
 import json
 # import requests
 import pyodide.http
@@ -1184,7 +1184,7 @@ class Query(_AuthApi):
                     dynamic_entities[entity_name] = [col]
 
         return dynamic_entities
-`,E=`import logging
+`,T=`import logging
 from typing import Type
 import pandas as pd
 import os
@@ -1417,7 +1417,7 @@ class Result(_EncodeQueryStringMixin, _AuthApi):
             g.write(bytes.fromhex(response.text))
 
         return f"{filename}.enc created"
-`,C=`import json
+`,S=`import json
 import logging
 import os
 from pyqe.api.base import _AuthApi
@@ -1440,12 +1440,12 @@ class Study(_AuthApi):
         response = await self._get('/system-portal/dataset/list', params)
         if response.ok:
             return await response.json()
-        `,q=`"""
+        `,N=`"""
 About
 -------------
 \`pyqe.azure\` submodule of \`pyqe\` contains all azure classes
 """
-`,S=`import msal
+`,E=`import msal
 
 
 class _MsalCredentials():
@@ -1474,7 +1474,7 @@ class _MsalCredentials():
             error = result.get('error_description') or result.get('error')
             message = f'{error_prefix}: {error}'
         raise RuntimeError(message)
-`,A=`import sys
+`,w=`import sys
 import json
 import logging
 import os
@@ -1511,7 +1511,7 @@ class _PasswordCredential(_MsalCredentials):
             self._handle_error(result, "Authentication failed")
 
         return result
-`,w=`from pyqe.azure.msal_credentials import _MsalCredentials
+`,x=`from pyqe.azure.msal_credentials import _MsalCredentials
 
 
 class _RefreshToken(_MsalCredentials):
@@ -1530,13 +1530,13 @@ class _RefreshToken(_MsalCredentials):
             raise RuntimeError(message)
 
         return result
-`,N=`"""
+`,O=`"""
 About
 -------------
 \`pyqe.ql\` submodule of \`pyqe\` contains all query language class definitions
 
 """
-`,I=`import logging
+`,D=`import logging
 import re
 from ..shared import decorator
 from ..setup import setup_simple_console_log
@@ -1806,7 +1806,7 @@ class AdvanceTimeFilter():
             timeFilterDataObject.append(otherObject)
 
         return [{"and": timeFilterDataObject}]
-`,D=`import logging
+`,A=`import logging
 from pyqe.setup import setup_simple_console_log
 from pyqe.shared import decorator
 from pyqe.ql.date_period import DatePeriod
@@ -1959,7 +1959,7 @@ class DateConstraint(Constraint):
 
     def _is_after(self, date: str):
         self._add(ComparisonOperator.MORE_THAN_EQUAL, date)
-`,O=`import os
+`,I=`import os
 import json
 from pyqe.api.base import _AuthApi
 from pyqe.types.enum_types import ConfigPath
@@ -2002,7 +2002,7 @@ class Config:
         return attributes
 
     def find_interaction(self, name: str) -> dict:
-        return self._interactions[name]`,x=`import logging
+        return self._interactions[name]`,q=`import logging
 from pyqe.setup import setup_simple_console_log
 from pyqe.shared import decorator
 from pyqe.ql.filter_card import FilterCard
@@ -2152,7 +2152,7 @@ class CurrentDatePeriod(DatePeriod):
 
     def _get_today(self):
         return datetime.date.today().strftime(DATE_FORMAT)
-`,L=`import logging
+`,k=`import logging
 from pyqe.ql.advanced_time_filter import AdvanceTimeFilter
 from pyqe.setup import setup_simple_console_log
 from pyqe.shared import decorator
@@ -2293,7 +2293,7 @@ class FilterCard():
             }
         else:
             raise ValueError(f'Invalid filter card type: {self.card_type}')
-`,R=`import logging
+`,L=`import logging
 from ..shared import decorator
 from ..setup import setup_simple_console_log
 from .filter_card import FilterCard
@@ -2443,9 +2443,9 @@ class Person():
         build_attribute_function(frontend_config)
 
         setattr(Person, 'Patient', globals()['Patient'])
-`,k=`feature-flags:
+`,M=`feature-flags:
   azure-identity: true
-`,j=`import os
+`,R=`import os
 import logging
 import logging.config
 import yaml
@@ -2489,13 +2489,13 @@ def setup_simple_console_log(
     logging.basicConfig(format=default_format, datefmt=default_datefmt)
     logger = logging.getLogger("pyqe")
     logger.setLevel(default_level)
-`,M=`"""
+`,j=`"""
 About
 -------------
 \`pyqe.shared\` submodule of \`pyqe\` contains shared functions
 
 """
-`,U=`import json
+`,z=`import json
 import base64
 import zlib
 from urllib.parse import unquote, quote_from_bytes
@@ -2526,7 +2526,7 @@ class _EncodeQueryStringMixin():
         compressed_data = compress.compress(bytes(unquote(data), 'iso-8859-1'))
         compressed_data += compress.flush()
         return compressed_data
-`,Q=`import functools
+`,U=`import functools
 import inspect
 import logging
 import uuid
@@ -2607,7 +2607,7 @@ def _require_masking(func_name: str) -> bool:
                 return True
 
     return False
-`,Y=`import pkgutil
+`,G=`import pkgutil
 import yaml
 from typing import Any
 
@@ -2629,7 +2629,7 @@ About
 \`pyqe.types\` submodule of \`pyqe\` contains enum definitions
 
 """
-`,z=`import enum
+`,Q=`import enum
 
 
 class ConfigPath(enum.Enum):
@@ -2723,7 +2723,7 @@ class TargetSelection(enum.Enum):
     AFTER_START = 'after_start'
     BEFORE_END = 'before_end'
     AFTER_END = 'after_end'
-`,G=`from dataclasses import dataclass
+`,B=`from dataclasses import dataclass
 from typing import List
 
 
@@ -2745,13 +2745,13 @@ class ConceptSet:
     modifiedBy: str
     createdDate: str
     modifiedDate: str
-`,B=`"""
+`,Y=`"""
 About
 -------------
 \`pyqe.utils\` submodule of \`pyqe\` contains utility functions and constants
 
 """
-`,H=`"""
+`,W=`"""
 Strategus Spec Builder for Pyodide
 
 Standalone Strategus Analysis Specification Builder for Pyodide (browser-based Python).
@@ -2777,6 +2777,12 @@ HADES Package Version Tracking (for maintenance):
     - CohortDiagnostics 3.3.0
     - FeatureExtraction 3.7.0
     - Characterization 2.0.0
+    - Cyclops 3.5.0
+    - SelfControlledCaseSeries (latest)
+    - PatientLevelPrediction (latest)
+    - EvidenceSynthesis (latest)
+    - CohortIncidence (latest)
+    - CohortSurvival (darwin-eu)
 
 Note: Default settings are inlined from the HADES packages listed above.
 If HADES package defaults change, this file may need updates.
@@ -2982,6 +2988,1767 @@ def _get_default_temporal_covariate_settings() -> dict:
         "_class": "covariateSettings",
         "_fun": "getDbCovariateData"
     }
+
+
+# =============================================================================
+# Cyclops Helper Functions
+# =============================================================================
+
+def create_prior(prior_type: str = "laplace",
+                 variance: float = 1,
+                 exclude: list = None,
+                 graph: Any = None,
+                 neighborhood: Any = None,
+                 use_cross_validation: bool = True,
+                 force_intercept: bool = False) -> dict:
+    """Create a Cyclops prior specification."""
+    return {
+        "priorType": prior_type,
+        "variance": variance,
+        "exclude": exclude if exclude is not None else [],
+        "graph": graph,
+        "neighborhood": neighborhood,
+        "useCrossValidation": use_cross_validation,
+        "forceIntercept": force_intercept,
+        "_class": "cyclopsPrior"
+    }
+
+
+def create_control(max_iterations: int = 1000,
+                   tolerance: float = 1e-6,
+                   convergence_type: str = "gradient",
+                   auto_search: bool = True,
+                   fold: int = 10,
+                   cv_repetitions: int = 1,
+                   starting_variance: float = 0.01,
+                   lower_limit: float = 0.01,
+                   upper_limit: float = 20,
+                   seed: Optional[int] = None,
+                   reset_coefficients: bool = False,
+                   noise_level: str = "silent",
+                   threads: int = 1,
+                   cv_type: str = "auto",
+                   selector_type: str = "byPid") -> dict:
+    """Create a Cyclops control specification."""
+    return {
+        "maxIterations": max_iterations,
+        "tolerance": tolerance,
+        "convergenceType": convergence_type,
+        "autoSearch": auto_search,
+        "fold": fold,
+        "cvRepetitions": cv_repetitions,
+        "startingVariance": starting_variance,
+        "lowerLimit": lower_limit,
+        "upperLimit": upper_limit,
+        "seed": seed,
+        "resetCoefficients": reset_coefficients,
+        "noiseLevel": noise_level,
+        "threads": threads,
+        "cvType": cv_type,
+        "selectorType": selector_type,
+        "_class": "cyclopsControl"
+    }
+
+
+# =============================================================================
+# FeatureExtraction Builder Functions
+# =============================================================================
+
+def create_covariate_settings(**kwargs) -> dict:
+    """Create covariate settings for FeatureExtraction.
+
+    Accepts all use* boolean flags (default False) plus:
+    - long_term_start_days (-365), medium_term_start_days (-180),
+      short_term_start_days (-30), end_days (0)
+    - included/excluded covariate concept/covariate IDs
+    """
+    _USE_FLAGS = [
+        "useDemographicsGender", "useDemographicsAge", "useDemographicsAgeGroup",
+        "useDemographicsRace", "useDemographicsEthnicity", "useDemographicsIndexYear",
+        "useDemographicsIndexMonth", "useDemographicsPriorObservationTime",
+        "useDemographicsPostObservationTime", "useDemographicsTimeInCohort",
+        "useDemographicsIndexYearMonth", "useCareSiteId",
+        "useConditionOccurrenceAnyTimePrior", "useConditionOccurrenceLongTerm",
+        "useConditionOccurrenceMediumTerm", "useConditionOccurrenceShortTerm",
+        "useConditionOccurrencePrimaryInpatientAnyTimePrior",
+        "useConditionOccurrencePrimaryInpatientLongTerm",
+        "useConditionOccurrencePrimaryInpatientMediumTerm",
+        "useConditionOccurrencePrimaryInpatientShortTerm",
+        "useConditionEraAnyTimePrior", "useConditionEraLongTerm",
+        "useConditionEraMediumTerm", "useConditionEraShortTerm",
+        "useConditionEraOverlapping", "useConditionEraStartLongTerm",
+        "useConditionEraStartMediumTerm", "useConditionEraStartShortTerm",
+        "useConditionGroupEraAnyTimePrior", "useConditionGroupEraLongTerm",
+        "useConditionGroupEraMediumTerm", "useConditionGroupEraShortTerm",
+        "useConditionGroupEraOverlapping", "useConditionGroupEraStartLongTerm",
+        "useConditionGroupEraStartMediumTerm", "useConditionGroupEraStartShortTerm",
+        "useDrugExposureAnyTimePrior", "useDrugExposureLongTerm",
+        "useDrugExposureMediumTerm", "useDrugExposureShortTerm",
+        "useDrugEraAnyTimePrior", "useDrugEraLongTerm",
+        "useDrugEraMediumTerm", "useDrugEraShortTerm",
+        "useDrugEraOverlapping", "useDrugEraStartLongTerm",
+        "useDrugEraStartMediumTerm", "useDrugEraStartShortTerm",
+        "useDrugGroupEraAnyTimePrior", "useDrugGroupEraLongTerm",
+        "useDrugGroupEraMediumTerm", "useDrugGroupEraShortTerm",
+        "useDrugGroupEraOverlapping", "useDrugGroupEraStartLongTerm",
+        "useDrugGroupEraStartMediumTerm", "useDrugGroupEraStartShortTerm",
+        "useProcedureOccurrenceAnyTimePrior", "useProcedureOccurrenceLongTerm",
+        "useProcedureOccurrenceMediumTerm", "useProcedureOccurrenceShortTerm",
+        "useDeviceExposureAnyTimePrior", "useDeviceExposureLongTerm",
+        "useDeviceExposureMediumTerm", "useDeviceExposureShortTerm",
+        "useMeasurementAnyTimePrior", "useMeasurementLongTerm",
+        "useMeasurementMediumTerm", "useMeasurementShortTerm",
+        "useMeasurementValueAnyTimePrior", "useMeasurementValueLongTerm",
+        "useMeasurementValueMediumTerm", "useMeasurementValueShortTerm",
+        "useMeasurementRangeGroupAnyTimePrior", "useMeasurementRangeGroupLongTerm",
+        "useMeasurementRangeGroupMediumTerm", "useMeasurementRangeGroupShortTerm",
+        "useMeasurementValueAsConceptAnyTimePrior", "useMeasurementValueAsConceptLongTerm",
+        "useMeasurementValueAsConceptMediumTerm", "useMeasurementValueAsConceptShortTerm",
+        "useObservationAnyTimePrior", "useObservationLongTerm",
+        "useObservationMediumTerm", "useObservationShortTerm",
+        "useObservationValueAsConceptAnyTimePrior", "useObservationValueAsConceptLongTerm",
+        "useObservationValueAsConceptMediumTerm", "useObservationValueAsConceptShortTerm",
+        "useCharlsonIndex", "useDcsi", "useChads2", "useChads2Vasc", "useHfrs",
+        "useDistinctConditionCountLongTerm", "useDistinctConditionCountMediumTerm",
+        "useDistinctConditionCountShortTerm", "useDistinctIngredientCountLongTerm",
+        "useDistinctIngredientCountMediumTerm", "useDistinctIngredientCountShortTerm",
+        "useDistinctProcedureCountLongTerm", "useDistinctProcedureCountMediumTerm",
+        "useDistinctProcedureCountShortTerm", "useDistinctMeasurementCountLongTerm",
+        "useDistinctMeasurementCountMediumTerm", "useDistinctMeasurementCountShortTerm",
+        "useDistinctObservationCountLongTerm", "useDistinctObservationCountMediumTerm",
+        "useDistinctObservationCountShortTerm", "useVisitCountLongTerm",
+        "useVisitCountMediumTerm", "useVisitCountShortTerm",
+        "useVisitConceptCountLongTerm", "useVisitConceptCountMediumTerm",
+        "useVisitConceptCountShortTerm",
+    ]
+    settings = {"temporal": False, "temporalSequence": False}
+    any_use_true = False
+    for flag in _USE_FLAGS:
+        val = kwargs.get(flag, False)
+        if val:
+            settings[flag.replace("use", "", 1)] = True
+            any_use_true = True
+    if not any_use_true:
+        raise ValueError("No covariate analysis selected. Must select at least one")
+    settings["longTermStartDays"] = kwargs.get("longTermStartDays", -365)
+    settings["mediumTermStartDays"] = kwargs.get("mediumTermStartDays", -180)
+    settings["shortTermStartDays"] = kwargs.get("shortTermStartDays", -30)
+    settings["endDays"] = kwargs.get("endDays", 0)
+    settings["includedCovariateConceptIds"] = kwargs.get("includedCovariateConceptIds", [])
+    settings["addDescendantsToInclude"] = kwargs.get("addDescendantsToInclude", False)
+    settings["excludedCovariateConceptIds"] = kwargs.get("excludedCovariateConceptIds", [])
+    settings["addDescendantsToExclude"] = kwargs.get("addDescendantsToExclude", False)
+    settings["includedCovariateIds"] = kwargs.get("includedCovariateIds", [])
+    settings["_fun"] = "getDbDefaultCovariateData"
+    settings["_class"] = "covariateSettings"
+    return settings
+
+
+def create_default_covariate_settings(
+    included_covariate_concept_ids: list = None,
+    add_descendants_to_include: bool = False,
+    excluded_covariate_concept_ids: list = None,
+    add_descendants_to_exclude: bool = False,
+    included_covariate_ids: list = None
+) -> dict:
+    """Create default covariate settings (common demographics + condition/drug/procedure)."""
+    settings = _get_default_characterization_covariate_settings()
+    settings["includedCovariateConceptIds"] = included_covariate_concept_ids or []
+    settings["addDescendantsToInclude"] = add_descendants_to_include
+    settings["excludedCovariateConceptIds"] = excluded_covariate_concept_ids or []
+    settings["addDescendantsToExclude"] = add_descendants_to_exclude
+    settings["includedCovariateIds"] = included_covariate_ids or []
+    settings["_fun"] = "getDbDefaultCovariateData"
+    return settings
+
+
+def create_temporal_covariate_settings(**kwargs) -> dict:
+    """Create temporal covariate settings for FeatureExtraction.
+
+    Accepts temporal use* boolean flags (default False) plus:
+    - temporal_start_days (default [-365, -30, 0, 1, 31])
+    - temporal_end_days (default [-31, -1, 0, 30, 365])
+    - included/excluded covariate concept/covariate IDs
+    """
+    _USE_FLAGS = [
+        "useDemographicsGender", "useDemographicsAge", "useDemographicsAgeGroup",
+        "useDemographicsRace", "useDemographicsEthnicity", "useDemographicsIndexYear",
+        "useDemographicsIndexMonth", "useDemographicsPriorObservationTime",
+        "useDemographicsPostObservationTime", "useDemographicsTimeInCohort",
+        "useDemographicsIndexYearMonth",
+        "useConditionEraGroupStart", "useConditionEraGroupOverlap",
+        "useDrugEraGroupStart", "useDrugEraGroupOverlap",
+        "useProcedureOccurrenceStart", "useProcedureOccurrenceOverlap",
+        "useDeviceExposureStart", "useDeviceExposureOverlap",
+        "useMeasurementStart", "useMeasurementOverlap",
+        "useObservationStart", "useObservationOverlap",
+        "useVisitCountStart", "useVisitCountOverlap",
+        "useVisitConceptCountStart", "useVisitConceptCountOverlap",
+        "useConditionOccurrenceStart", "useConditionOccurrenceOverlap",
+        "useDrugExposureStart", "useDrugExposureOverlap",
+        "useConditionEraStart", "useConditionEraOverlap",
+    ]
+    settings = {"temporal": True, "temporalSequence": False}
+    any_use_true = False
+    for flag in _USE_FLAGS:
+        val = kwargs.get(flag, False)
+        if val:
+            settings[flag.replace("use", "", 1)] = True
+            any_use_true = True
+    if not any_use_true:
+        raise ValueError("No covariate analysis selected. Must select at least one")
+    settings["temporalStartDays"] = kwargs.get("temporalStartDays", [-365, -30, 0, 1, 31])
+    settings["temporalEndDays"] = kwargs.get("temporalEndDays", [-31, -1, 0, 30, 365])
+    settings["includedCovariateConceptIds"] = kwargs.get("includedCovariateConceptIds", [])
+    settings["addDescendantsToInclude"] = kwargs.get("addDescendantsToInclude", False)
+    settings["excludedCovariateConceptIds"] = kwargs.get("excludedCovariateConceptIds", [])
+    settings["addDescendantsToExclude"] = kwargs.get("addDescendantsToExclude", False)
+    settings["includedCovariateIds"] = kwargs.get("includedCovariateIds", [])
+    settings["_fun"] = "getDbDefaultCovariateData"
+    settings["_class"] = "covariateSettings"
+    return settings
+
+
+def create_detailed_covariate_settings(analyses: list = None) -> dict:
+    """Create detailed covariate settings."""
+    return {
+        "temporal": False,
+        "temporalSequence": False,
+        "analyses": analyses or [],
+        "_fun": "getDbCovariateData",
+        "_class": "covariateSettings"
+    }
+
+
+def create_analysis_details(
+    analysis_id: int,
+    sql_file_name: str,
+    parameters: dict = None,
+    included_covariate_concept_ids: list = None,
+    add_descendants_to_include: bool = False,
+    excluded_covariate_concept_ids: list = None,
+    add_descendants_to_exclude: bool = False,
+    included_covariate_ids: list = None
+) -> dict:
+    """Create analysis details for detailed covariate settings."""
+    return {
+        "analysisId": analysis_id,
+        "sqlFileName": sql_file_name,
+        "parameters": parameters or {},
+        "includedCovariateConceptIds": included_covariate_concept_ids or [],
+        "addDescendantsToInclude": add_descendants_to_include,
+        "excludedCovariateConceptIds": excluded_covariate_concept_ids or [],
+        "addDescendantsToExclude": add_descendants_to_exclude,
+        "includedCovariateIds": included_covariate_ids or [],
+        "_class": "analysisDetail"
+    }
+
+
+# =============================================================================
+# CohortMethod Builder Functions
+# =============================================================================
+
+def create_get_db_cohort_method_data_args(
+    covariate_settings: Optional[dict] = None,
+    remove_duplicate_subjects: str = "keep first, truncate to second",
+    first_exposure_only: bool = True,
+    washout_period: int = 365,
+    nesting_cohort_id: Optional[int] = None,
+    restrict_to_common_period: bool = True,
+    min_age: Optional[int] = None,
+    max_age: Optional[int] = None,
+    gender_concept_ids: Optional[list] = None,
+    study_start_date: str = "",
+    study_end_date: str = "",
+    max_cohort_size: int = 0
+) -> dict:
+    """Create arguments for getDbCohortMethodData."""
+    if covariate_settings is None:
+        covariate_settings = create_default_covariate_settings()
+    return {
+        "covariateSettings": covariate_settings,
+        "removeDuplicateSubjects": remove_duplicate_subjects,
+        "firstExposureOnly": first_exposure_only,
+        "washoutPeriod": washout_period,
+        "nestingCohortId": nesting_cohort_id,
+        "restrictToCommonPeriod": restrict_to_common_period,
+        "minAge": min_age,
+        "maxAge": max_age,
+        "genderConceptIds": gender_concept_ids,
+        "studyStartDate": study_start_date,
+        "studyEndDate": study_end_date,
+        "maxCohortSize": max_cohort_size,
+        "_class": "GetDbCohortMethodDataArgs"
+    }
+
+
+def create_create_study_population_args(
+    remove_subjects_with_prior_outcome: bool = True,
+    prior_outcome_lookback: int = 99999,
+    min_days_at_risk: int = 1,
+    max_days_at_risk: int = 99999,
+    risk_window_start: int = 0,
+    start_anchor: str = "cohort start",
+    risk_window_end: int = 0,
+    end_anchor: str = "cohort end",
+    censor_at_new_risk_window: bool = False
+) -> dict:
+    """Create arguments for CohortMethod createStudyPopulation."""
+    return {
+        "removeSubjectsWithPriorOutcome": remove_subjects_with_prior_outcome,
+        "priorOutcomeLookback": prior_outcome_lookback,
+        "minDaysAtRisk": min_days_at_risk,
+        "maxDaysAtRisk": max_days_at_risk,
+        "riskWindowStart": risk_window_start,
+        "startAnchor": start_anchor,
+        "riskWindowEnd": risk_window_end,
+        "endAnchor": end_anchor,
+        "censorAtNewRiskWindow": censor_at_new_risk_window,
+        "_class": "CreateStudyPopulationArgs"
+    }
+
+
+def create_create_ps_args(
+    exclude_covariate_ids: list = None,
+    include_covariate_ids: list = None,
+    max_cohort_size_for_fitting: int = 250000,
+    error_on_high_correlation: bool = True,
+    stop_on_error: bool = True,
+    prior: Optional[dict] = None,
+    control: Optional[dict] = None,
+    estimator: str = "att"
+) -> dict:
+    """Create arguments for createPs."""
+    if prior is None:
+        prior = create_prior(prior_type="laplace", exclude=[0], use_cross_validation=True)
+    if control is None:
+        control = create_control(noise_level="silent", cv_type="auto", seed=1,
+                                 reset_coefficients=True, tolerance=2e-07,
+                                 cv_repetitions=10, starting_variance=0.01)
+    return {
+        "excludeCovariateIds": exclude_covariate_ids or [],
+        "includeCovariateIds": include_covariate_ids or [],
+        "maxCohortSizeForFitting": max_cohort_size_for_fitting,
+        "errorOnHighCorrelation": error_on_high_correlation,
+        "stopOnError": stop_on_error,
+        "prior": prior,
+        "control": control,
+        "estimator": estimator,
+        "_class": "CreatePsArgs"
+    }
+
+
+def create_trim_by_ps_args(
+    trim_fraction: Optional[float] = None,
+    equipoise_bounds: Optional[list] = None,
+    max_weight: Optional[float] = None,
+    trim_method: str = "symmetric"
+) -> dict:
+    """Create arguments for trimByPs."""
+    return {
+        "trimFraction": trim_fraction,
+        "equipoiseBounds": equipoise_bounds,
+        "maxWeight": max_weight,
+        "trimMethod": trim_method,
+        "_class": "TrimByPsArgs"
+    }
+
+
+def create_truncate_iptw_args(max_weight: float = 10) -> dict:
+    """Create arguments for truncateIptw."""
+    return {"maxWeight": max_weight, "_class": "TruncateIptwArgs"}
+
+
+def create_match_on_ps_args(
+    caliper: float = 0.2,
+    caliper_scale: str = "standardized logit",
+    max_ratio: int = 1,
+    allow_reverse_match: bool = False,
+    match_columns: list = None,
+    match_covariate_ids: list = None
+) -> dict:
+    """Create arguments for matchOnPs."""
+    return {
+        "caliper": caliper,
+        "caliperScale": caliper_scale,
+        "maxRatio": max_ratio,
+        "allowReverseMatch": allow_reverse_match,
+        "matchColumns": match_columns or [],
+        "matchCovariateIds": match_covariate_ids or [],
+        "_class": "MatchOnPsArgs"
+    }
+
+
+def create_stratify_by_ps_args(
+    number_of_strata: int = 10,
+    base_selection: str = "all",
+    stratification_columns: list = None,
+    stratification_covariate_ids: list = None
+) -> dict:
+    """Create arguments for stratifyByPs."""
+    return {
+        "numberOfStrata": number_of_strata,
+        "baseSelection": base_selection,
+        "stratificationColumns": stratification_columns or [],
+        "stratificationCovariateIds": stratification_covariate_ids or [],
+        "_class": "StratifyByPsArgs"
+    }
+
+
+def create_compute_covariate_balance_args(
+    subgroup_covariate_id: Optional[int] = None,
+    max_cohort_size: int = 250000,
+    covariate_filter: Optional[list] = None,
+    threshold: float = 0.1,
+    alpha: float = 0.05
+) -> dict:
+    """Create arguments for computeCovariateBalance."""
+    return {
+        "subgroupCovariateId": subgroup_covariate_id,
+        "maxCohortSize": max_cohort_size,
+        "covariateFilter": covariate_filter,
+        "threshold": threshold,
+        "alpha": alpha,
+        "_class": "ComputeCovariateBalanceArgs"
+    }
+
+
+def create_fit_outcome_model_args(
+    model_type: str = "cox",
+    stratified: bool = False,
+    use_covariates: bool = False,
+    inverse_pt_weighting: bool = False,
+    bootstrap_ci: bool = False,
+    bootstrap_replicates: int = 200,
+    interaction_covariate_ids: list = None,
+    exclude_covariate_ids: list = None,
+    include_covariate_ids: list = None,
+    profile_grid: Optional[list] = None,
+    profile_bounds: Optional[list] = None,
+    prior: Optional[dict] = None,
+    control: Optional[dict] = None
+) -> dict:
+    """Create arguments for fitOutcomeModel."""
+    if profile_bounds is None:
+        profile_bounds = [math.log(0.1), math.log(10)]
+    if prior is None:
+        prior = create_prior(prior_type="laplace", use_cross_validation=True)
+    if control is None:
+        control = create_control(cv_type="auto", starting_variance=0.01,
+                                 tolerance=2e-07, noise_level="silent")
+    return {
+        "modelType": model_type,
+        "stratified": stratified,
+        "useCovariates": use_covariates,
+        "inversePtWeighting": inverse_pt_weighting,
+        "bootstrapCi": bootstrap_ci,
+        "bootstrapReplicates": bootstrap_replicates,
+        "interactionCovariateIds": interaction_covariate_ids or [],
+        "excludeCovariateIds": exclude_covariate_ids or [],
+        "includeCovariateIds": include_covariate_ids or [],
+        "profileGrid": profile_grid,
+        "profileBounds": profile_bounds,
+        "prior": prior,
+        "control": control,
+        "_class": "FitOutcomeModelArgs"
+    }
+
+
+def create_cm_analysis(
+    analysis_id: int = 1,
+    description: str = "",
+    get_db_cohort_method_data_args: dict = None,
+    create_study_pop_args: dict = None,
+    create_ps_args: Optional[dict] = None,
+    trim_by_ps_args: Optional[dict] = None,
+    truncate_iptw_args: Optional[dict] = None,
+    match_on_ps_args: Optional[dict] = None,
+    stratify_by_ps_args: Optional[dict] = None,
+    compute_shared_covariate_balance_args: Optional[dict] = None,
+    compute_covariate_balance_args: Optional[dict] = None,
+    fit_outcome_model_args: Optional[dict] = None
+) -> dict:
+    """Create a CohortMethod analysis specification."""
+    return {
+        "analysisId": analysis_id,
+        "description": description,
+        "getDbCohortMethodDataArgs": get_db_cohort_method_data_args,
+        "createStudyPopArgs": create_study_pop_args,
+        "createPsArgs": create_ps_args,
+        "trimByPsArgs": trim_by_ps_args,
+        "truncateIptwArgs": truncate_iptw_args,
+        "matchOnPsArgs": match_on_ps_args,
+        "stratifyByPsArgs": stratify_by_ps_args,
+        "computeSharedCovariateBalanceArgs": compute_shared_covariate_balance_args,
+        "computeCovariateBalanceArgs": compute_covariate_balance_args,
+        "fitOutcomeModelArgs": fit_outcome_model_args,
+        "_class": "CmAnalysis"
+    }
+
+
+def create_outcome(
+    outcome_id: int,
+    outcome_of_interest: bool = True,
+    true_effect_size: float = None,
+    prior_outcome_lookback: Optional[int] = None,
+    risk_window_start: Optional[int] = None,
+    start_anchor: Optional[str] = None,
+    risk_window_end: Optional[int] = None,
+    end_anchor: Optional[str] = None
+) -> dict:
+    """Create an outcome definition for CohortMethod."""
+    return {
+        "outcomeId": outcome_id,
+        "outcomeOfInterest": outcome_of_interest,
+        "trueEffectSize": true_effect_size if true_effect_size is not None else math.nan,
+        "priorOutcomeLookback": prior_outcome_lookback,
+        "riskWindowStart": risk_window_start,
+        "startAnchor": start_anchor,
+        "riskWindowEnd": risk_window_end,
+        "endAnchor": end_anchor,
+        "_class": "Outcome"
+    }
+
+
+def create_target_comparator_outcomes(
+    target_id: int,
+    comparator_id: int,
+    outcomes: list,
+    nesting_cohort_id: Optional[int] = None,
+    excluded_covariate_concept_ids: list = None,
+    included_covariate_concept_ids: list = None
+) -> dict:
+    """Create a target-comparator-outcomes specification."""
+    return {
+        "targetId": target_id,
+        "comparatorId": comparator_id,
+        "outcomes": outcomes,
+        "nestingCohortId": nesting_cohort_id,
+        "excludedCovariateConceptIds": excluded_covariate_concept_ids or [],
+        "includedCovariateConceptIds": included_covariate_concept_ids or [],
+        "_class": "TargetComparatorOutcomes"
+    }
+
+
+def create_cm_diagnostic_thresholds(
+    mdrr_threshold: float = 10,
+    ease_threshold: float = 0.25,
+    sdm_threshold: float = 0.1,
+    sdm_alpha: Optional[float] = None,
+    equipoise_threshold: float = 0.2,
+    generalizability_sdm_threshold: float = 999
+) -> dict:
+    """Create CohortMethod diagnostic thresholds."""
+    return {
+        "mdrrThreshold": mdrr_threshold,
+        "easeThreshold": ease_threshold,
+        "sdmThreshold": sdm_threshold,
+        "sdmAlpha": sdm_alpha,
+        "equipoiseThreshold": equipoise_threshold,
+        "generalizabilitySdmThreshold": generalizability_sdm_threshold,
+        "_class": "CmDiagnosticThresholds"
+    }
+
+
+# =============================================================================
+# SelfControlledCaseSeries Builder Functions
+# =============================================================================
+
+def create_era_covariate_settings(
+    include_era_ids: Union[list, str],
+    exclude_era_ids: Optional[list] = None,
+    label: str = "Covariates",
+    stratify_by_id: bool = False,
+    start: int = 0,
+    start_anchor: str = "era start",
+    end: int = 0,
+    end_anchor: str = "era end",
+    first_occurrence_only: bool = False,
+    allow_regularization: bool = False,
+    profile_likelihood: bool = False,
+    exposure_of_interest: bool = False
+) -> dict:
+    """Create era covariate settings for SCCS."""
+    return {
+        "includeEraIds": include_era_ids,
+        "excludeEraIds": exclude_era_ids,
+        "label": label,
+        "stratifyById": stratify_by_id,
+        "start": start,
+        "startAnchor": start_anchor,
+        "end": end,
+        "endAnchor": end_anchor,
+        "firstOccurrenceOnly": first_occurrence_only,
+        "allowRegularization": allow_regularization,
+        "profileLikelihood": profile_likelihood,
+        "exposureOfInterest": exposure_of_interest,
+        "_class": "EraCovariateSettings"
+    }
+
+
+def create_age_covariate_settings(
+    age_knots: int = 5,
+    allow_regularization: bool = False,
+    compute_confidence_intervals: bool = False
+) -> dict:
+    """Create age covariate settings for SCCS."""
+    return {
+        "ageKnots": age_knots,
+        "allowRegularization": allow_regularization,
+        "computeConfidenceIntervals": compute_confidence_intervals,
+        "_class": "AgeCovariateSettings"
+    }
+
+
+def create_seasonality_covariate_settings(
+    season_knots: int = 5,
+    allow_regularization: bool = False,
+    compute_confidence_intervals: bool = False
+) -> dict:
+    """Create seasonality covariate settings for SCCS."""
+    return {
+        "seasonKnots": season_knots,
+        "allowRegularization": allow_regularization,
+        "computeConfidenceIntervals": compute_confidence_intervals,
+        "_class": "SeasonalityCovariateSettings"
+    }
+
+
+def create_calendar_time_covariate_settings(
+    calendar_time_knots: int = 5,
+    allow_regularization: bool = False,
+    compute_confidence_intervals: bool = False
+) -> dict:
+    """Create calendar time covariate settings for SCCS."""
+    return {
+        "calendarTimeKnots": calendar_time_knots,
+        "allowRegularization": allow_regularization,
+        "computeConfidenceIntervals": compute_confidence_intervals,
+        "_class": "CalendarTimeCovariateSettings"
+    }
+
+
+def create_control_interval_settings(
+    include_era_ids: Optional[list] = None,
+    exclude_era_ids: Optional[list] = None,
+    start: int = 0,
+    start_anchor: str = "era start",
+    end: int = 0,
+    end_anchor: str = "era end",
+    first_occurrence_only: bool = False
+) -> dict:
+    """Create control interval settings for SCRI."""
+    return {
+        "includeEraIds": include_era_ids,
+        "excludeEraIds": exclude_era_ids,
+        "start": start,
+        "startAnchor": start_anchor,
+        "end": end,
+        "endAnchor": end_anchor,
+        "firstOccurrenceOnly": first_occurrence_only,
+        "_class": "ControlIntervalSettings"
+    }
+
+
+def create_get_db_sccs_data_args(
+    nesting_cohort_id: Optional[int] = None,
+    delete_covariates_small_count: int = 0,
+    study_start_dates: list = None,
+    study_end_dates: list = None,
+    max_cases_per_outcome: int = 0,
+    exposure_ids: Union[str, list] = "exposureId",
+    custom_covariate_ids: Optional[list] = None
+) -> dict:
+    """Create arguments for getDbSccsData."""
+    return {
+        "nestingCohortId": nesting_cohort_id,
+        "deleteCovariatesSmallCount": delete_covariates_small_count,
+        "studyStartDates": study_start_dates or [],
+        "studyEndDates": study_end_dates or [],
+        "maxCasesPerOutcome": max_cases_per_outcome,
+        "exposureIds": exposure_ids,
+        "customCovariateIds": custom_covariate_ids,
+        "_class": "GetDbSccsDataArgs"
+    }
+
+
+def create_sccs_create_study_population_args(
+    first_outcome_only: bool = False,
+    naive_period: int = 0,
+    min_age: Optional[float] = None,
+    max_age: Optional[float] = None,
+    gender_concept_ids: Optional[list] = None,
+    restrict_time_to_era_id: Optional[int] = None
+) -> dict:
+    """Create study population args for SCCS (different from CohortMethod version)."""
+    return {
+        "firstOutcomeOnly": first_outcome_only,
+        "naivePeriod": naive_period,
+        "minAge": min_age,
+        "maxAge": max_age,
+        "genderConceptIds": gender_concept_ids,
+        "restrictTimeToEraId": restrict_time_to_era_id,
+        "_class": "CreateStudyPopulationArgs"
+    }
+
+
+def create_create_sccs_interval_data_args(
+    era_covariate_settings: Union[dict, list],
+    age_covariate_settings: Optional[dict] = None,
+    seasonality_covariate_settings: Optional[dict] = None,
+    calendar_time_covariate_settings: Optional[dict] = None,
+    min_cases_for_time_covariates: int = 10000,
+    end_of_observation_era_length: int = 30,
+    event_dependent_observation: bool = False
+) -> dict:
+    """Create arguments for createSccsIntervalData."""
+    return {
+        "eraCovariateSettings": era_covariate_settings,
+        "ageCovariateSettings": age_covariate_settings,
+        "seasonalityCovariateSettings": seasonality_covariate_settings,
+        "calendarTimeCovariateSettings": calendar_time_covariate_settings,
+        "minCasesForTimeCovariates": min_cases_for_time_covariates,
+        "endOfObservationEraLength": end_of_observation_era_length,
+        "eventDependentObservation": event_dependent_observation,
+        "_class": "CreateSccsIntervalDataArgs"
+    }
+
+
+def create_create_scri_interval_data_args(
+    era_covariate_settings: Union[dict, list],
+    control_interval_settings: dict
+) -> dict:
+    """Create arguments for createScriIntervalData."""
+    return {
+        "eraCovariateSettings": era_covariate_settings,
+        "controlIntervalSettings": control_interval_settings,
+        "_class": "CreateScriIntervalDataArgs"
+    }
+
+
+def create_fit_sccs_model_args(
+    prior: Optional[dict] = None,
+    control: Optional[dict] = None,
+    profile_grid: Optional[list] = None,
+    profile_bounds: Optional[list] = None
+) -> dict:
+    """Create arguments for fitSccsModel."""
+    if prior is None:
+        prior = create_prior("laplace", use_cross_validation=True)
+    if control is None:
+        control = create_control(cv_type="auto", selector_type="byPid",
+                                 starting_variance=0.1, seed=1,
+                                 reset_coefficients=True, noise_level="quiet")
+    if profile_bounds is None:
+        profile_bounds = [math.log(0.1), math.log(10)]
+    return {
+        "prior": prior,
+        "control": control,
+        "profileGrid": profile_grid,
+        "profileBounds": profile_bounds,
+        "_class": "FitSccsModelArgs"
+    }
+
+
+def create_sccs_analysis(
+    analysis_id: int = 1,
+    description: str = "",
+    get_db_sccs_data_args: dict = None,
+    create_study_population_args: dict = None,
+    create_interval_data_args: dict = None,
+    fit_sccs_model_args: dict = None
+) -> dict:
+    """Create an SCCS analysis specification."""
+    return {
+        "analysisId": analysis_id,
+        "description": description,
+        "getDbSccsDataArgs": get_db_sccs_data_args,
+        "createStudyPopulationArgs": create_study_population_args,
+        "createIntervalDataArgs": create_interval_data_args,
+        "fitSccsModelArgs": fit_sccs_model_args,
+        "_class": "SccsAnalysis"
+    }
+
+
+def create_exposure(
+    exposure_id: int,
+    exposure_id_ref: str = "exposureId",
+    true_effect_size: float = None
+) -> dict:
+    """Create an exposure definition for SCCS."""
+    return {
+        "exposureId": exposure_id,
+        "exposureIdRef": exposure_id_ref,
+        "trueEffectSize": true_effect_size if true_effect_size is not None else math.nan,
+        "_class": "Exposure"
+    }
+
+
+def create_exposures_outcome(
+    outcome_id: int,
+    exposures: list,
+    nesting_cohort_id: Optional[int] = None
+) -> dict:
+    """Create an exposures-outcome combination for SCCS."""
+    return {
+        "outcomeId": outcome_id,
+        "exposures": exposures,
+        "nestingCohortId": nesting_cohort_id,
+        "_class": "ExposuresOutcome"
+    }
+
+
+def create_sccs_diagnostic_thresholds(
+    mdrr_threshold: float = 10,
+    ease_threshold: float = 0.25,
+    time_trend_max_ratio: float = 1.1,
+    rare_outcome_max_prevalence: float = 0.1,
+    event_observation_dependence_null_bounds: list = None,
+    event_exposure_dependence_null_bounds: list = None
+) -> dict:
+    """Create SCCS diagnostic thresholds."""
+    return {
+        "mdrrThreshold": mdrr_threshold,
+        "easeThreshold": ease_threshold,
+        "timeTrendMaxRatio": time_trend_max_ratio,
+        "rareOutcomeMaxPrevalence": rare_outcome_max_prevalence,
+        "eventObservationDependenceNullBounds": event_observation_dependence_null_bounds or [0.5, 2.0],
+        "eventExposureDependenceNullBounds": event_exposure_dependence_null_bounds or [0.8, 1.25],
+        "_class": "SccsDiagnosticThresholds"
+    }
+
+
+def create_sccs_analyses_specifications(
+    sccs_analysis_list: list,
+    exposures_outcome_list: list,
+    analyses_to_exclude: Optional[list] = None,
+    combine_data_fetch_across_outcomes: bool = False,
+    sccs_diagnostic_thresholds: Optional[dict] = None,
+    control_type: str = "outcome"
+) -> dict:
+    """Create full SCCS analyses specifications."""
+    if sccs_diagnostic_thresholds is None:
+        sccs_diagnostic_thresholds = create_sccs_diagnostic_thresholds()
+    return {
+        "sccsAnalysisList": sccs_analysis_list,
+        "exposuresOutcomeList": exposures_outcome_list,
+        "analysesToExclude": analyses_to_exclude,
+        "combineDataFetchAcrossOutcomes": combine_data_fetch_across_outcomes,
+        "sccsDiagnosticThresholds": sccs_diagnostic_thresholds,
+        "controlType": control_type,
+        "_class": "SccsAnalysesSpecifications"
+    }
+
+
+# =============================================================================
+# PatientLevelPrediction Builder Functions
+# =============================================================================
+
+def create_study_population_settings(
+    binary: bool = True,
+    include_all_outcomes: bool = True,
+    first_exposure_only: bool = False,
+    washout_period: int = 0,
+    remove_subjects_with_prior_outcome: bool = True,
+    prior_outcome_lookback: int = 99999,
+    require_time_at_risk: bool = True,
+    min_time_at_risk: int = 364,
+    risk_window_start: int = 1,
+    start_anchor: str = "cohort start",
+    risk_window_end: int = 365,
+    end_anchor: str = "cohort start",
+    restrict_tar_to_cohort_end: bool = False
+) -> dict:
+    """Create PLP study population settings."""
+    return {
+        "binary": binary,
+        "includeAllOutcomes": include_all_outcomes,
+        "firstExposureOnly": first_exposure_only,
+        "washoutPeriod": washout_period,
+        "removeSubjectsWithPriorOutcome": remove_subjects_with_prior_outcome,
+        "priorOutcomeLookback": prior_outcome_lookback,
+        "requireTimeAtRisk": require_time_at_risk,
+        "minTimeAtRisk": min_time_at_risk,
+        "riskWindowStart": risk_window_start,
+        "startAnchor": start_anchor,
+        "riskWindowEnd": risk_window_end,
+        "endAnchor": end_anchor,
+        "restrictTarToCohortEnd": restrict_tar_to_cohort_end,
+        "_class": "populationSettings"
+    }
+
+
+def create_restrict_plp_data_settings(
+    study_start_date: str = "",
+    study_end_date: str = "",
+    first_exposure_only: bool = False,
+    washout_period: int = 0,
+    sample_size: Optional[int] = None
+) -> dict:
+    """Create PLP data restriction settings."""
+    return {
+        "studyStartDate": study_start_date,
+        "studyEndDate": study_end_date,
+        "firstExposureOnly": first_exposure_only,
+        "washoutPeriod": washout_period,
+        "sampleSize": sample_size,
+        "_class": "restrictPlpDataSettings"
+    }
+
+
+def create_preprocess_settings(
+    min_fraction: float = 0.001,
+    normalize: bool = True,
+    remove_redundancy: bool = True
+) -> dict:
+    """Create PLP preprocessing settings."""
+    return {
+        "minFraction": min_fraction,
+        "normalize": normalize,
+        "removeRedundancy": remove_redundancy,
+        "_class": "preprocessSettings"
+    }
+
+
+def create_default_split_setting(
+    test_fraction: float = 0.25,
+    train_fraction: float = 0.75,
+    split_seed: Optional[int] = None,
+    nfold: int = 3,
+    type: str = "stratified"
+) -> dict:
+    """Create PLP split settings."""
+    import random as _random
+    if split_seed is None:
+        split_seed = _random.randint(1, 100000)
+    fun_map = {"stratified": "randomSplitter", "time": "timeSplitter", "subject": "subjectSplitter"}
+    return {
+        "test": test_fraction,
+        "train": train_fraction,
+        "seed": split_seed,
+        "nfold": nfold,
+        "_fun": fun_map.get(type, "randomSplitter"),
+        "_class": "splitSettings"
+    }
+
+
+def create_sample_settings(
+    type: str = "none",
+    number_outcomes_to_non_outcomes: int = 1,
+    sample_seed: Optional[int] = None
+) -> dict:
+    """Create PLP sample settings."""
+    import random as _random
+    if sample_seed is None:
+        sample_seed = _random.randint(1, 10000)
+    fun_map = {"none": "sameData", "underSample": "underSampleData", "overSample": "overSampleData"}
+    return {
+        "numberOutcomestoNonOutcomes": number_outcomes_to_non_outcomes,
+        "sampleSeed": 1 if type == "none" else sample_seed,
+        "_fun": fun_map.get(type, "sameData"),
+        "_class": "sampleSettings"
+    }
+
+
+def create_feature_engineering_settings(type: str = "none") -> dict:
+    """Create PLP feature engineering settings."""
+    return {
+        "_fun": "sameData" if type == "none" else type,
+        "_class": "featureEngineeringSettings"
+    }
+
+
+def create_univariate_feature_selection(k: int = 100) -> dict:
+    """Create univariate feature selection settings."""
+    return {
+        "k": k,
+        "_fun": "univariateFeatureSelection",
+        "_class": "featureEngineeringSettings"
+    }
+
+
+def create_random_forest_feature_selection(ntrees: int = 2000, max_depth: int = 17) -> dict:
+    """Create random forest feature selection settings."""
+    return {
+        "ntrees": ntrees,
+        "maxDepth": max_depth,
+        "_fun": "randomForestFeatureSelection",
+        "_class": "featureEngineeringSettings"
+    }
+
+
+def create_hyperparameter_settings(
+    search: str = "grid",
+    tuning_metric: Any = None,
+    sample_size: Optional[int] = None,
+    random_seed: Optional[int] = None,
+    generator: Any = None
+) -> dict:
+    """Create PLP hyperparameter settings."""
+    return {
+        "search": search,
+        "tuningMetric": tuning_metric,
+        "sampleSize": sample_size,
+        "randomSeed": random_seed,
+        "generator": generator,
+        "_class": "hyperparameterSettings"
+    }
+
+
+def create_cohort_covariate_settings(
+    cohort_name: str,
+    setting_id: int,
+    cohort_id: int,
+    cohort_database_schema: Optional[str] = None,
+    cohort_table: Optional[str] = None,
+    start_day: int = -30,
+    end_day: int = 0,
+    count: bool = False,
+    age_interaction: bool = False,
+    ln_age_interaction: bool = False,
+    analysis_id: int = 456
+) -> dict:
+    """Create PLP cohort covariate settings."""
+    return {
+        "covariateName": cohort_name,
+        "covariateId": cohort_id * 100000 + setting_id * 1000 + analysis_id,
+        "cohortDatabaseSchema": cohort_database_schema,
+        "cohortTable": cohort_table,
+        "cohortIds": cohort_id,
+        "startDay": start_day,
+        "endDays": end_day,
+        "count": count,
+        "ageInteraction": age_interaction,
+        "lnAgeInteraction": ln_age_interaction,
+        "analysisId": analysis_id,
+        "_fun": "PatientLevelPrediction::getCohortCovariateData",
+        "_class": "covariateSettings"
+    }
+
+
+def create_model_design(
+    target_id: Optional[int] = None,
+    outcome_id: Optional[int] = None,
+    restrict_plp_data_settings: Optional[dict] = None,
+    population_settings: Optional[dict] = None,
+    covariate_settings: Optional[dict] = None,
+    feature_engineering_settings: Optional[list] = None,
+    sample_settings: Optional[list] = None,
+    preprocess_settings: Optional[dict] = None,
+    model_settings: Optional[dict] = None,
+    split_settings: Optional[dict] = None,
+    hyperparameter_settings: Optional[dict] = None,
+    run_covariate_summary: bool = True
+) -> dict:
+    """Create a PLP model design."""
+    if restrict_plp_data_settings is None:
+        restrict_plp_data_settings = create_restrict_plp_data_settings()
+    if population_settings is None:
+        population_settings = create_study_population_settings()
+    if covariate_settings is None:
+        covariate_settings = create_default_covariate_settings()
+    if feature_engineering_settings is None:
+        feature_engineering_settings = [create_feature_engineering_settings(type="none")]
+    if sample_settings is None:
+        sample_settings = [create_sample_settings(type="none")]
+    if preprocess_settings is None:
+        preprocess_settings = create_preprocess_settings()
+    if split_settings is None:
+        split_settings = create_default_split_setting()
+    if hyperparameter_settings is None:
+        hyperparameter_settings = create_hyperparameter_settings()
+    return {
+        "targetId": target_id,
+        "outcomeId": outcome_id,
+        "restrictPlpDataSettings": restrict_plp_data_settings,
+        "covariateSettings": covariate_settings,
+        "populationSettings": population_settings,
+        "sampleSettings": sample_settings,
+        "featureEngineeringSettings": feature_engineering_settings,
+        "preprocessSettings": preprocess_settings,
+        "modelSettings": model_settings,
+        "splitSettings": split_settings,
+        "hyperparameterSettings": hyperparameter_settings,
+        "runCovariateSummary": run_covariate_summary,
+        "_class": "modelDesign"
+    }
+
+
+def create_validation_design(
+    target_id: int,
+    outcome_id: int,
+    population_settings: Optional[dict] = None,
+    restrict_plp_data_settings: Optional[dict] = None,
+    plp_model_list: list = None,
+    recalibrate: Optional[str] = None,
+    run_covariate_summary: bool = True
+) -> dict:
+    """Create a PLP validation design."""
+    return {
+        "targetId": target_id,
+        "outcomeId": outcome_id,
+        "populationSettings": population_settings,
+        "plpModelList": plp_model_list or [],
+        "restrictPlpDataSettings": restrict_plp_data_settings,
+        "recalibrate": recalibrate,
+        "runCovariateSummary": run_covariate_summary,
+        "_class": "validationDesign"
+    }
+
+
+# PLP Model Settings (set_* functions)
+
+def _make_cyclops_model_settings(model_name, model_type, cyclops_model_type,
+                                  prior_type, param, seed, threads, tolerance,
+                                  max_iterations, selector_type="byPid",
+                                  add_intercept=True, prior_coefs=None):
+    """Internal helper for Cyclops-based model settings."""
+    settings = {
+        "modelName": model_name, "modelType": model_type,
+        "cyclopsModelType": cyclops_model_type,
+        "priorfunction": "Cyclops::createPrior",
+        "selectorType": selector_type, "crossValidationInPrior": True,
+        "addIntercept": add_intercept, "useControl": True,
+        "seed": seed, "threads": threads, "tolerance": tolerance,
+        "cvRepetitions": 1, "maxIterations": max_iterations,
+        "saveType": "RtoJson", "predict": "predictCyclops"
+    }
+    return {
+        "fitFunction": "fitCyclopsModel",
+        "param": param,
+        "settings": settings,
+        "_class": "modelSettings"
+    }
+
+
+def set_lasso_logistic_regression(
+    variance: float = 0.01, seed: Optional[int] = None,
+    include_covariate_ids: list = None, no_shrinkage: list = None,
+    threads: int = -1, force_intercept: bool = False,
+    upper_limit: float = 20, lower_limit: float = 0.01,
+    tolerance: float = 2e-06, max_iterations: int = 3000,
+    prior_coefs: Any = None
+) -> dict:
+    """Create settings for lasso logistic regression."""
+    import random as _random
+    if seed is None:
+        seed = _random.randint(1, 100000000)
+    param = {
+        "priorParams": {"priorType": "laplace", "forceIntercept": force_intercept,
+                        "variance": variance, "exclude": no_shrinkage or [0]},
+        "includeCovariateIds": include_covariate_ids or [],
+        "upperLimit": upper_limit, "lowerLimit": lower_limit,
+        "priorCoefs": prior_coefs
+    }
+    return _make_cyclops_model_settings(
+        "lassoLogisticRegression", "binary", "logistic", "laplace",
+        param, seed, threads, tolerance, max_iterations
+    )
+
+
+def set_ridge_regression(
+    variance: float = 0.01, seed: Optional[int] = None,
+    include_covariate_ids: list = None, no_shrinkage: list = None,
+    threads: int = -1, force_intercept: bool = False,
+    upper_limit: float = 20, lower_limit: float = 0.01,
+    tolerance: float = 2e-06, max_iterations: int = 3000,
+    prior_coefs: Any = None
+) -> dict:
+    """Create settings for ridge regression."""
+    import random as _random
+    if seed is None:
+        seed = _random.randint(1, 100000000)
+    param = {
+        "priorParams": {"priorType": "normal", "forceIntercept": force_intercept,
+                        "variance": variance, "exclude": no_shrinkage or [0]},
+        "includeCovariateIds": include_covariate_ids or [],
+        "upperLimit": upper_limit, "lowerLimit": lower_limit,
+        "priorCoefs": prior_coefs
+    }
+    return _make_cyclops_model_settings(
+        "ridgeLogisticRegression", "binary", "logistic", "normal",
+        param, seed, threads, tolerance, max_iterations
+    )
+
+
+def set_cox_model(
+    variance: float = 0.01, seed: Optional[int] = None,
+    include_covariate_ids: list = None, no_shrinkage: list = None,
+    threads: int = -1, upper_limit: float = 20, lower_limit: float = 0.01,
+    tolerance: float = 2e-07, max_iterations: int = 3000
+) -> dict:
+    """Create settings for Cox model."""
+    import random as _random
+    if seed is None:
+        seed = _random.randint(1, 100000000)
+    param = {
+        "priorParams": {"priorType": "laplace", "variance": variance,
+                        "exclude": no_shrinkage or []},
+        "includeCovariateIds": include_covariate_ids or [],
+        "upperLimit": upper_limit, "lowerLimit": lower_limit
+    }
+    return _make_cyclops_model_settings(
+        "coxLasso", "survival", "cox", "laplace",
+        param, seed, threads, tolerance, max_iterations,
+        selector_type="byRow", add_intercept=False
+    )
+
+
+def set_iterative_hard_thresholding(
+    K: int = 10, penalty: str = "bic", seed: Optional[int] = None,
+    exclude: list = None, force_intercept: bool = False,
+    fit_best_subset: bool = False, initial_ridge_variance: float = 0.1,
+    tolerance: float = 1e-08, max_iterations: int = 10000,
+    threshold: float = 1e-06, delta: float = 0
+) -> dict:
+    """Create settings for iterative hard thresholding."""
+    import random as _random
+    if seed is None:
+        seed = _random.randint(1, 100000000)
+    param = {
+        "priorParams": {"K": K, "penalty": penalty, "exclude": exclude or [],
+                        "forceIntercept": force_intercept},
+        "fitBestSubset": fit_best_subset,
+        "initialRidgeVariance": initial_ridge_variance,
+        "tolerance": tolerance, "maxIterations": max_iterations,
+        "threshold": threshold, "delta": delta
+    }
+    return {
+        "fitFunction": "fitCyclopsModel",
+        "param": param,
+        "settings": {"modelName": "iterativeHardThresholding", "modelType": "binary",
+                     "seed": seed, "saveType": "RtoJson", "predict": "predictCyclops"},
+        "_class": "modelSettings"
+    }
+
+
+def _make_sklearn_model_settings(model_name, python_module, python_class, param, seed):
+    """Internal helper for sklearn-based model settings."""
+    return {
+        "param": param,
+        "settings": {
+            "modelType": "binary", "seed": seed, "modelName": model_name,
+            "pythonModule": python_module, "pythonClass": python_class,
+            "saveType": "saveLoadSklearn", "predict": "predictSklearn"
+        },
+        "_class": "modelSettings"
+    }
+
+
+def set_gradient_boosting_machine(
+    ntrees: list = None, nthread: int = 20, early_stop_round: int = 25,
+    max_depth: list = None, min_child_weight: int = 1,
+    learn_rate: list = None, scale_pos_weight: float = 1,
+    lambda_: float = 1, alpha: float = 0,
+    seed: Optional[int] = None
+) -> dict:
+    """Create settings for gradient boosting machine (XGBoost)."""
+    import random as _random
+    if seed is None:
+        seed = _random.randint(1, 10000000)
+    param = {
+        "ntrees": ntrees or [100, 300], "nthread": nthread,
+        "earlyStopRound": early_stop_round,
+        "maxDepth": max_depth or [4, 6, 8],
+        "minChildWeight": min_child_weight,
+        "learnRate": learn_rate or [0.05, 0.1, 0.3],
+        "scalePosWeight": scale_pos_weight,
+        "lambda": lambda_, "alpha": alpha, "seed": [seed]
+    }
+    return {
+        "fitFunction": "fitXgboost",
+        "param": param,
+        "settings": {"modelType": "binary", "seed": seed,
+                     "modelName": "gradientBoostingMachine",
+                     "saveType": "xgboost", "predict": "predictXgboost"},
+        "_class": "modelSettings"
+    }
+
+
+def set_light_gbm(
+    nthread: int = 20, early_stop_round: int = 25,
+    num_iterations: list = None, num_leaves: list = None,
+    max_depth: list = None, min_data_in_leaf: list = None,
+    learning_rate: list = None, lambda_l1: list = None,
+    lambda_l2: list = None, scale_pos_weight: float = 1,
+    is_unbalance: bool = False, seed: Optional[int] = None
+) -> dict:
+    """Create settings for LightGBM."""
+    import random as _random
+    if seed is None:
+        seed = _random.randint(1, 10000000)
+    param = {
+        "nthread": nthread, "earlyStopRound": early_stop_round,
+        "numIterations": num_iterations or [100],
+        "numLeaves": num_leaves or [31],
+        "maxDepth": max_depth or [5, 10],
+        "minDataInLeaf": min_data_in_leaf or [20],
+        "learningRate": learning_rate or [0.05, 0.1, 0.3],
+        "lambdaL1": lambda_l1 or [0], "lambdaL2": lambda_l2 or [0],
+        "scalePosWeight": scale_pos_weight,
+        "isUnbalance": is_unbalance, "seed": [seed]
+    }
+    return {
+        "fitFunction": "fitLightGBM",
+        "param": param,
+        "settings": {"modelType": "binary", "seed": seed,
+                     "modelName": "lightGBM",
+                     "saveType": "lightgbm", "predict": "predictLightGBM"},
+        "_class": "modelSettings"
+    }
+
+
+def set_ada_boost(
+    n_estimators: list = None, learning_rate: list = None,
+    seed: Optional[int] = None
+) -> dict:
+    """Create settings for AdaBoost."""
+    import random as _random
+    if seed is None:
+        seed = _random.randint(1, 1000000)
+    param = {
+        "nEstimators": n_estimators or [10, 50, 200],
+        "learningRate": learning_rate or [1, 0.5, 0.1],
+        "seed": [seed]
+    }
+    return _make_sklearn_model_settings(
+        "adaboost", "sklearn.ensemble", "AdaBoostClassifier", param, seed
+    )
+
+
+def set_decision_tree(
+    criterion: list = None, splitter: list = None,
+    max_depth: list = None, min_samples_split: list = None,
+    min_samples_leaf: list = None, min_weight_fraction_leaf: list = None,
+    max_features: list = None, max_leaf_nodes: list = None,
+    min_impurity_decrease: list = None, class_weight: list = None,
+    seed: Optional[int] = None
+) -> dict:
+    """Create settings for decision tree."""
+    import random as _random
+    if seed is None:
+        seed = _random.randint(1, 1000000)
+    param = {
+        "criterion": criterion or ["gini"],
+        "splitter": splitter or ["best"],
+        "maxDepth": max_depth or [4, 10, None],
+        "minSamplesSplit": min_samples_split or [2, 10],
+        "minSamplesLeaf": min_samples_leaf or [10, 50],
+        "minWeightFractionLeaf": min_weight_fraction_leaf or [0],
+        "maxFeatures": max_features or [100, "sqrt", None],
+        "maxLeafNodes": max_leaf_nodes or [None],
+        "minImpurityDecrease": min_impurity_decrease or [1e-7],
+        "classWeight": class_weight or [None],
+        "seed": [seed]
+    }
+    return _make_sklearn_model_settings(
+        "decisionTree", "sklearn.tree", "DecisionTreeClassifier", param, seed
+    )
+
+
+def set_mlp(
+    hidden_layer_sizes: list = None, activation: list = None,
+    solver: list = None, alpha: list = None,
+    batch_size: list = None, learning_rate: list = None,
+    learning_rate_init: list = None, power_t: list = None,
+    max_iter: list = None, shuffle: list = None,
+    tol: list = None, warm_start: list = None,
+    momentum: list = None, nesterovs_momentum: list = None,
+    early_stopping: list = None, validation_fraction: list = None,
+    beta_1: list = None, beta_2: list = None,
+    epsilon: list = None, n_iter_no_change: list = None,
+    seed: Optional[int] = None
+) -> dict:
+    """Create settings for MLP (multi-layer perceptron)."""
+    import random as _random
+    if seed is None:
+        seed = _random.randint(1, 100000)
+    param = {
+        "hiddenLayerSizes": hidden_layer_sizes or [[100], [20]],
+        "activation": activation or ["relu"],
+        "solver": solver or ["adam"],
+        "alpha": alpha or [0.3, 0.01, 0.0001, 0.000001],
+        "batchSize": batch_size or ["auto"],
+        "learningRate": learning_rate or ["constant"],
+        "learningRateInit": learning_rate_init or [0.001],
+        "powerT": power_t or [0.5],
+        "maxIter": max_iter or [200, 100],
+        "shuffle": shuffle or [True],
+        "tol": tol or [0.0001],
+        "warmStart": warm_start or [True],
+        "momentum": momentum or [0.9],
+        "nesterovsMomentum": nesterovs_momentum or [True],
+        "earlyStopping": early_stopping or [False],
+        "validationFraction": validation_fraction or [0.1],
+        "beta1": beta_1 or [0.9],
+        "beta2": beta_2 or [0.999],
+        "epsilon": epsilon or [1e-8],
+        "nIterNoChange": n_iter_no_change or [10],
+        "seed": [seed]
+    }
+    return _make_sklearn_model_settings(
+        "mlp", "sklearn.neural_network", "MLPClassifier", param, seed
+    )
+
+
+def set_naive_bayes() -> dict:
+    """Create settings for naive Bayes."""
+    return _make_sklearn_model_settings(
+        "naiveBayes", "sklearn.naive_bayes", "GaussianNB", {"none": "true"}, 0
+    )
+
+
+def set_random_forest(
+    ntrees: list = None, criterion: list = None,
+    max_depth: list = None, min_samples_split: list = None,
+    min_samples_leaf: list = None, min_weight_fraction_leaf: list = None,
+    mtries: list = None, max_leaf_nodes: list = None,
+    min_impurity_decrease: list = None, bootstrap: list = None,
+    max_samples: list = None, oob_score: list = None,
+    n_jobs: list = None, class_weight: list = None,
+    seed: Optional[int] = None
+) -> dict:
+    """Create settings for random forest."""
+    import random as _random
+    if seed is None:
+        seed = _random.randint(1, 100000)
+    param = {
+        "ntrees": ntrees or [100, 500],
+        "criterion": criterion or ["gini"],
+        "maxDepth": max_depth or [4, 10, 17],
+        "minSamplesSplit": min_samples_split or [2, 5],
+        "minSamplesLeaf": min_samples_leaf or [1, 10],
+        "minWeightFractionLeaf": min_weight_fraction_leaf or [0],
+        "mtries": mtries or ["sqrt", "log2"],
+        "maxLeafNodes": max_leaf_nodes or [None],
+        "minImpurityDecrease": min_impurity_decrease or [0],
+        "bootstrap": bootstrap or [True],
+        "maxSamples": max_samples or [None, 0.9],
+        "oobScore": oob_score or [False],
+        "nJobs": n_jobs or [None],
+        "classWeight": class_weight or [None],
+        "seed": [seed]
+    }
+    return _make_sklearn_model_settings(
+        "randomForest", "sklearn.ensemble", "RandomForestClassifier", param, seed
+    )
+
+
+def set_svm(
+    C: list = None, kernel: list = None,
+    degree: list = None, gamma: list = None,
+    coef0: list = None, shrinking: list = None,
+    tol: list = None, class_weight: list = None,
+    cache_size: int = 500, seed: Optional[int] = None
+) -> dict:
+    """Create settings for SVM."""
+    import random as _random
+    if seed is None:
+        seed = _random.randint(1, 100000)
+    param = {
+        "C": C or [1, 0.9, 2, 0.1],
+        "kernel": kernel or ["rbf"],
+        "degree": degree or [1, 3, 5],
+        "gamma": gamma or ["scale", 1e-4, 3e-5, 0.001, 0.01, 0.25],
+        "coef0": coef0 or [0.0],
+        "shrinking": shrinking or [True],
+        "tol": tol or [0.001],
+        "cacheSize": [cache_size],
+        "classWeight": class_weight or [None],
+        "seed": [seed]
+    }
+    return _make_sklearn_model_settings(
+        "svm", "sklearn.svm", "SVC", param, seed
+    )
+
+
+# =============================================================================
+# EvidenceSynthesis Builder Functions
+# =============================================================================
+
+def generate_bayesian_hma_settings(
+    primary_effect_prior_std: float = 1.0,
+    secondary_effect_prior_std: float = 1.0,
+    global_exposure_effect_prior_mean: list = None,
+    global_exposure_effect_prior_std: list = None,
+    primary_effect_precision_prior: list = None,
+    secondary_effect_precision_prior: list = None,
+    error_precision_prior: list = None,
+    error_precision_start_value: float = 1.0,
+    include_source_effect: bool = True,
+    include_exposure_effect: bool = True,
+    exposure_effect_count: int = 1,
+    separate_exposure_prior: bool = False,
+    chain_length: int = 1100000,
+    burn_in: int = 100000,
+    sub_sample_frequency: int = 100
+) -> dict:
+    """Create Bayesian hierarchical meta-analysis settings."""
+    return {
+        "primaryEffectPriorStd": primary_effect_prior_std,
+        "secondaryEffectPriorStd": secondary_effect_prior_std,
+        "globalExposureEffectPriorMean": global_exposure_effect_prior_mean or [0.0],
+        "globalExposureEffectPriorStd": global_exposure_effect_prior_std or [2.0],
+        "primaryEffectPrecisionPrior": primary_effect_precision_prior or [1.0, 1.0],
+        "secondaryEffectPrecisionPrior": secondary_effect_precision_prior or [1.0, 1.0],
+        "errorPrecisionPrior": error_precision_prior or [1.0, 1.0],
+        "errorPrecisionStartValue": error_precision_start_value,
+        "includeSourceEffect": include_source_effect,
+        "includeExposureEffect": include_exposure_effect,
+        "exposureEffectCount": exposure_effect_count,
+        "separateExposurePrior": separate_exposure_prior,
+        "chainLength": chain_length,
+        "burnIn": burn_in,
+        "subSampleFrequency": sub_sample_frequency,
+        "_class": "BayesianHMASettings"
+    }
+
+
+# =============================================================================
+# CohortIncidence Builder Functions
+# =============================================================================
+
+def create_incidence_design(
+    cohort_defs: Optional[list] = None,
+    target_defs: Optional[list] = None,
+    outcome_defs: Optional[list] = None,
+    tars: Optional[list] = None,
+    analysis_list: Optional[list] = None,
+    concept_sets: Optional[list] = None,
+    subgroups: Optional[list] = None,
+    strata_settings: Optional[dict] = None,
+    study_window: Optional[dict] = None
+) -> dict:
+    """Create an incidence design for CohortIncidence."""
+    design = {"_class": "IncidenceDesign"}
+    if cohort_defs is not None:
+        design["cohortDefs"] = cohort_defs
+    if target_defs is not None:
+        design["targetDefs"] = target_defs
+    if outcome_defs is not None:
+        design["outcomeDefs"] = outcome_defs
+    if tars is not None:
+        design["timeAtRiskDefs"] = tars
+    if analysis_list is not None:
+        design["analysisList"] = analysis_list
+    if concept_sets is not None:
+        design["conceptSets"] = concept_sets
+    if subgroups is not None:
+        design["subgroups"] = subgroups
+    if strata_settings is not None:
+        design["strataSettings"] = strata_settings
+    if study_window is not None:
+        design["studyWindow"] = study_window
+    return design
+
+
+def create_incidence_analysis(targets: list, outcomes: list, tars: list) -> dict:
+    """Create an incidence analysis."""
+    return {
+        "targets": targets,
+        "outcomes": outcomes,
+        "tars": tars,
+        "_class": "IncidenceAnalysis"
+    }
+
+
+def create_cohort_ref(id: int, name: str, description: Optional[str] = None) -> dict:
+    """Create a cohort reference."""
+    ref = {"id": id, "name": name, "_class": "CohortReference"}
+    if description is not None:
+        ref["description"] = description
+    return ref
+
+
+def create_outcome_def(
+    id: int, name: Optional[str] = None,
+    cohort_id: int = 0, clean_window: int = 0,
+    exclude_cohort_id: Optional[int] = None
+) -> dict:
+    """Create an outcome definition for CohortIncidence."""
+    result = {"id": id, "cohortId": cohort_id, "cleanWindow": clean_window,
+              "_class": "Outcome"}
+    if name is not None:
+        result["name"] = name
+    if exclude_cohort_id is not None:
+        result["excludeCohortId"] = exclude_cohort_id
+    return result
+
+
+def create_time_at_risk_def(
+    id: int, start_with: str = "start", start_offset: int = 0,
+    end_with: str = "end", end_offset: int = 0
+) -> dict:
+    """Create a time-at-risk definition."""
+    return {
+        "id": id,
+        "startWith": start_with,
+        "startOffset": start_offset,
+        "endWith": end_with,
+        "endOffset": end_offset,
+        "_class": "TimeAtRisk"
+    }
+
+
+def create_cohort_subgroup(
+    id: int, name: str,
+    description: Optional[str] = None,
+    cohort_ref: Optional[dict] = None
+) -> dict:
+    """Create a cohort subgroup."""
+    result = {"id": id, "name": name, "_class": "CohortSubgroup"}
+    if description is not None:
+        result["description"] = description
+    if cohort_ref is not None:
+        result["cohort"] = cohort_ref
+    return result
+
+
+def create_strata_settings(
+    by_age: bool = False, by_gender: bool = False, by_year: bool = False,
+    age_breaks: Optional[list] = None, age_break_list: Optional[list] = None
+) -> dict:
+    """Create strata settings for CohortIncidence."""
+    if by_age and age_breaks is None and age_break_list is None:
+        raise ValueError("When by_age=True, age_breaks or age_break_list must be provided")
+    result = {"byAge": by_age, "byGender": by_gender, "byYear": by_year,
+              "_class": "StrataSettings"}
+    if age_breaks is not None:
+        result["ageBreaks"] = age_breaks
+    if age_break_list is not None:
+        result["ageBreakList"] = age_break_list
+    return result
+
+
+def create_date_range(
+    start_date: Optional[str] = None, end_date: Optional[str] = None
+) -> dict:
+    """Create a date range."""
+    result = {"_class": "DateRange"}
+    if start_date is not None:
+        result["startDate"] = start_date
+    if end_date is not None:
+        result["endDate"] = end_date
+    return result
+
+
+# =============================================================================
+# Characterization Builder Functions
+# =============================================================================
+
+def create_characterization_settings(
+    time_to_event_settings: Optional[Union[dict, list]] = None,
+    dechallenge_rechallenge_settings: Optional[Union[dict, list]] = None,
+    aggregate_covariate_settings: Optional[Union[dict, list]] = None
+) -> dict:
+    """Create characterization settings."""
+    if isinstance(time_to_event_settings, dict):
+        time_to_event_settings = [time_to_event_settings]
+    if isinstance(dechallenge_rechallenge_settings, dict):
+        dechallenge_rechallenge_settings = [dechallenge_rechallenge_settings]
+    if isinstance(aggregate_covariate_settings, dict):
+        aggregate_covariate_settings = [aggregate_covariate_settings]
+    return {
+        "timeToEventSettings": time_to_event_settings,
+        "dechallengeRechallengeSettings": dechallenge_rechallenge_settings,
+        "aggregateCovariateSettings": aggregate_covariate_settings,
+        "_class": "characterizationSettings"
+    }
+
+
+def create_dechallenge_rechallenge_settings(
+    target_ids: list, outcome_ids: list,
+    dechallenge_stop_interval: int = 30,
+    dechallenge_evaluation_window: int = 30
+) -> dict:
+    """Create dechallenge-rechallenge settings."""
+    return {
+        "targetIds": target_ids,
+        "outcomeIds": outcome_ids,
+        "dechallengeStopInterval": dechallenge_stop_interval,
+        "dechallengeEvaluationWindow": dechallenge_evaluation_window,
+        "_class": "dechallengeRechallengeSettings"
+    }
+
+
+def create_time_to_event_settings(target_ids: list, outcome_ids: list) -> dict:
+    """Create time-to-event settings."""
+    return {
+        "targetIds": target_ids,
+        "outcomeIds": outcome_ids,
+        "_class": "timeToEventSettings"
+    }
+
+
+def create_aggregate_covariate_settings(
+    target_ids: list, outcome_ids: list,
+    min_prior_observation: int = 0,
+    outcome_washout_days: int = 0,
+    risk_window_start: int = 1,
+    start_anchor: str = "cohort start",
+    risk_window_end: int = 365,
+    end_anchor: str = "cohort start",
+    covariate_settings: Optional[dict] = None,
+    case_covariate_settings: Optional[dict] = None,
+    case_pre_target_duration: int = 365,
+    case_post_outcome_duration: int = 365,
+    extract_non_case_covariates: bool = True
+) -> dict:
+    """Create aggregate covariate settings."""
+    if covariate_settings is None:
+        covariate_settings = _get_default_characterization_covariate_settings()
+    if case_covariate_settings is None:
+        case_covariate_settings = _get_default_case_covariate_settings()
+    if isinstance(covariate_settings, dict) and "_class" in covariate_settings:
+        covariate_settings = [covariate_settings]
+    return {
+        "targetIds": target_ids,
+        "outcomeIds": outcome_ids,
+        "minPriorObservation": min_prior_observation,
+        "outcomeWashoutDays": outcome_washout_days,
+        "riskWindowStart": risk_window_start,
+        "startAnchor": start_anchor,
+        "riskWindowEnd": risk_window_end,
+        "endAnchor": end_anchor,
+        "covariateSettings": covariate_settings,
+        "caseCovariateSettings": case_covariate_settings,
+        "casePreTargetDuration": case_pre_target_duration,
+        "casePostOutcomeDuration": case_post_outcome_duration,
+        "extractNonCaseCovariates": extract_non_case_covariates,
+        "_class": "aggregateCovariateSettings"
+    }
+
+
+def create_during_covariate_settings(**kwargs) -> dict:
+    """Create during-cohort covariate settings for Characterization.
+
+    Accepts use* boolean flags (default False) plus concept filtering params.
+    """
+    _USE_FLAGS = [
+        "useConditionOccurrenceDuring", "useConditionOccurrencePrimaryInpatientDuring",
+        "useConditionEraDuring", "useConditionGroupEraDuring",
+        "useDrugExposureDuring", "useDrugEraDuring", "useDrugGroupEraDuring",
+        "useProcedureOccurrenceDuring", "useDeviceExposureDuring",
+        "useMeasurementDuring", "useObservationDuring",
+        "useVisitCountDuring", "useVisitConceptCountDuring",
+    ]
+    settings = {"temporal": False, "temporalSequence": False}
+    any_use_true = False
+    for flag in _USE_FLAGS:
+        val = kwargs.get(flag, False)
+        if val:
+            settings[flag.replace("use", "", 1)] = True
+            any_use_true = True
+    if not any_use_true:
+        raise ValueError("No covariate analysis selected. Must select at least one")
+    settings["includedCovariateConceptIds"] = kwargs.get("includedCovariateConceptIds", [])
+    settings["addDescendantsToInclude"] = kwargs.get("addDescendantsToInclude", False)
+    settings["excludedCovariateConceptIds"] = kwargs.get("excludedCovariateConceptIds", [])
+    settings["addDescendantsToExclude"] = kwargs.get("addDescendantsToExclude", False)
+    settings["includedCovariateIds"] = kwargs.get("includedCovariateIds", [])
+    settings["_fun"] = "Characterization::getDbDuringCovariateData"
+    settings["_class"] = "covariateSettings"
+    return settings
 
 
 # =============================================================================
@@ -3394,6 +5161,47 @@ def create_treatment_patterns_module_specifications(
     }
 
 
+def create_cohort_survival_module_specifications(
+    target_cohort_id: int,
+    outcome_cohort_id: int,
+    strata: Optional[list] = None,
+    analysis_type: str = "single_event",
+    competing_outcome_cohort_table: Optional[str] = None,
+    competing_outcome_cohort_id: Optional[int] = None,
+    outcome_date_variable: str = "cohort_start_date",
+    outcome_washout: float = float('inf'),
+    censor_on_cohort_exit: bool = False,
+    censor_on_date: Optional[str] = None,
+    follow_up_days: float = float('inf'),
+    event_gap: int = 30,
+    estimate_gap: int = 1,
+    restricted_mean_follow_up: Optional[int] = None,
+    minimum_survival_days: int = 1
+) -> dict:
+    """Create CohortSurvival module specifications."""
+    return {
+        "module": "CohortSurvivalModule",
+        "settings": {
+            "targetCohortId": target_cohort_id,
+            "outcomeCohortId": outcome_cohort_id,
+            "strata": strata,
+            "analysisType": analysis_type,
+            "competingOutcomeCohortTable": competing_outcome_cohort_table,
+            "competingOutcomeCohortId": competing_outcome_cohort_id,
+            "outcomeDateVariable": outcome_date_variable,
+            "outcomeWashout": outcome_washout,
+            "censorOnCohortExit": censor_on_cohort_exit,
+            "censorOnDate": censor_on_date,
+            "followUpDays": follow_up_days,
+            "eventGap": event_gap,
+            "estimateGap": estimate_gap,
+            "restrictedMeanFollowUp": restricted_mean_follow_up,
+            "minimumSurvivalDays": minimum_survival_days
+        },
+        "_class": ("ModuleSpecifications", "CohortSurvivalModuleSpecifications")
+    }
+
+
 # =============================================================================
 # Convenience Functions
 # =============================================================================
@@ -3465,7 +5273,7 @@ if __name__ == "__main__":
 
     # Step 4: Serialize to JSON
     print(spec.to_json())
-`;const J=Object.assign({"./pyqe/__init__.py":f,"./pyqe/api/__init__.py":u,"./pyqe/api/base.py":m,"./pyqe/api/cohort.py":g,"./pyqe/api/concept_query.py":y,"./pyqe/api/concept_set_query.py":h,"./pyqe/api/datasource.py":v,"./pyqe/api/pa_config.py":b,"./pyqe/api/query.py":T,"./pyqe/api/result.py":E,"./pyqe/api/study.py":C,"./pyqe/azure/__init__.py":q,"./pyqe/azure/msal_credentials.py":S,"./pyqe/azure/password_grant.py":A,"./pyqe/azure/refresh_token.py":w,"./pyqe/ql/__init__.py":N,"./pyqe/ql/advanced_time_filter.py":I,"./pyqe/ql/attribute.py":D,"./pyqe/ql/config.py":O,"./pyqe/ql/criteria_group.py":x,"./pyqe/ql/date_period.py":P,"./pyqe/ql/filter_card.py":L,"./pyqe/ql/interaction.py":R,"./pyqe/ql/person.py":F,"./pyqe/settings.yaml":k,"./pyqe/setup.py":j,"./pyqe/shared/__init__.py":M,"./pyqe/shared/b64encode_query.py":U,"./pyqe/shared/decorator.py":Q,"./pyqe/shared/settings.py":Y,"./pyqe/types/__init__.py":V,"./pyqe/types/enum_types.py":z,"./pyqe/types/types.py":G,"./pyqe/utils/__init__.py":B});let n=null,p=!1,c=null;function i(s){self.postMessage(s)}async function W(s,r,o){if(!p){i({type:"status",id:"",data:{state:"connecting"}});try{if(n=await(await import("./pyodide-B3WfjYbf.js")).loadPyodide({indexURL:s||"https://cdn.jsdelivr.net/pyodide/v0.29.0/full/",stdout:e=>{c&&i({type:"stdout",id:c,data:e})},stderr:e=>{c&&i({type:"stderr",id:c,data:e})}}),r&&r.length>0){await n.loadPackagesFromImports("import micropip");const e=n.pyimport("micropip");for(const t of r)try{await e.install(t)}catch(a){console.warn(`Failed to install ${t}:`,a)}}n.runPython(`
+`;const H=Object.assign({"./pyqe/__init__.py":u,"./pyqe/api/__init__.py":f,"./pyqe/api/base.py":m,"./pyqe/api/cohort.py":g,"./pyqe/api/concept_query.py":h,"./pyqe/api/concept_set_query.py":y,"./pyqe/api/datasource.py":v,"./pyqe/api/pa_config.py":b,"./pyqe/api/query.py":C,"./pyqe/api/result.py":T,"./pyqe/api/study.py":S,"./pyqe/azure/__init__.py":N,"./pyqe/azure/msal_credentials.py":E,"./pyqe/azure/password_grant.py":w,"./pyqe/azure/refresh_token.py":x,"./pyqe/ql/__init__.py":O,"./pyqe/ql/advanced_time_filter.py":D,"./pyqe/ql/attribute.py":A,"./pyqe/ql/config.py":I,"./pyqe/ql/criteria_group.py":q,"./pyqe/ql/date_period.py":P,"./pyqe/ql/filter_card.py":k,"./pyqe/ql/interaction.py":L,"./pyqe/ql/person.py":F,"./pyqe/settings.yaml":M,"./pyqe/setup.py":R,"./pyqe/shared/__init__.py":j,"./pyqe/shared/b64encode_query.py":z,"./pyqe/shared/decorator.py":U,"./pyqe/shared/settings.py":G,"./pyqe/types/__init__.py":V,"./pyqe/types/enum_types.py":Q,"./pyqe/types/types.py":B,"./pyqe/utils/__init__.py":Y});let n=null,p=!1,c=null;function s(r){self.postMessage(r)}async function K(r,i,o){if(!p){s({type:"status",id:"",data:{state:"connecting"}});try{if(n=await(await import("./pyodide-B3WfjYbf.js")).loadPyodide({indexURL:r||"https://cdn.jsdelivr.net/pyodide/v0.29.0/full/",stdout:e=>{c&&s({type:"stdout",id:c,data:e})},stderr:e=>{c&&s({type:"stderr",id:c,data:e})}}),i&&i.length>0){await n.loadPackagesFromImports("import micropip");const e=n.pyimport("micropip");for(const t of i)try{await e.install(t)}catch(_){console.warn("Failed to install %s:",t,_)}}n.runPython(`
 def _capture_open_figures():
     try:
         import matplotlib.pyplot as plt
@@ -3481,10 +5289,10 @@ def _capture_open_figures():
         results.append(base64.b64encode(buf.read()).decode('utf-8'))
     plt.close('all')
     return results
-`);try{n.runPython(H)}catch(e){console.warn("Failed to load Strategus spec builder:",e)}try{for(const[e,t]of Object.entries(J)){const a="/home/pyodide/"+e.replace("./",""),l=a.substring(0,a.lastIndexOf("/"));n.runPython(`
+`);try{n.runPython(W)}catch(e){console.warn("Failed to load Strategus spec builder:",e)}try{for(const[e,t]of Object.entries(H)){const _="/home/pyodide/"+e.replace("./",""),l=_.substring(0,_.lastIndexOf("/"));n.globals.set("__mkdir_path__",l),n.runPython(`
 import os
-os.makedirs("${l}", exist_ok=True)
-`),n.FS.writeFile(a,t)}n.runPython(`
+os.makedirs(__mkdir_path__, exist_ok=True)
+`),n.globals.delete("__mkdir_path__"),n.FS.writeFile(_,t)}n.runPython(`
 import sys
 if "/home/pyodide" not in sys.path:
     sys.path.insert(0, "/home/pyodide")
@@ -3497,14 +5305,17 @@ for _dep in _pyqe_deps:
     except Exception:
         pass
 del _pyqe_deps, _dep
-`)}catch(e){console.warn("Failed to pre-install pyqe dependencies:",e)}if(o&&Object.keys(o).length>0)try{const e=Object.entries(o).map(([t,a])=>`os.environ['${t}'] = '''${a}'''`).join(`
-`);n.runPython(`import os
-${e}`)}catch(e){console.warn("Failed to set environment variables:",e)}p=!0,i({type:"ready",id:""}),i({type:"status",id:"",data:{state:"idle"}})}catch(_){i({type:"error",id:"",data:{ename:"InitializationError",evalue:_ instanceof Error?_.message:String(_),traceback:[]}}),i({type:"status",id:"",data:{state:"error"}})}}}function K(s){const r=s.match(/No module named '([^'.]+)'/);return r?r[1]:null}const $={jwt:"PyJWT",yaml:"pyyaml",dotenv:"python-dotenv",cv2:"opencv-python",PIL:"Pillow",sklearn:"scikit-learn",bs4:"beautifulsoup4",attr:"attrs",msal:"msal"};async function X(s,r){if(!n||!p){i({type:"error",id:s,data:{ename:"NotInitializedError",evalue:"Pyodide is not initialized",traceback:[]}});return}c=s,i({type:"status",id:s,data:{state:"busy"}});try{try{n.globals.set("__user_code__",r);const e=n.runPython("from pyodide.code import find_imports as _fi; list(_fi(__user_code__))"),t=e.toJs();e.destroy(),n.globals.delete("__user_code__"),t.length>0&&await n.loadPackage(t)}catch{await n.loadPackagesFromImports(r)}try{n.runPython(`
+`)}catch(e){console.warn("Failed to pre-install pyqe dependencies:",e)}if(o&&Object.keys(o).length>0)try{n.globals.set("__env_vars__",n.toPy(o)),n.runPython(`
+import os
+for _k, _v in __env_vars__.items():
+    os.environ[_k] = _v
+del _k, _v
+`),n.globals.delete("__env_vars__")}catch(e){console.warn("Failed to set environment variables:",e)}p=!0,s({type:"ready",id:""}),s({type:"status",id:"",data:{state:"idle"}})}catch(a){s({type:"error",id:"",data:{ename:"InitializationError",evalue:a instanceof Error?a.message:String(a),traceback:[]}}),s({type:"status",id:"",data:{state:"error"}})}}}function J(r){const i=r.match(/No module named '([^'.]+)'/);return i?i[1]:null}const X={jwt:"PyJWT",yaml:"pyyaml",dotenv:"python-dotenv",cv2:"opencv-python",PIL:"Pillow",sklearn:"scikit-learn",bs4:"beautifulsoup4",attr:"attrs",msal:"msal"};async function $(r,i){if(!n||!p){s({type:"error",id:r,data:{ename:"NotInitializedError",evalue:"Pyodide is not initialized",traceback:[]}});return}c=r,s({type:"status",id:r,data:{state:"busy"}});try{try{n.globals.set("__user_code__",i);const e=n.runPython("from pyodide.code import find_imports as _fi; list(_fi(__user_code__))"),t=e.toJs();e.destroy(),n.globals.delete("__user_code__"),t.length>0&&await n.loadPackage(t)}catch{await n.loadPackagesFromImports(i)}try{n.runPython(`
 try:
     import matplotlib
     matplotlib.use('agg')
 except ImportError:
     pass
-`)}catch{}let o;const _=5;for(let e=0;;e++)try{o=await n.runPythonAsync(r);break}catch(t){const a=t instanceof Error?t.message:String(t),l=K(a);if(!l||e>=_)throw t;const d=$[l]||l;i({type:"stderr",id:s,data:`Installing ${d}...`});try{await n.loadPackage(d)}catch{try{await n.runPythonAsync(`import micropip; await micropip.install("${d}")`)}catch{throw t}}}if(o!=null){const e=String(o);if(!e.includes("matplotlib.figure.Figure")){let t=e;try{t=n.runPython(`repr(${r.split(`
-`).pop()})`)||e}catch{}i({type:"result",id:s,data:{"text/plain":t}})}}try{const e=await n.runPythonAsync("_capture_open_figures()"),t=e.toJs();for(const a of t)i({type:"display_data",id:s,data:{"image/png":a}});e.destroy()}catch{}i({type:"status",id:s,data:{state:"idle"}})}catch(o){const _=o instanceof Error?o.message:String(o),e=o instanceof Error&&o.stack?o.stack.split(`
-`):[];i({type:"error",id:s,data:{ename:o instanceof Error?o.constructor.name:"Error",evalue:_,traceback:e}}),i({type:"status",id:s,data:{state:"idle"}})}finally{c=null}}self.onmessage=async s=>{const{type:r,id:o,code:_,indexUrl:e,preloadPackages:t,envVars:a}=s.data;switch(r){case"init":await W(e,t,a);break;case"execute":_&&await X(o,_);break}};
+`)}catch{}let o;const a=5;for(let e=0;;e++)try{o=await n.runPythonAsync(i);break}catch(t){const _=t instanceof Error?t.message:String(t),l=J(_);if(!l||e>=a)throw t;const d=X[l]||l;s({type:"stderr",id:r,data:`Installing ${d}...`});try{await n.loadPackage(d)}catch{try{n.globals.set("__pkg_name__",d),await n.runPythonAsync("import micropip; await micropip.install(__pkg_name__)"),n.globals.delete("__pkg_name__")}catch{throw t}}}if(o!=null){const e=String(o);if(!e.includes("matplotlib.figure.Figure")){let t=e;try{t=n.runPython(`repr(${i.split(`
+`).pop()})`)||e}catch{}s({type:"result",id:r,data:{"text/plain":t}})}}try{const e=await n.runPythonAsync("_capture_open_figures()"),t=e.toJs();for(const _ of t)s({type:"display_data",id:r,data:{"image/png":_}});e.destroy()}catch{}s({type:"status",id:r,data:{state:"idle"}})}catch(o){const a=o instanceof Error?o.message:String(o),e=o instanceof Error&&o.stack?o.stack.split(`
+`):[];s({type:"error",id:r,data:{ename:o instanceof Error?o.constructor.name:"Error",evalue:a,traceback:e}}),s({type:"status",id:r,data:{state:"idle"}})}finally{c=null}}self.onmessage=async r=>{const{type:i,id:o,code:a,indexUrl:e,preloadPackages:t,envVars:_}=r.data;switch(i){case"init":await K(e,t,_);break;case"execute":a&&await $(o,a);break}};
