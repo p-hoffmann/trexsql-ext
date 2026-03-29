@@ -3885,6 +3885,661 @@ interface ImportMeta {
 }`,
     },
   },
+
+  // ── Strategus Study Template ──────────────────────────────────────
+  {
+    id: "strategus-study",
+    name: "Strategus Study",
+    description: "OHDSI observational study with Strategus + HADES",
+    tech_stack: "r",
+    dev_command: "",
+    install_command: "",
+    build_command: "",
+    files: {
+      "AI_RULES.md": `# Strategus Study Project
+
+## Overview
+This is an OHDSI Strategus study project for observational health research.
+Use the \`/strategus-study\` skill for in-depth guidance on study design,
+propensity score methodology, and module configuration.
+
+## File Structure
+- \`CreateStrategusAnalysisSpecification.R\` — Main analysis specification (edit this first)
+- \`StrategusCodeToRun.R\` — Execute the study on a CDM database
+- \`DownloadCohorts.R\` — Download cohorts from ATLAS
+- \`CreateResultsDataModel.R\` — Set up results database
+- \`EvidenceSynthesis.R\` — Meta-analysis across sites
+- \`UploadResults.R\` — Upload results to shared database
+- \`README.md\` — Study metadata
+- \`inst/cohorts/\` — Cohort JSON definitions
+- \`inst/negativeControlOutcomes.csv\` — Negative control outcomes
+
+## Workflow
+1. Define cohorts in \`inst/cohorts/\` or reference PhenotypeLibrary IDs
+2. Configure modules in \`CreateStrategusAnalysisSpecification.R\`
+3. Run CohortDiagnostics first to validate cohort definitions
+4. Execute the full study via \`StrategusCodeToRun.R\`
+
+## Key Rules
+- Always exclude target and comparator drugs from propensity score covariates
+- Use minimum 20 negative control outcomes for empirical calibration
+- Run CohortDiagnostics before any estimation or prediction analysis
+- Verify covariate balance (SMD < 0.1) after propensity score adjustment
+
+## Knowledge Base References
+Use these KB repos for reference:
+- \`strategus-study-template\` — Official OHDSI template structure
+- \`phenotype-library\` — 1100+ pre-defined cohort definitions
+- \`strategus\` — Strategus framework API documentation
+- \`cohort-method\` — CohortMethod module details
+- \`self-controlled-case-series\` — SCCS module details
+- \`book-of-ohdsi-2nd\` — Comprehensive methodology reference
+- \`ehden-hmb\`, \`legendt2dm\`, \`reward\` — Example studies
+`,
+
+      "CreateStrategusAnalysisSpecification.R": `# CreateStrategusAnalysisSpecification.R
+# ==============================================================================
+# OHDSI Strategus Analysis Specification
+#
+# This script creates a JSON analysis specification that defines all cohorts,
+# modules, and settings for a Strategus study. The specification is portable
+# and can be executed on any OMOP CDM database.
+#
+# Use /strategus-study skill for detailed methodology guidance.
+# ==============================================================================
+
+library(CohortGenerator)
+library(Strategus)
+
+# ==============================================================================
+# SECTION 1: STUDY SETTINGS (customize this section for your study)
+# ==============================================================================
+
+# -- Study metadata --
+studyTitle <- "My Strategus Study"
+studyDescription <- "Description of the research question and objectives"
+
+# -- Study period --
+# Restrict analyses to this date range. Use "" for no restriction.
+studyStartDate <- ""   # e.g., "2018-01-01"
+studyEndDate   <- ""   # e.g., "2024-12-31"
+
+# -- Minimum cell count for privacy/de-identification --
+minCellCount <- 5
+
+# ==============================================================================
+# SECTION 2: COHORT DEFINITIONS (customize for your study)
+# ==============================================================================
+
+# Cohort definitions can come from:
+#   1. PhenotypeLibrary: PhenotypeLibrary::getPlCohortDefinitionSet(cohortIds = c(...))
+#   2. ATLAS/WebAPI: ROhdsiWebApi::exportCohortDefinitionSet(...)
+#   3. Local JSON files: CohortGenerator::getCohortDefinitionSet(...)
+#   4. Capr (programmatic R definitions): Capr::cohort(...)
+#
+# Each cohort needs: cohortId (numeric), cohortName (string), json, sql
+
+# -- Target cohorts (primary exposure or condition of interest) --
+# Example: ACE inhibitors (PhenotypeLibrary ID 20126)
+targetCohortIds <- c()
+
+# -- Comparator cohorts (control/alternative exposure group) --
+# Example: Diuretics (PhenotypeLibrary ID 20127)
+# Required for CohortMethod studies. Leave empty for characterization-only.
+comparatorCohortIds <- c()
+
+# -- Indication cohorts (optional stratification/eligibility criteria) --
+# Example: Hypertensive disorder (PhenotypeLibrary ID 20128)
+# Used to restrict analysis population (e.g., only patients with indication)
+indicationCohortIds <- c()
+
+# -- Outcome cohorts (endpoints being measured) --
+# Example: Acute myocardial infarction (PhenotypeLibrary ID 20129)
+outcomeCohortIds <- c()
+
+# -- Negative control outcomes --
+# IMPORTANT: Use minimum 20 for stable empirical calibration.
+# Select outcomes with no plausible biological mechanism for the exposure.
+# See inst/negativeControlOutcomes.csv for template.
+negativeControlOutcomeCohortIds <- c()
+
+
+# ==============================================================================
+# SECTION 3: TIME-AT-RISK & POPULATION SETTINGS (customize per study design)
+# ==============================================================================
+
+# -- Time-at-risk windows --
+# Define the observation period relative to cohort start/end.
+#
+# Common designs:
+#   Intent-to-treat (ITT): start=1, end=365, startAnchor="cohort start", endAnchor="cohort start"
+#   On-treatment (OT):     start=1, end=0,   startAnchor="cohort start", endAnchor="cohort end"
+#   Per-protocol (PP):     start=1, end=0,   startAnchor="cohort start", endAnchor="cohort end"
+#     (with additional censoring for treatment discontinuation)
+riskWindowStart <- 1
+riskWindowEnd   <- 0
+startAnchor     <- "cohort start"
+endAnchor       <- "cohort end"
+
+# -- Washout period --
+# Days of prior observation required before cohort entry.
+# 365 days is standard for new-user designs (excludes prevalent users).
+washoutPeriod <- 365
+
+# -- Demographic restrictions (optional) --
+# Uncomment and modify to restrict study population.
+# ageMin <- 18
+# ageMax <- NULL
+# gender <- c(8507, 8532)  # 8507 = Male, 8532 = Female (OMOP concept IDs)
+
+
+# ==============================================================================
+# SECTION 4: PROPENSITY SCORE SETTINGS (for CohortMethod studies)
+# ==============================================================================
+
+# -- Covariate settings for the propensity score model --
+# CRITICAL: Exclude target and comparator drugs + descendants from covariates.
+# Including them biases effect estimates toward the null.
+#
+# Decision guide for PS method:
+#   Matching:       Best balance, but loses 30-50% of subjects. Good default.
+#   Stratification: Retains >95% of subjects. Use with large samples.
+#   IPTW:           Retains all subjects. Use for ATE estimation.
+#
+# Key diagnostics after PS adjustment:
+#   - SMD (standardized mean difference) < 0.1 for all covariates
+#   - PS AUC > 0.6 (> 0.7 preferred)
+#   - PS distribution shows overlap between groups (plotPs)
+
+# Concept IDs for target drug class (add all relevant concepts)
+targetConceptIds <- c()
+# Concept IDs for comparator drug class
+comparatorConceptIds <- c()
+
+covariateSettings <- FeatureExtraction::createDefaultCovariateSettings(
+  excludedCovariateConceptIds = c(targetConceptIds, comparatorConceptIds),
+  addDescendantsToExclude = TRUE
+)
+
+# -- PS matching settings --
+# Caliper: 0.2 = standard, 0.1 = tighter (better balance, fewer subjects)
+# maxRatio: 1 = 1:1 matching, 100 = variable ratio
+psMatchingCaliper <- 0.2
+psMatchingMaxRatio <- 1
+
+# -- PS trimming (equipoise restriction) --
+# Removes subjects without comparable counterparts.
+# Bounds: 0.3-0.7 = moderate, 0.25-0.75 = permissive
+psTrimLower <- 0.3
+psTrimUpper <- 0.7
+
+
+# ==============================================================================
+# SECTION 5: MODULE CONFIGURATION (select and configure modules)
+# ==============================================================================
+
+# Uncomment and configure the modules needed for your study.
+# Every study needs CohortGenerator. CohortDiagnostics is strongly recommended.
+
+# ---- CohortGenerator (Required) ----
+# Instantiates all cohort definitions in the CDM.
+
+# cohortDefinitionSet <- CohortGenerator::getCohortDefinitionSet(
+#   settingsFileName = "inst/cohorts/CohortsToCreate.csv",
+#   jsonFolder = "inst/cohorts",
+#   sqlFolder = "inst/sql/sql_server"
+# )
+#
+# OR use PhenotypeLibrary:
+# cohortDefinitionSet <- PhenotypeLibrary::getPlCohortDefinitionSet(
+#   cohortIds = c(targetCohortIds, comparatorCohortIds, indicationCohortIds, outcomeCohortIds)
+# )
+
+# ---- CohortDiagnostics (Strongly Recommended) ----
+# Run FIRST to validate cohort definitions before any analysis.
+# Check: attrition, orphan codes, incidence rates, index events, overlap.
+
+# ---- Characterization ----
+# Baseline feature comparison between target and comparator (Table 1).
+# Useful for understanding population differences before PS adjustment.
+
+# ---- CohortIncidence ----
+# Compute incidence rates stratified by age, sex, calendar year.
+# Use for disease burden estimation and baseline rate calculation.
+
+# ---- CohortMethod (Comparative Effectiveness) ----
+# Propensity score-based comparative studies.
+# Requires: target, comparator, outcome cohorts, negative controls.
+# See Section 4 for PS configuration.
+#
+# Outcome model options:
+#   modelType = "cox"          (Cox proportional hazards — default)
+#   modelType = "logistic"     (conditional logistic regression)
+#   modelType = "poisson"      (Poisson regression)
+
+# ---- SelfControlledCaseSeries ----
+# Within-person comparison of outcome rates during/after exposure.
+# ONLY use when:
+#   - Outcome is acute and rare (<10% of population)
+#   - Exposure is short-term (days/weeks)
+#   - Event does NOT trigger treatment changes
+# Configure: risk window (e.g., 1-14 days), pre-exposure window (-30 to -1 days)
+
+# ---- PatientLevelPrediction ----
+# Machine learning prediction models.
+# Requires: target cohort (training population), outcome cohort (prediction target).
+# Algorithms: logistic regression, gradient boosting, random forest, deep learning.
+
+
+# ==============================================================================
+# SECTION 6: BUILD SPECIFICATION (boilerplate — typically no edits needed)
+# ==============================================================================
+
+# -- Load cohort definitions --
+# Combine all cohort IDs and load definitions
+# allCohortIds <- c(targetCohortIds, comparatorCohortIds, indicationCohortIds, outcomeCohortIds)
+# cohortDefinitionSet <- PhenotypeLibrary::getPlCohortDefinitionSet(cohortIds = allCohortIds)
+
+# -- Load negative control outcomes --
+# negativeControlOutcomes <- read.csv("inst/negativeControlOutcomes.csv")
+
+# -- Create analysis specification --
+# analysisSpecifications <- createEmptyAnalysisSpecificiations()
+
+# -- Add shared resources (CohortGenerator) --
+# cgModuleSpecs <- CohortGeneratorModule$new()$createModuleSpecifications(
+#   generateStats = TRUE
+# )
+# analysisSpecifications <- analysisSpecifications |>
+#   addSharedResources(cgModuleSpecs)
+
+# -- Add module specifications --
+# (Add each configured module here)
+
+# -- Save to JSON --
+# ParallelLogger::saveSettingsToJson(analysisSpecifications, "inst/analysisSpecification.json")
+# cat("Analysis specification saved to inst/analysisSpecification.json\\n")
+`,
+
+      "StrategusCodeToRun.R": `# StrategusCodeToRun.R
+# ==============================================================================
+# Execute a Strategus Study on a CDM Database
+#
+# This script configures the database connection, loads the analysis
+# specification, and runs the complete Strategus pipeline.
+# ==============================================================================
+
+# -- Environment setup --
+# Increase Java heap for large cohort operations
+options(java.parameters = "-Xmx4g")
+# Limit VROOM threads to prevent deadlocks
+Sys.setenv("VROOM_THREADS" = 1)
+
+# -- Restore R dependencies --
+# renv::restore()  # Uncomment on first run to install all packages
+
+library(Strategus)
+
+# ==============================================================================
+# CONFIGURATION (edit these for your environment)
+# ==============================================================================
+
+# -- Output settings --
+outputFolder <- "results"
+resultsFolder <- file.path(outputFolder, "strategusOutput")
+
+# -- Database connection --
+# Option 1: Use Eunomia sample data for testing
+# connectionDetails <- Eunomia::getEunomiaConnectionDetails()
+# cdmDatabaseSchema <- "main"
+# workDatabaseSchema <- "main"
+# cohortTableName <- "cohort"
+# databaseId <- "Eunomia"
+
+# Option 2: Real CDM database
+# connectionDetails <- DatabaseConnector::createConnectionDetails(
+#   dbms = "postgresql",     # or "sql server", "oracle", "redshift", "spark", etc.
+#   server = "localhost/omop_cdm",
+#   user = Sys.getenv("DB_USER"),
+#   password = Sys.getenv("DB_PASSWORD"),
+#   port = 5432
+# )
+# cdmDatabaseSchema <- "cdm"
+# workDatabaseSchema <- "scratch"
+# cohortTableName <- "cohort"
+# databaseId <- "MyDatabase"
+
+# -- Minimum cell count for privacy --
+minCellCount <- 5
+
+# ==============================================================================
+# EXECUTION (typically no edits needed below)
+# ==============================================================================
+
+# -- Load analysis specification --
+analysisSpecifications <- ParallelLogger::loadSettingsFromJson("inst/analysisSpecification.json")
+
+# -- Create execution settings --
+executionSettings <- createCdmExecutionSettings(
+  connectionDetailsReference = "cdm",
+  workDatabaseSchema = workDatabaseSchema,
+  cdmDatabaseSchema = cdmDatabaseSchema,
+  cohortTableNames = CohortGenerator::getCohortTableNames(cohortTable = cohortTableName),
+  workFolder = file.path(outputFolder, "strategusWork"),
+  resultsFolder = resultsFolder,
+  minCellCount = minCellCount
+)
+
+# -- Create output directories --
+if (!dir.exists(outputFolder)) dir.create(outputFolder, recursive = TRUE)
+
+# -- Store connection details for Strategus --
+storeConnectionDetails(connectionDetails, "cdm")
+
+# -- Execute --
+execute(
+  analysisSpecifications = analysisSpecifications,
+  executionSettings = executionSettings,
+  executionScriptFolder = file.path(outputFolder, "strategusExecution")
+)
+
+cat("\\n=== Study execution complete ===\\n")
+cat("Results saved to:", resultsFolder, "\\n")
+`,
+
+      "DownloadCohorts.R": `# DownloadCohorts.R
+# ==============================================================================
+# Download Cohort Definitions from ATLAS or PhenotypeLibrary
+#
+# Use this script to retrieve cohort definitions for your study.
+# Downloaded cohorts are saved to inst/cohorts/ as JSON and SQL files.
+# ==============================================================================
+
+library(ROhdsiWebApi)
+library(CohortGenerator)
+
+# ==============================================================================
+# Option 1: Download from ATLAS WebAPI
+# ==============================================================================
+
+# baseUrl <- "https://your-atlas-instance.org/WebAPI"
+# cohortIds <- c()  # Add ATLAS cohort IDs
+#
+# cohortDefinitionSet <- ROhdsiWebApi::exportCohortDefinitionSet(
+#   baseUrl = baseUrl,
+#   cohortIds = cohortIds,
+#   generateStats = TRUE
+# )
+#
+# # Save to inst/cohorts/
+# CohortGenerator::saveCohortDefinitionSet(
+#   cohortDefinitionSet = cohortDefinitionSet,
+#   settingsFileName = "inst/cohorts/CohortsToCreate.csv",
+#   jsonFolder = "inst/cohorts",
+#   sqlFolder = "inst/sql/sql_server"
+# )
+
+# ==============================================================================
+# Option 2: Load from PhenotypeLibrary
+# ==============================================================================
+
+# cohortDefinitionSet <- PhenotypeLibrary::getPlCohortDefinitionSet(
+#   cohortIds = c()  # Add PhenotypeLibrary cohort IDs
+# )
+#
+# CohortGenerator::saveCohortDefinitionSet(
+#   cohortDefinitionSet = cohortDefinitionSet,
+#   settingsFileName = "inst/cohorts/CohortsToCreate.csv",
+#   jsonFolder = "inst/cohorts",
+#   sqlFolder = "inst/sql/sql_server"
+# )
+
+# ==============================================================================
+# Download Negative Control Outcomes
+# ==============================================================================
+
+# negativeControlOutcomes <- read.csv("inst/negativeControlOutcomes.csv")
+# cat("Loaded", nrow(negativeControlOutcomes), "negative control outcomes\\n")
+`,
+
+      "CreateResultsDataModel.R": `# CreateResultsDataModel.R
+# ==============================================================================
+# Create Results Data Model in PostgreSQL
+#
+# Sets up the database schema and tables for storing Strategus results.
+# Run this before uploading results from execution sites.
+# ==============================================================================
+
+library(Strategus)
+
+# ==============================================================================
+# CONFIGURATION
+# ==============================================================================
+
+# -- Results database connection --
+# resultsDatabaseConnectionDetails <- DatabaseConnector::createConnectionDetails(
+#   dbms = "postgresql",
+#   server = "localhost/results_db",
+#   user = Sys.getenv("RESULTS_DB_USER"),
+#   password = Sys.getenv("RESULTS_DB_PASSWORD"),
+#   port = 5432
+# )
+
+# resultsDatabaseSchema <- "results"
+
+# ==============================================================================
+# CREATE DATA MODEL
+# ==============================================================================
+
+# -- Load analysis specification to determine required tables --
+# analysisSpecifications <- ParallelLogger::loadSettingsFromJson("inst/analysisSpecification.json")
+
+# -- Create results data model --
+# Strategus::createResultDataModels(
+#   analysisSpecifications = analysisSpecifications,
+#   connectionDetails = resultsDatabaseConnectionDetails,
+#   resultsDatabaseSchema = resultsDatabaseSchema
+# )
+
+# cat("Results data model created in schema:", resultsDatabaseSchema, "\\n")
+`,
+
+      "EvidenceSynthesis.R": `# EvidenceSynthesis.R
+# ==============================================================================
+# Evidence Synthesis — Meta-Analysis Across Multiple Sites
+#
+# Combines results from multiple CDM database executions using
+# Bayesian random-effects meta-analysis.
+# Run this after collecting results from all execution sites.
+# ==============================================================================
+
+library(Strategus)
+library(EvidenceSynthesis)
+
+# ==============================================================================
+# CONFIGURATION
+# ==============================================================================
+
+# -- Load the original analysis specification --
+# analysisSpecifications <- ParallelLogger::loadSettingsFromJson("inst/analysisSpecification.json")
+
+# -- Evidence synthesis settings --
+# For CohortMethod results:
+# cmEsModuleSpecs <- EvidenceSynthesisModule$new()$createModuleSpecifications(
+#   evidenceSynthesisAnalysisList = list(
+#     createEvidenceSynthesisAnalysis(
+#       analysisId = 1,
+#       description = "Bayesian random-effects meta-analysis",
+#       evidenceSynthesisSource = createEvidenceSynthesisSourceFromCohortMethod(
+#         analysisId = 1
+#       ),
+#       controlType = "outcome",
+#       evidenceSynthesisMethod = createBayesianMetaAnalysis(
+#         useMcmc = TRUE
+#       )
+#     )
+#   )
+# )
+
+# -- For SCCS results (if applicable): --
+# sccsEsModuleSpecs <- EvidenceSynthesisModule$new()$createModuleSpecifications(
+#   evidenceSynthesisAnalysisList = list(
+#     createEvidenceSynthesisAnalysis(
+#       analysisId = 2,
+#       description = "SCCS Bayesian meta-analysis",
+#       evidenceSynthesisSource = createEvidenceSynthesisSourceFromSccs(
+#         analysisId = 1
+#       ),
+#       controlType = "outcome",
+#       evidenceSynthesisMethod = createBayesianMetaAnalysis(
+#         useMcmc = TRUE
+#       )
+#     )
+#   )
+# )
+`,
+
+      "UploadResults.R": `# UploadResults.R
+# ==============================================================================
+# Upload Study Results to Shared Results Database
+#
+# Uploads results from local execution to a centralized PostgreSQL database
+# for cross-site comparison and visualization.
+# ==============================================================================
+
+library(Strategus)
+
+# ==============================================================================
+# CONFIGURATION
+# ==============================================================================
+
+# -- Results database connection --
+# resultsDatabaseConnectionDetails <- DatabaseConnector::createConnectionDetails(
+#   dbms = "postgresql",
+#   server = "localhost/results_db",
+#   user = Sys.getenv("RESULTS_DB_USER"),
+#   password = Sys.getenv("RESULTS_DB_PASSWORD"),
+#   port = 5432
+# )
+
+# resultsDatabaseSchema <- "results"
+# resultsFolder <- "results/strategusOutput"
+# databaseId <- "MyDatabase"
+
+# ==============================================================================
+# UPLOAD
+# ==============================================================================
+
+# -- Get list of result folders (one per module) --
+# resultFolders <- list.dirs(resultsFolder, full.names = TRUE, recursive = FALSE)
+
+# for (folder in resultFolders) {
+#   moduleName <- basename(folder)
+#   cat("Uploading results for module:", moduleName, "\\n")
+#
+#   tryCatch({
+#     Strategus::uploadResults(
+#       connectionDetails = resultsDatabaseConnectionDetails,
+#       resultsDatabaseSchema = resultsDatabaseSchema,
+#       resultsFolder = folder,
+#       databaseId = databaseId
+#     )
+#     cat("  Success\\n")
+#   }, error = function(e) {
+#     cat("  Error:", conditionMessage(e), "\\n")
+#   })
+# }
+#
+# cat("\\nUpload complete.\\n")
+`,
+
+      "README.md": `# [Study Title]
+
+<!-- Study status badge — update as the study progresses -->
+![Repo Created](https://img.shields.io/badge/Study%20Status-Repo%20Created-lightgray)
+
+- **Analytics use case(s)**: <!-- Characterization, Population-Level Estimation, Patient-Level Prediction -->
+- **Study type**: <!-- Clinical Application, Methods Research -->
+- **Tags**: <!-- Add relevant keywords -->
+- **Study lead**: <!-- Name, affiliation -->
+- **Study lead forums tag**: <!-- OHDSI forums username -->
+- **Study start date**: <!-- YYYY-MM-DD -->
+- **Study end date**: <!-- YYYY-MM-DD -->
+- **Protocol**: <!-- Link to protocol document -->
+- **Publications**: <!-- Link to publications -->
+- **Results explorer**: <!-- URL to Shiny app -->
+
+## Description
+
+<!-- Describe the research question, study design, and objectives -->
+
+## Study Design
+
+<!-- Describe the analytical approach:
+- Study type (new-user cohort, self-controlled, characterization)
+- Target and comparator cohorts
+- Outcome definitions
+- Time-at-risk windows
+- Propensity score method (if applicable)
+-->
+
+## Requirements
+
+- R (version 4.x recommended)
+- Java (for DatabaseConnector)
+- Access to an OMOP CDM database
+
+## Execution
+
+1. Clone this repository
+2. Open the .Rproj file in RStudio
+3. Run \`renv::restore()\` to install dependencies
+4. Edit \`StrategusCodeToRun.R\` with your database connection details
+5. Source \`StrategusCodeToRun.R\` to execute the study
+
+## Results
+
+Results are written to the \`results/\` directory. Use the Shiny app (\`app.R\`)
+to explore results interactively.
+`,
+
+      "inst/cohorts/.gitkeep": ``,
+
+      "inst/negativeControlOutcomes.csv": `cohortId,cohortName,outcomeConceptId
+`,
+
+      ".gitignore": `# R
+.Rhistory
+.Rdata
+.Ruserdata
+.RData
+.Rproj.user/
+
+# Results (do not commit patient-level data)
+results/
+output/
+
+# renv library (installed packages)
+renv/library/
+renv/staging/
+renv/cellar/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Credentials
+.Renviron
+`,
+
+      ".Rprofile": `source("renv/activate.R")
+`,
+    },
+  },
 ];
 
 /**

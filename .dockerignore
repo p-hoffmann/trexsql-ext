@@ -11,6 +11,8 @@ plugins/
 !plugins/devx/
 !plugins/web/
 !plugins/storage/
+!plugins/notebook/
+!plugins/docs/
 !plugins/devx-ext/build/release/devx_ext.trex
 
 # Misc

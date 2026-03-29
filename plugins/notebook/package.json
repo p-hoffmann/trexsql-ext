@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "prepack": "npm run build",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
@@ -41,6 +42,17 @@
     "react-window": "^2.2.3",
     "tailwind-merge": "^3.4.0",
     "webr": "^0.5.8"
+  },
+  "trex": {
+    "ui": {
+      "routes": [
+        {
+          "path": "/notebook",
+          "dir": "dist",
+          "spa": true
+        }
+      ]
+    }
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

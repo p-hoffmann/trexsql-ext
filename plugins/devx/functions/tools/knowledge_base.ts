@@ -56,6 +56,13 @@ const SUPPORTED_REPOS: Record<string, string> = {
   "result-model-manager": "https://github.com/OHDSI/ResultModelManager.git",
   "rohdsi-webapi": "https://github.com/OHDSI/ROhdsiWebApi.git",
   "sql-render": "https://github.com/OHDSI/SqlRender.git",
+  // Study Templates & Examples
+  "strategus-study-template": "https://github.com/ohdsi-studies/StrategusStudyRepoTemplate.git",
+  "ehden-hmb": "https://github.com/ohdsi-studies/ehden-hmb.git",
+  "legendt2dm": "https://github.com/ohdsi-studies/LegendT2dm.git",
+  "reward": "https://github.com/ohdsi-studies/Reward.git",
+  // Reference
+  "book-of-ohdsi-2nd": "https://github.com/OHDSI/BookOfOhdsi-2ndEdition.git",
 };
 
 /** Repos organized by category for discovery */
@@ -142,6 +149,21 @@ const REPO_CATEGORIES: Record<string, { description: string; repos: Record<strin
       "ohdsi-shiny-modules": "Shiny modules for result visualization",
     },
   },
+  "studies": {
+    description: "Strategus study design templates and reference implementations",
+    repos: {
+      "strategus-study-template": "Official Strategus study repo template with standard file structure",
+      "ehden-hmb": "EHDEN Heavy Menstrual Bleeding — CohortMethod estimation example",
+      "legendt2dm": "LEGEND-T2DM — Large-scale multi-database estimation study",
+      "reward": "REWARD — Characterization and incidence study example",
+    },
+  },
+  "reference": {
+    description: "OHDSI reference documentation and textbooks",
+    repos: {
+      "book-of-ohdsi-2nd": "The Book of OHDSI (2nd Edition) — comprehensive methodology reference",
+    },
+  },
 };
 
 const KB_BASE_DIR = "/tmp/devx-kb";
@@ -212,13 +234,13 @@ export const kbListReposTool: ToolDefinition<{ category?: string }> = {
     "List available OHDSI knowledge base repositories organized by category. " +
     "Call without arguments to see all categories and repos. " +
     "Pass a category to see only repos in that category. " +
-    "Categories: atlas, data2evidence, orchestration, estimation, prediction, characterization, cohorts, quality, infrastructure.",
+    "Categories: atlas, data2evidence, orchestration, estimation, prediction, characterization, cohorts, quality, infrastructure, studies, reference.",
   parameters: {
     type: "object",
     properties: {
       category: {
         type: "string",
-        description: "Optional category filter (atlas, data2evidence, orchestration, estimation, prediction, characterization, cohorts, quality, infrastructure)",
+        description: "Optional category filter (atlas, data2evidence, orchestration, estimation, prediction, characterization, cohorts, quality, infrastructure, studies, reference)",
       },
     },
     required: [],
