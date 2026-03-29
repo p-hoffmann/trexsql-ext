@@ -6,7 +6,7 @@ import {
   PanelResizeHandle,
 } from "react-resizable-panels";
 import type { ImperativePanelHandle } from "react-resizable-panels";
-import { Settings, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { Settings, PanelLeft, Columns2, PanelRight } from "lucide-react";
 import { ChatPanel } from "@/components/ChatPanel";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { PreviewPanel } from "@/components/preview/PreviewPanel";
@@ -17,8 +17,10 @@ import { useChats } from "@/hooks/useChats";
 import { useApps } from "@/hooks/useApps";
 import { useSettings } from "@/hooks/useSettings";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useLayoutMode } from "@/hooks/useLayoutMode";
 import { cn } from "@/lib/utils";
 import type { ChatMode } from "@/lib/types";
+import { LAYOUT_MODES } from "@/lib/types";
 import type { SelectedElement, SelectedComponent, VisualEditContext } from "@/lib/visual-editing-types";
 
 export default function ChatPage() {
@@ -37,8 +39,7 @@ export default function ChatPage() {
   const sendRef = useRef<((msg: string) => void) | null>(null);
   const chatPanelRef = useRef<ImperativePanelHandle>(null);
   const previewPanelRef = useRef<ImperativePanelHandle>(null);
-  const [chatCollapsed, setChatCollapsed] = useState(false);
-  const [previewCollapsed, setPreviewCollapsed] = useState(false);
+  const { layoutMode, setLayoutMode, panelAssignment } = useLayoutMode();
 
   const handleAppCommand = useCallback((command: string) => {
     if (command === "refresh") {
@@ -122,19 +123,27 @@ export default function ChatPage() {
     setSidebarCollapsed((prev) => !prev);
   }, []);
 
-  const toggleChatPanel = useCallback(() => {
-    const panel = chatPanelRef.current;
-    if (!panel) return;
-    if (chatCollapsed) panel.expand();
-    else panel.collapse();
-  }, [chatCollapsed]);
-
-  const togglePreviewPanel = useCallback(() => {
-    const panel = previewPanelRef.current;
-    if (!panel) return;
-    if (previewCollapsed) panel.expand();
-    else panel.collapse();
-  }, [previewCollapsed]);
+  // Drive panel collapse/expand from layout mode
+  useEffect(() => {
+    const leftPanel = chatPanelRef.current;
+    const rightPanel = previewPanelRef.current;
+    if (!leftPanel || !rightPanel) return;
+    switch (layoutMode) {
+      case "left-only":
+        leftPanel.expand();
+        rightPanel.collapse();
+        break;
+      case "right-only":
+        leftPanel.collapse();
+        rightPanel.expand();
+        break;
+      case "split":
+      default:
+        leftPanel.expand();
+        rightPanel.expand();
+        break;
+    }
+  }, [layoutMode]);
 
   const handleEditWithAI = useCallback((element: SelectedElement) => {
     setVisualEditContext({
@@ -170,24 +179,26 @@ export default function ChatPage() {
           />
         </div>
         <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={toggleChatPanel}
-            title={chatCollapsed ? "Show chat" : "Hide chat"}
-          >
-            {chatCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={togglePreviewPanel}
-            title={previewCollapsed ? "Show preview" : "Hide preview"}
-          >
-            {previewCollapsed ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
-          </Button>
+          <div className="flex items-center border rounded-md">
+            {LAYOUT_MODES.map((mode) => {
+              const Icon = mode.id === "left-only" ? PanelLeft : mode.id === "split" ? Columns2 : PanelRight;
+              return (
+                <Button
+                  key={mode.id}
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    "h-8 w-8 rounded-none first:rounded-l-md last:rounded-r-md",
+                    layoutMode === mode.id && "bg-accent",
+                  )}
+                  onClick={() => setLayoutMode(mode.id)}
+                  title={mode.label}
+                >
+                  <Icon className="h-4 w-4" />
+                </Button>
+              );
+            })}
+          </div>
           <ThemeToggle />
           <Link to="/settings">
             <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -225,25 +236,29 @@ export default function ChatPage() {
           defaultSize={50}
           minSize={30}
           collapsible
-          onCollapse={() => setChatCollapsed(true)}
-          onExpand={() => setChatCollapsed(false)}
+          onCollapse={() => { if (layoutMode !== "right-only") setLayoutMode("right-only"); }}
+          onExpand={() => { if (layoutMode === "right-only") setLayoutMode("split"); }}
           className={cn(!isResizing && "transition-all duration-100 ease-in-out")}
         >
-          <ChatPanel
-            chatId={activeChatId}
-            mode={currentMode}
-            onModeChange={handleModeChange}
-            onPlanContentChange={setPlanContent}
-            visualEditContext={visualEditContext}
-            onClearVisualEditContext={() => setVisualEditContext(null)}
-            selectedComponents={selectedComponents}
-            onRemoveSelectedComponent={(devxId) => setSelectedComponents((prev) => prev.filter((c) => c.devxId !== devxId))}
-            onClearSelectedComponents={() => setSelectedComponents([])}
-            onAppCommand={handleAppCommand}
-            onBuildAction={handleBuildAction}
-            sendRef={sendRef}
-            onNewChat={handleNewChat}
-          />
+          {panelAssignment.left === "chat" ? (
+            <ChatPanel
+              chatId={activeChatId}
+              mode={currentMode}
+              onModeChange={handleModeChange}
+              onPlanContentChange={setPlanContent}
+              visualEditContext={visualEditContext}
+              onClearVisualEditContext={() => setVisualEditContext(null)}
+              selectedComponents={selectedComponents}
+              onRemoveSelectedComponent={(devxId) => setSelectedComponents((prev) => prev.filter((c) => c.devxId !== devxId))}
+              onClearSelectedComponents={() => setSelectedComponents([])}
+              onAppCommand={handleAppCommand}
+              onBuildAction={handleBuildAction}
+              sendRef={sendRef}
+              onNewChat={handleNewChat}
+            />
+          ) : (
+            <PreviewPanel appId={activeAppId} planContent={planContent} chatMode={currentMode} onEditWithAI={handleEditWithAI} onComponentsSelected={handleComponentsSelected} refreshSignal={refreshSignal} onFixPrompt={handleFixPrompt} />
+          )}
         </Panel>
 
         <PanelResizeHandle
@@ -256,11 +271,29 @@ export default function ChatPage() {
           defaultSize={30}
           minSize={20}
           collapsible
-          onCollapse={() => setPreviewCollapsed(true)}
-          onExpand={() => setPreviewCollapsed(false)}
+          onCollapse={() => { if (layoutMode !== "left-only") setLayoutMode("left-only"); }}
+          onExpand={() => { if (layoutMode === "left-only") setLayoutMode("split"); }}
           className={cn(!isResizing && "transition-all duration-100 ease-in-out")}
         >
-          <PreviewPanel appId={activeAppId} planContent={planContent} chatMode={currentMode} onEditWithAI={handleEditWithAI} onComponentsSelected={handleComponentsSelected} refreshSignal={refreshSignal} onFixPrompt={handleFixPrompt} />
+          {panelAssignment.right === "preview" ? (
+            <PreviewPanel appId={activeAppId} planContent={planContent} chatMode={currentMode} onEditWithAI={handleEditWithAI} onComponentsSelected={handleComponentsSelected} refreshSignal={refreshSignal} onFixPrompt={handleFixPrompt} />
+          ) : (
+            <ChatPanel
+              chatId={activeChatId}
+              mode={currentMode}
+              onModeChange={handleModeChange}
+              onPlanContentChange={setPlanContent}
+              visualEditContext={visualEditContext}
+              onClearVisualEditContext={() => setVisualEditContext(null)}
+              selectedComponents={selectedComponents}
+              onRemoveSelectedComponent={(devxId) => setSelectedComponents((prev) => prev.filter((c) => c.devxId !== devxId))}
+              onClearSelectedComponents={() => setSelectedComponents([])}
+              onAppCommand={handleAppCommand}
+              onBuildAction={handleBuildAction}
+              sendRef={sendRef}
+              onNewChat={handleNewChat}
+            />
+          )}
         </Panel>
       </PanelGroup>
     </div>

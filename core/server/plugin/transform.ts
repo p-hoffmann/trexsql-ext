@@ -36,7 +36,8 @@ function getPgPool(): InstanceType<typeof Pool> | null {
   if (!pgPool) {
     const databaseUrl = Deno.env.get("DATABASE_URL");
     if (!databaseUrl) return null;
-    pgPool = new Pool({ connectionString: databaseUrl });
+    const sslRequired = databaseUrl.includes("sslmode=require") || databaseUrl.includes("sslmode=prefer");
+    pgPool = new Pool({ connectionString: databaseUrl, ...(sslRequired && { ssl: { rejectUnauthorized: false } }) });
   }
   return pgPool;
 }

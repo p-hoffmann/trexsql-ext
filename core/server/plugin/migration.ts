@@ -63,7 +63,8 @@ export async function runAllPluginMigrations(): Promise<void> {
 
   try {
     const { Pool } = await import("pg");
-    const pool = new Pool({ connectionString: databaseUrl });
+    const sslRequired = databaseUrl.includes("sslmode=require") || databaseUrl.includes("sslmode=prefer");
+    const pool = new Pool({ connectionString: databaseUrl, ...(sslRequired && { ssl: { rejectUnauthorized: false } }) });
 
     for (const [name, info] of migrationRegistry) {
       try {

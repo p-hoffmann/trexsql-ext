@@ -56,7 +56,7 @@ export function ChangePassword() {
 
       toast.success("Password changed successfully.");
       // Force full reload to refresh session data (mustChangePassword flag)
-      window.location.href = `${BASE_PATH}/`;
+      window.location.href = "/";
     } catch {
       setError("An unexpected error occurred. Please try again.");
     } finally {
