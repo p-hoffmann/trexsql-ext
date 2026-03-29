@@ -93,6 +93,7 @@ jobs:
             RUNNER: ubuntu-24.04
           - PKGPATH: ./plugins/docs
           - PKGPATH: ./plugins/web
+          - PKGPATH: ./plugins/notebook
           - PKGPATH: ./plugins/devx-ext
 
     runs-on: ${{ matrix.RUNNER || needs.pick_runner.outputs.random_runner }}

@@ -49,7 +49,31 @@ COPY plugins/devx/package.json plugins/devx/package-lock.json plugins/devx/tscon
 COPY plugins/devx/src/ ./src/
 RUN npm install && npm run build
 
-# Stage 3: Runtime
+# Stage 3: Build web frontend
+FROM node:20-trixie-slim AS web-builder
+WORKDIR /build
+COPY plugins/web/package.json plugins/web/package-lock.json plugins/web/tsconfig*.json plugins/web/vite.config.ts plugins/web/index.html plugins/web/components.json ./
+COPY plugins/web/src/ ./src/
+RUN npm install && npm run build
+
+# Stage 4: Build notebook frontend
+FROM node:20-trixie-slim AS notebook-builder
+WORKDIR /build
+COPY plugins/notebook/package.json plugins/notebook/package-lock.json plugins/notebook/tsconfig*.json plugins/notebook/vite.config.ts plugins/notebook/index.html ./
+COPY plugins/notebook/src/ ./src/
+COPY plugins/notebook/public/ ./public/
+RUN npm install && npm run build
+
+# Stage 5: Build docs site
+FROM node:20-trixie-slim AS docs-builder
+WORKDIR /build
+COPY plugins/docs/package.json plugins/docs/package-lock.json plugins/docs/tsconfig.json plugins/docs/docusaurus.config.ts plugins/docs/sidebars.ts ./
+COPY plugins/docs/docs/ ./docs/
+COPY plugins/docs/src/ ./src/
+COPY plugins/docs/static/ ./static/
+RUN npm install && npm run build
+
+# Stage 6: Runtime
 FROM node:20-trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -133,10 +157,15 @@ COPY functions/ ./functions/
 # Create plugins/runtime workspace member stub (referenced by deno.json workspace)
 RUN mkdir -p ./plugins/runtime && echo '{"nodeModulesDir":"auto"}' > ./plugins/runtime/deno.json
 
-# Copy dev plugins (use pre-built dist from devx-builder stage)
+# Copy dev plugins (use pre-built dist from builder stages)
 COPY plugins/devx/ ./plugins-dev/devx/
 COPY --from=devx-builder /build/dist/ ./plugins-dev/devx/dist/
 COPY plugins/web/ ./plugins-dev/web/
+COPY --from=web-builder /build/dist/ ./plugins-dev/web/dist/
+COPY plugins/notebook/ ./plugins-dev/notebook/
+COPY --from=notebook-builder /build/dist/ ./plugins-dev/notebook/dist/
+COPY plugins/docs/ ./plugins-dev/docs/
+COPY --from=docs-builder /build/build/ ./plugins-dev/docs/build/
 COPY plugins/storage/ ./plugins-dev/storage/
 
 # Generate self-signed TLS cert for HTTPS
