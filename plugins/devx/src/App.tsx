@@ -1,14 +1,23 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, MemoryRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import ChatPage from "@/pages/ChatPage";
 import SettingsPage from "@/pages/SettingsPage";
 import AppDetailsPage from "@/pages/AppDetailsPage";
 
-const basename = import.meta.env.BASE_URL.replace(/\/$/, "");
+const defaultBasename = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-export default function App() {
+interface AppProps {
+  basePath?: string;
+}
+
+export default function App({ basePath }: AppProps = {}) {
+  // When embedded via single-spa, use MemoryRouter to avoid
+  // conflicting with the host app's BrowserRouter.
+  const Router = basePath ? MemoryRouter : BrowserRouter;
+  const routerProps = basePath ? {} : { basename: defaultBasename };
+
   return (
-    <BrowserRouter basename={basename}>
+    <Router {...routerProps}>
       <Routes>
         <Route path="/" element={<ChatPage />} />
         <Route path="/settings" element={<SettingsPage />} />
@@ -16,6 +25,6 @@ export default function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Toaster />
-    </BrowserRouter>
+    </Router>
   );
 }

@@ -1,10 +1,10 @@
 import { loader } from "@monaco-editor/react";
 
 // Self-host Monaco assets (no CDN dependency in Docker)
-// Derive base path from the script src in the HTML (Vite sets base to /plugins/trex/devx/)
-const scriptEl = document.querySelector('script[src*="/assets/"]');
-const basePath = scriptEl?.getAttribute("src")?.replace(/\/assets\/.*$/, "") || "/plugins/trex/devx";
-loader.config({ paths: { vs: `${basePath}/monaco/vs` } });
+// Use Vite's BASE_URL which is always correct for devx's assets,
+// whether running standalone or embedded via single-spa.
+const devxBase = (import.meta.env.BASE_URL || "/plugins/trex/devx/").replace(/\/$/, "");
+loader.config({ paths: { vs: `${devxBase}/monaco/vs` } });
 
 // Initialize themes and TypeScript config
 loader.init().then((monaco) => {
@@ -106,6 +106,10 @@ export function getLanguageFromPath(filePath: string): string {
     xml: "xml",
     svg: "xml",
     sql: "sql",
+    r: "r",
+    rmd: "r",
+    rproj: "ini",
+    rprofile: "r",
     py: "python",
     rs: "rust",
     go: "go",
@@ -120,5 +124,7 @@ export function getLanguageFromPath(filePath: string): string {
   const name = filePath.split("/").pop()?.toLowerCase() || "";
   if (name === "dockerfile") return "dockerfile";
   if (name === ".env" || name.startsWith(".env.")) return "ini";
+  if (name === ".rprofile") return "r";
+  if (name === ".renvignore" || name === ".rscignore") return "plaintext";
   return map[ext] || "plaintext";
 }

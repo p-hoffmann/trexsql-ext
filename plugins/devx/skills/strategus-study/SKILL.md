@@ -179,14 +179,26 @@ before proceeding to the next.
 
 ## Phase 1: Study Question Definition
 1. Ask the user to describe their research question in plain language
-2. Clarify the study type:
-   - **Estimation**: CohortMethod (comparative) or SCCS (self-controlled)
-   - **Prediction**: PatientLevelPrediction
-   - **Characterization**: Characterization or CohortIncidence
-   - **Multi-module**: Combination of the above
+2. Clarify the study type based on the research question:
+   - **Comparative effectiveness/safety** — "Does drug A cause more/fewer outcomes
+     than drug B?" → Uses CohortMethod module
+   - **Drug/vaccine safety signal detection** — "Does this exposure increase risk
+     of this acute outcome?" (within-person comparison) → Uses SCCS module
+   - **Disease/population characterization** — "What are the characteristics and
+     incidence rates in this population?" → Uses Characterization/CohortIncidence
+   - **Risk prediction** — "Can we predict who will develop this outcome?"
+     → Uses PatientLevelPrediction module
+   - **Multi-module** — Combination of the above
 3. Identify: target cohort(s), comparator cohort(s) if applicable, outcome cohort(s)
 4. Clarify time-at-risk windows, washout periods, study date boundaries
 5. Summarize the study design and confirm with the user
+
+IMPORTANT: Do NOT ask about propensity score methods (matching, stratification,
+IPTW) as a study design choice. Propensity scores are a confounding adjustment
+method used WITHIN comparative studies (CohortMethod), not a study design. The
+choice of PS method is a technical configuration decision made in Phase 3 based
+on sample size and study characteristics — not something to ask the user about
+unless they have a specific preference.
 
 ## Phase 2: Cohort Selection
 1. Initialize the phenotype-library KB: `kb_init` with repo "phenotype-library"
@@ -200,28 +212,41 @@ before proceeding to the next.
 
 ## Phase 3: Module Configuration
 1. Initialize the strategus-study-template KB for reference patterns
-2. For CohortMethod studies, apply the propensity score methodology:
-   - Configure covariate settings with drug exclusions
-   - Choose matching vs stratification based on sample size
-   - Set caliper, trimming bounds
-   - Configure outcome model (Cox regression default)
-3. For SCCS studies, verify assumptions and configure risk windows
-4. Always include CohortGenerator and CohortDiagnostics
+2. Always include CohortGenerator and CohortDiagnostics
+3. For **comparative studies** (CohortMethod), configure the analysis settings:
+   - Covariate settings with target/comparator drug exclusions
+   - Propensity score adjustment method — choose based on study characteristics:
+     * Matching (default): best covariate balance, good for moderate sample sizes
+     * Stratification: retains more subjects, use with large samples (>10k)
+     * IPTW: retains all subjects, use when ATE estimation is the goal
+   - Outcome model (Cox regression default)
+   - Negative control outcomes for empirical calibration
+   Note: PS method is a technical choice made here based on sample size and
+   study goals. It is NOT a study design — it is a confounding adjustment
+   technique within the CohortMethod module.
+4. For **safety studies** (SCCS), verify assumptions and configure risk windows
 5. Configure shared settings: CDM schema, results schema, cohort table name
 6. Confirm module configurations with the user
 
 ## Phase 4: Specification Generation
 1. Read the scaffolded template files in the user's workspace
-2. Edit `CreateStrategusAnalysisSpecification.R` with:
-   - User's specific cohort IDs and names
-   - Configured module settings
+2. Look for `# CUSTOMIZE:` markers in the R files — these indicate what to change
+3. Choose between two specification approaches:
+   - `CreateStrategusAnalysisSpecification.R` — Standard approach for single T-C pair studies
+   - `CreateStrategusAnalysisSpecificationTcis.R` — Signal detection with multiple T-C-I combinations
+4. Edit the chosen specification file with:
+   - User's specific cohort IDs and names (update file paths from `inst/sampleStudy/`)
+   - Configured module settings (comment out unused modules in Build section)
    - Appropriate time-at-risk windows and study dates
+   - Excluded covariate concept IDs for PS model
    - Negative control outcomes
-3. Edit `StrategusCodeToRun.R` with appropriate execution settings
-4. Edit `README.md` with study metadata
-5. Write cohort JSON files to `inst/cohorts/` if using custom definitions
-6. Write negative control CSV to `inst/negativeControlOutcomes.csv`
-7. Present the generated files for user review
+5. Edit `StrategusCodeToRun.R` with CDM connection details and schema names
+6. Edit `README.md` with study metadata
+7. Edit `template_docs/StudyExecution.md` — replace `<YourNetworkStudyName>` placeholders
+8. Write cohort JSON files to `inst/cohorts/` if using custom definitions
+9. Write negative control CSV to `inst/negativeControlOutcomes.csv`
+10. Configure results scripts (`CreateResultsDataModel.R`, `UploadResults.R`, `app.R`) if needed
+11. Present the generated files for user review
 
 ## Phase 5: Review and Verification
 Walk through the verification checklist with the user:
@@ -262,9 +287,12 @@ After completing study design, output a summary:
 **Time-at-Risk**: [window description]
 **Study Period**: [start date — end date]
 **Files Generated/Modified**:
-- CreateStrategusAnalysisSpecification.R
+- CreateStrategusAnalysisSpecification.R (or CreateStrategusAnalysisSpecificationTcis.R)
 - StrategusCodeToRun.R
 - README.md
+- template_docs/StudyExecution.md
+- app.R (Shiny results viewer)
+- ShareResults.R (SFTP sharing)
 - inst/cohorts/*.json
 - inst/negativeControlOutcomes.csv
 **Next Steps**:

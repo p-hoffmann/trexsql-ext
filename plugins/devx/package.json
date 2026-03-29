@@ -8,7 +8,7 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && vite build --config vite.config.spa.ts && cp dist/assets/index-*.css dist/devx-spa.css",
     "prepack": "npm run build",
     "lint": "eslint .",
     "preview": "vite preview"
@@ -49,6 +49,8 @@
     "@radix-ui/react-accordion": "^1.2.12",
     "@tailwindcss/typography": "^0.5.19",
     "class-variance-authority": "^0.7.1",
+    "single-spa": "^6.0.0",
+    "single-spa-react": "^6.0.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.564.0",
     "monaco-editor": "^0.55.1",
