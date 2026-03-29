@@ -23,7 +23,8 @@ services:
       retries: 10
 
   trex:
-    build: .
+    image: ghcr.io/p-hoffmann/trexsql:latest
+    platform: linux/amd64
     ports:
       - 8000:8000
       - 8001:8001
