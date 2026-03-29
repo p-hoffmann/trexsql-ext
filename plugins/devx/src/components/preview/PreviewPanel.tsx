@@ -27,7 +27,7 @@ interface PreviewPanelProps {
 }
 
 export function PreviewPanel({ appId, planContent, chatMode: _chatMode, onEditWithAI, onComponentsSelected, refreshSignal, onFixPrompt }: PreviewPanelProps) {
-  const [activeTab, setActiveTab] = useState("preview");
+  const [activeTab, setActiveTab] = useState("plan");
   const [app, setApp] = useState<App | null>(null);
   const [configRefresh, setConfigRefresh] = useState(0);
   const fileTree = useFileTree(appId);
@@ -63,6 +63,10 @@ export function PreviewPanel({ appId, planContent, chatMode: _chatMode, onEditWi
     <div className="flex flex-col h-full">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full">
         <TabsList className="w-full justify-start rounded-none border-b bg-transparent px-2 h-9 shrink-0">
+          <TabsTrigger value="plan" className="gap-1.5 text-xs">
+            <ClipboardList className="h-3.5 w-3.5" />
+            Plans
+          </TabsTrigger>
           <TabsTrigger value="preview" className="gap-1.5 text-xs">
             <Monitor className="h-3.5 w-3.5" />
             Preview
@@ -83,10 +87,6 @@ export function PreviewPanel({ appId, planContent, chatMode: _chatMode, onEditWi
                 {reviewAgents.runningCount}
               </span>
             )}
-          </TabsTrigger>
-          <TabsTrigger value="plan" className="gap-1.5 text-xs">
-            <ClipboardList className="h-3.5 w-3.5" />
-            Plans
           </TabsTrigger>
           <TabsTrigger value="git" className="gap-1.5 text-xs">
             <GitBranch className="h-3.5 w-3.5" />
@@ -109,7 +109,7 @@ export function PreviewPanel({ appId, planContent, chatMode: _chatMode, onEditWi
               <PreviewTab appId={appId} app={app} devServer={devServer} onEditWithAI={onEditWithAI} onComponentsSelected={onComponentsSelected} refreshSignal={(refreshSignal || 0) + configRefresh} appConfig={app?.config} onConfigChanged={handleConfigChanged} onOpenFile={(path) => { fileTree.selectFile(path); setActiveTab("code"); }} />
             </TabsContent>
             <TabsContent value="code" className="flex-1 m-0 overflow-hidden">
-              <CodeTab fileTree={fileTree} />
+              <CodeTab appId={appId} fileTree={fileTree} onFixPrompt={onFixPrompt} />
             </TabsContent>
             <TabsContent value="problems" className="flex-1 m-0 overflow-hidden">
               <ProblemsTab

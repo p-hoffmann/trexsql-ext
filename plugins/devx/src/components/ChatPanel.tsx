@@ -1,4 +1,6 @@
 import { useEffect } from "react";
+import { MessageSquarePlus } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { MessagesList } from "./chat/MessagesList";
 import { ChatInput } from "./chat/ChatInput";
 import { PlanQuestionnaire } from "./chat/PlanQuestionnaire";
@@ -19,9 +21,10 @@ interface ChatPanelProps {
   onAppCommand?: (command: string) => void;
   onBuildAction?: (action: import("@/lib/types").BuildAction) => void;
   sendRef?: React.MutableRefObject<((msg: string) => void) | null>;
+  onNewChat?: () => void;
 }
 
-export function ChatPanel({ chatId, mode, onModeChange, onPlanContentChange, visualEditContext, onClearVisualEditContext, selectedComponents, onRemoveSelectedComponent, onClearSelectedComponents, onAppCommand, onBuildAction, sendRef }: ChatPanelProps) {
+export function ChatPanel({ chatId, mode, onModeChange, onPlanContentChange, visualEditContext, onClearVisualEditContext, selectedComponents, onRemoveSelectedComponent, onClearSelectedComponents, onAppCommand, onBuildAction, sendRef, onNewChat }: ChatPanelProps) {
   const {
     messages,
     streaming,
@@ -53,6 +56,21 @@ export function ChatPanel({ chatId, mode, onModeChange, onPlanContentChange, vis
     if (sendRef) sendRef.current = send;
     return () => { if (sendRef) sendRef.current = null; };
   }, [send, sendRef]);
+
+  if (!chatId) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-4 text-muted-foreground">
+        <MessageSquarePlus className="h-10 w-10 opacity-30" />
+        <p className="text-sm">No chat selected</p>
+        {onNewChat && (
+          <Button onClick={onNewChat} variant="outline" size="sm" className="gap-2">
+            <MessageSquarePlus className="h-4 w-4" />
+            Start a new chat
+          </Button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col">
