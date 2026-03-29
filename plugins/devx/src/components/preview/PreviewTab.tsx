@@ -58,6 +58,7 @@ export function PreviewTab({ appId, app, devServer, onEditWithAI, onComponentsSe
   const isPanningRef = useRef(false);
   const panStartRef = useRef({ x: 0, y: 0 });
   const spaceHeldRef = useRef(false);
+  const [panMode, setPanMode] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     position: { x: number; y: number };
     devxId: string;
@@ -180,12 +181,9 @@ export function PreviewTab({ appId, app, devServer, onEditWithAI, onComponentsSe
 
   // Listen for context menu events from iframe
   useEffect(() => {
-    const iframe = iframeRef.current;
-    if (!iframe?.contentWindow) return;
-    const contentWindow = iframe.contentWindow;
-
     function handleContextMenu(e: MessageEvent) {
-      if (e.source !== contentWindow) return;
+      const contentWindow = iframeRef.current?.contentWindow;
+      if (!contentWindow || e.source !== contentWindow) return;
       if (e.data?.type !== "devx-context-menu") return;
       setContextMenu({
         position: e.data.position,
@@ -200,12 +198,10 @@ export function PreviewTab({ appId, app, devServer, onEditWithAI, onComponentsSe
 
   // Listen for drag-to-reorder events from iframe and apply them via RPC
   useEffect(() => {
-    const iframe = iframeRef.current;
-    if (!iframe?.contentWindow) return;
-    const contentWindow = iframe.contentWindow;
-
     function handleDragMove(e: MessageEvent) {
-      if (e.source !== contentWindow) return;
+      const iframe = iframeRef.current;
+      const contentWindow = iframe?.contentWindow;
+      if (!contentWindow || e.source !== contentWindow) return;
       if (e.data?.type !== "devx-element-moved") return;
 
       const { devxId, parentDevxId, fromIndex, toIndex } = e.data;
@@ -216,7 +212,6 @@ export function PreviewTab({ appId, app, devServer, onEditWithAI, onComponentsSe
       rpc.moveElement(devxId, parentDevxId, toIndex).catch(() => {}).finally(() => rpc.destroy());
 
       // Build a PendingChange for save
-      // Parse parent's devxId for file/line info
       const parts = parentDevxId.split(":");
       const col = parseInt(parts.pop() || "1", 10);
       const line = parseInt(parts.pop() || "0", 10);
@@ -240,12 +235,9 @@ export function PreviewTab({ appId, app, devServer, onEditWithAI, onComponentsSe
 
   // Listen for resize events from iframe
   useEffect(() => {
-    const iframe = iframeRef.current;
-    if (!iframe?.contentWindow) return;
-    const contentWindow = iframe.contentWindow;
-
     function handleResize(e: MessageEvent) {
-      if (e.source !== contentWindow) return;
+      const contentWindow = iframeRef.current?.contentWindow;
+      if (!contentWindow || e.source !== contentWindow) return;
       if (e.data?.type !== "devx-element-resized") return;
 
       const { devxId, width, height } = e.data;
@@ -517,10 +509,14 @@ export function PreviewTab({ appId, app, devServer, onEditWithAI, onComponentsSe
     function onKeyDown(e: KeyboardEvent) {
       if (e.code === "Space" && !(e.target as HTMLElement)?.closest("input,textarea,select,[contenteditable]")) {
         spaceHeldRef.current = true;
+        setPanMode(true);
       }
     }
     function onKeyUp(e: KeyboardEvent) {
-      if (e.code === "Space") spaceHeldRef.current = false;
+      if (e.code === "Space") {
+        spaceHeldRef.current = false;
+        setPanMode(false);
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
@@ -769,6 +765,17 @@ export function PreviewTab({ appId, app, devServer, onEditWithAI, onComponentsSe
                   title="App Preview"
                 />
                 </div>
+                {/* Pan overlay — captures mouse events when Space is held */}
+                {panMode && (
+                  <div
+                    className="absolute inset-0 z-10"
+                    style={{ cursor: isPanningRef.current ? "grabbing" : "grab" }}
+                    onMouseDown={handleCanvasMouseDown}
+                    onMouseMove={handleCanvasMouseMove}
+                    onMouseUp={handleCanvasMouseUp}
+                    onMouseLeave={handleCanvasMouseUp}
+                  />
+                )}
                 {!previewMode && multiSelectEnabled && (
                   <div className="absolute top-2 right-2 z-20 flex items-center gap-2">
                     <div className="bg-background/90 border rounded-lg px-3 py-1.5 text-xs flex items-center gap-2 shadow-lg">

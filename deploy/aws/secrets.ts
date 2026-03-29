@@ -20,6 +20,7 @@ export function createSecrets(env: string): SecretsResult {
 
   const dbPassword = new aws.secretsmanager.Secret(`trex-${env}-db-password`, {
     name: `trex-${env}/db-password`,
+    recoveryWindowInDays: 0,
   });
 
   const dbPasswordValue = new aws.secretsmanager.SecretVersion(`trex-${env}-db-password-val`, {
@@ -29,6 +30,7 @@ export function createSecrets(env: string): SecretsResult {
 
   const authSecret = new aws.secretsmanager.Secret(`trex-${env}-auth-secret`, {
     name: `trex-${env}/auth-secret`,
+    recoveryWindowInDays: 0,
   });
 
   const authSecretValue = new aws.secretsmanager.SecretVersion(`trex-${env}-auth-secret-val`, {

@@ -13,9 +13,12 @@ if (!authSecret) {
   throw new Error("BETTER_AUTH_SECRET environment variable is required");
 }
 
+const needsSsl = databaseUrl.includes("sslmode=require") || databaseUrl.includes("sslmode=prefer");
+
 export const pool = new Pool({
   connectionString: databaseUrl,
   options: "-c search_path=trex,public",
+  ...(needsSsl && { ssl: { rejectUnauthorized: false } }),
 });
 
 function getBaseConfig() {

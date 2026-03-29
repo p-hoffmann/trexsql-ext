@@ -474,9 +474,22 @@ export async function streamAgentChat({
   } catch (err) {
     console.error("Agent stream error:", err);
     const msg = err.message || String(err);
-    const safeMsg = msg.includes("API error")
-      ? msg.replace(/:.+$/, "")
-      : "An error occurred during agent execution";
+    // Surface auth/key errors so users know to fix their settings
+    const lower = msg.toLowerCase();
+    let safeMsg: string;
+    if (lower.includes("authentication") || lower.includes("unauthorized") || lower.includes("invalid api key") || lower.includes("401") || lower.includes("invalid x-api-key")) {
+      safeMsg = "Invalid API key. Please check your API key in Settings.";
+    } else if (lower.includes("permission") || lower.includes("403")) {
+      safeMsg = "API key does not have permission for this model. Check your provider settings.";
+    } else if (lower.includes("not_found") || lower.includes("404") || (lower.includes("model") && lower.includes("not found"))) {
+      safeMsg = `Model "${settings.model}" not found. Check the model name in Settings.`;
+    } else if (lower.includes("rate limit") || lower.includes("429")) {
+      safeMsg = "Rate limit exceeded. Please wait a moment and try again.";
+    } else if (lower.includes("insufficient") || lower.includes("quota") || lower.includes("billing")) {
+      safeMsg = "API quota exceeded or billing issue. Check your provider account.";
+    } else {
+      safeMsg = "An error occurred during agent execution. Check the browser console for details.";
+    }
     throw new Error(safeMsg);
   }
 

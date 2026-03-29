@@ -48,7 +48,7 @@ export function createNetworking(
       {
         protocol: "tcp",
         fromPort: TREX_PORT,
-        toPort: TREX_PORT,
+        toPort: 8001,
         securityGroups: [albSecurityGroup.id],
       },
     ],
