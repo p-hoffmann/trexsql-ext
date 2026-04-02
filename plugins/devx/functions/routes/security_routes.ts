@@ -117,18 +117,41 @@ export async function handleSecurityRoutes(path, method, req, userId, sql, corsH
     allowedTools: string[];
     maxSteps?: number;
   }) {
-    const settingsResult = await sql(
-      `SELECT provider, model, api_key, base_url, ai_rules, auto_approve, max_steps FROM devx.settings WHERE user_id = $1 LIMIT 1`,
+    // Read active provider config, fall back to legacy settings
+    const activePC = await sql(
+      `SELECT provider, model, api_key, base_url FROM devx.provider_configs WHERE user_id = $1 AND is_active = true LIMIT 1`,
       [userId],
     );
-    if (settingsResult.rows.length === 0 || !settingsResult.rows[0].api_key) {
-      return Response.json(
-        { error: "AI provider not configured. Set your API key in Settings." },
-        { status: 400, headers: corsHeaders },
-      );
-    }
+    const prefsResult = await sql(
+      `SELECT ai_rules, auto_approve, max_steps FROM devx.settings WHERE user_id = $1 LIMIT 1`,
+      [userId],
+    );
+    const providerRow = activePC.rows[0];
+    const prefs = prefsResult.rows[0] || {};
 
-    const settings = settingsResult.rows[0];
+    if (!providerRow) {
+      // Legacy fallback
+      const legacyResult = await sql(
+        `SELECT provider, model, api_key, base_url, ai_rules, auto_approve, max_steps FROM devx.settings WHERE user_id = $1 LIMIT 1`,
+        [userId],
+      );
+      if (legacyResult.rows.length === 0 || !legacyResult.rows[0].api_key) {
+        return Response.json(
+          { error: "AI provider not configured. Set your API key in Settings." },
+          { status: 400, headers: corsHeaders },
+        );
+      }
+      var settings = legacyResult.rows[0];
+    } else {
+      const noKeyProviders = new Set(["claude-code", "copilot", "bedrock"]);
+      if (!providerRow.api_key && !noKeyProviders.has(providerRow.provider)) {
+        return Response.json(
+          { error: "AI provider not configured. Set your API key in Settings." },
+          { status: 400, headers: corsHeaders },
+        );
+      }
+      var settings = { ...providerRow, ...prefs };
+    }
 
     // Fetch previous review for context
     let previousContext = "";

@@ -5,8 +5,9 @@ interface SearchToolCardProps {
 }
 
 export function SearchToolCard({ toolCall }: SearchToolCardProps) {
-  const pattern = (toolCall.args.pattern ?? toolCall.args.query ?? toolCall.args.regex) as string | undefined;
-  const directory = (toolCall.args.path ?? toolCall.args.directory) as string | undefined;
+  const args = toolCall.args || {};
+  const pattern = (args.pattern ?? args.query ?? args.regex) as string | undefined;
+  const directory = (args.path ?? args.directory) as string | undefined;
 
   return (
     <div className="space-y-2 text-xs">

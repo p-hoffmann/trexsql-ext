@@ -11,6 +11,7 @@ import {
   X,
   Trash2,
   Plus,
+  ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +20,9 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { useSettings } from "@/hooks/useSettings";
 import { useGitHub } from "@/hooks/useGitHub";
+import { useClaudeCode } from "@/hooks/useClaudeCode";
+import { useCopilot } from "@/hooks/useCopilot";
+import { useProviderConfigs } from "@/hooks/useProviderConfigs";
 import { useMcpServers } from "@/hooks/useMcpServers";
 import { useTheme } from "@/hooks/useTheme";
 import {
@@ -44,11 +48,15 @@ export default function SettingsPage() {
   const navigate = useNavigate();
   const { settings, save } = useSettings();
   const github = useGitHub();
+  const claudeCode = useClaudeCode();
+  const copilot = useCopilot();
+  const providerConfigs = useProviderConfigs();
   const mcp = useMcpServers();
   const { theme, setTheme } = useTheme();
 
   const [activeSection, setActiveSection] = useState<Section>("general");
   const [saving, setSaving] = useState(false);
+  const [claudeLoginCode, setClaudeLoginCode] = useState("");
 
   // AI fields
   const [provider, setProvider] = useState<Provider>("anthropic");
@@ -72,6 +80,17 @@ export default function SettingsPage() {
   // General fields
   const [defaultChatMode, setDefaultChatMode] = useState<ChatMode>("agent");
   const [language, setLang] = useState(getLanguage());
+
+  // Add provider form
+  const [showAddProvider, setShowAddProvider] = useState(false);
+  const [newProvider, setNewProvider] = useState<Provider>("anthropic");
+  const [newModel, setNewModel] = useState("");
+  const [newApiKey, setNewApiKey] = useState("");
+  const [newBaseUrl, setNewBaseUrl] = useState("");
+  const [addingProvider, setAddingProvider] = useState(false);
+  // Edit provider
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editApiKey, setEditApiKey] = useState("");
 
   // MCP fields
   const [mcpName, setMcpName] = useState("");
@@ -117,13 +136,19 @@ export default function SettingsPage() {
     }
   }, [settings]);
 
-  const providerConfig = PROVIDERS.find((p) => p.id === provider);
+  // Refresh SDK auth status when provider changes to a subscription provider
+  useEffect(() => {
+    if (provider === "claude-code") claudeCode.refreshStatus();
+    if (provider === "copilot") copilot.refreshStatus();
+  }, [provider]);
 
   const handleSave = async () => {
     setSaving(true);
     try {
       // Pack Bedrock credentials into api_key/base_url columns
-      const effectiveApiKey = provider === "bedrock"
+      const effectiveApiKey = provider === "claude-code" || provider === "copilot"
+        ? ""
+        : provider === "bedrock"
         ? JSON.stringify(
             awsAuthMode === "bearer"
               ? { bearerToken: awsBearerToken }
@@ -269,162 +294,268 @@ export default function SettingsPage() {
           {activeSection === "ai" && (
             <div className="space-y-6">
               <div>
-                <h2 className="text-lg font-semibold mb-1">AI Provider</h2>
+                <h2 className="text-lg font-semibold mb-1">AI Providers</h2>
                 <p className="text-sm text-muted-foreground">
-                  Configure your AI provider, model, and API key.
+                  Configure multiple AI providers. Click to activate.
                 </p>
               </div>
               <Separator />
 
-              {/* Provider */}
+              {/* Configured providers list */}
               <div className="space-y-2">
-                <Label>Provider</Label>
-                <select
-                  value={provider}
-                  onChange={(e) => {
-                    const p = e.target.value as Provider;
-                    setProvider(p);
-                    const pc = PROVIDERS.find((x) => x.id === p);
-                    if (pc && pc.models.length > 0) {
-                      setModel(pc.models[0]);
-                    } else {
-                      setModel("");
-                    }
-                  }}
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                >
-                  {PROVIDERS.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                {providerConfigs.configs.map((cfg) => {
+                  const pc = PROVIDERS.find((p) => p.id === cfg.provider);
+                  const isEditing = editingId === cfg.id;
+                  return (
+                    <div
+                      key={cfg.id}
+                      className={cn(
+                        "border rounded-lg p-3 transition-colors cursor-pointer",
+                        cfg.is_active
+                          ? "border-primary bg-primary/5"
+                          : "hover:border-muted-foreground/30",
+                      )}
+                      onClick={() => {
+                        if (!cfg.is_active) providerConfigs.activate(cfg.id);
+                      }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className={`h-2.5 w-2.5 rounded-full ${cfg.is_active ? "bg-green-500" : "bg-gray-300"}`} />
+                          <span className="text-sm font-medium">{pc?.name || cfg.provider}</span>
+                          {pc && pc.models.length > 0 ? (
+                            <select
+                              value={cfg.model}
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                providerConfigs.update(cfg.id, { model: e.target.value });
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                              className="h-6 rounded border text-xs px-1 bg-transparent"
+                            >
+                              {pc.models.map((m) => (
+                                <option key={m} value={m}>{m}</option>
+                              ))}
+                              {!pc.models.includes(cfg.model) && (
+                                <option value={cfg.model}>{cfg.model}</option>
+                              )}
+                            </select>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">{cfg.model}</span>
+                          )}
+                          {cfg.is_active && (
+                            <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded">Active</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          {pc?.requiresApiKey && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => {
+                                setEditingId(isEditing ? null : cfg.id);
+                                setEditApiKey("");
+                              }}
+                            >
+                              <Settings className="h-3 w-3" />
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 hover:text-destructive"
+                            onClick={() => providerConfigs.remove(cfg.id)}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </div>
+                      {cfg.api_key && (
+                        <p className="text-xs text-muted-foreground mt-1 ml-5">{cfg.api_key}</p>
+                      )}
+                      {/* Inline edit for API key */}
+                      {isEditing && (
+                        <div className="flex items-center gap-2 mt-2 ml-5" onClick={(e) => e.stopPropagation()}>
+                          <Input
+                            type="password"
+                            value={editApiKey}
+                            onChange={(e) => setEditApiKey(e.target.value)}
+                            placeholder="New API key"
+                            className="h-7 text-xs flex-1"
+                          />
+                          <Button
+                            size="sm"
+                            className="h-7 text-xs"
+                            disabled={!editApiKey.trim()}
+                            onClick={async () => {
+                              await providerConfigs.update(cfg.id, { api_key: editApiKey });
+                              setEditingId(null);
+                              setEditApiKey("");
+                            }}
+                          >
+                            Save
+                          </Button>
+                        </div>
+                      )}
+                      {/* Claude Code auth status */}
+                      {cfg.provider === "claude-code" && (
+                        <div className="mt-2 ml-5" onClick={(e) => e.stopPropagation()}>
+                          {claudeCode.status.authenticated ? (
+                            <span className="text-xs text-muted-foreground flex items-center gap-1">
+                              <Check className="h-3 w-3 text-green-500" />
+                              Authenticated{claudeCode.status.account ? ` as ${claudeCode.status.account}` : ""}
+                            </span>
+                          ) : claudeCode.loginUrl ? (
+                            <div className="space-y-2">
+                              <p className="text-xs text-muted-foreground">1. Open this link and sign in:</p>
+                              <a href={claudeCode.loginUrl} target="_blank" rel="noopener noreferrer"
+                                className="text-xs text-primary underline flex items-center gap-1">
+                                Sign in with Claude <ExternalLink className="h-3 w-3" />
+                              </a>
+                              {claudeCode.needsCode && (
+                                <>
+                                  <p className="text-xs text-muted-foreground mt-2">2. Paste the code shown after sign-in:</p>
+                                  <div className="flex items-center gap-2">
+                                    <Input value={claudeLoginCode} onChange={(e) => setClaudeLoginCode(e.target.value)}
+                                      placeholder="Paste authorization code" className="h-7 text-xs flex-1" />
+                                    <Button size="sm" className="h-7 text-xs"
+                                      disabled={!claudeLoginCode.trim() || claudeCode.submitting}
+                                      onClick={async () => {
+                                        await claudeCode.submitCode(claudeLoginCode.trim());
+                                        setClaudeLoginCode("");
+                                      }}>
+                                      {claudeCode.submitting ? "Verifying..." : "Submit"}
+                                    </Button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          ) : (
+                            <Button variant="outline" size="sm" className="h-7 text-xs"
+                              disabled={claudeCode.loading} onClick={claudeCode.startLogin}>
+                              {claudeCode.loading ? "Starting..." : "Sign in with Claude"}
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                      {/* Copilot auth status */}
+                      {cfg.provider === "copilot" && (
+                        <div className="mt-2 ml-5" onClick={(e) => e.stopPropagation()}>
+                          {copilot.status.authenticated ? (
+                            <span className="text-xs text-muted-foreground flex items-center gap-1">
+                              <Check className="h-3 w-3 text-green-500" />
+                              Authenticated{copilot.status.account ? ` as ${copilot.status.account}` : ""}
+                            </span>
+                          ) : copilot.loginUrl ? (
+                            <div className="space-y-2">
+                              <a href={copilot.loginUrl} target="_blank" rel="noopener noreferrer"
+                                className="text-xs text-primary underline flex items-center gap-1">
+                                Open GitHub <ExternalLink className="h-3 w-3" />
+                              </a>
+                              {copilot.userCode && (
+                                <code className="px-2 py-1 bg-muted rounded font-mono text-sm tracking-wider">
+                                  {copilot.userCode}
+                                </code>
+                              )}
+                              {copilot.polling && <p className="text-xs text-muted-foreground">Waiting...</p>}
+                            </div>
+                          ) : (
+                            <Button variant="outline" size="sm" className="h-7 text-xs gap-1"
+                              disabled={copilot.loading} onClick={copilot.startLogin}>
+                              <Github className="h-3 w-3" />
+                              {copilot.loading ? "Starting..." : "Sign in with GitHub"}
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
 
-              {/* Model */}
-              <div className="space-y-2">
-                <Label>Model</Label>
-                {providerConfig && providerConfig.models.length > 0 ? (
-                  <select
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    {providerConfig.models.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <Input
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    placeholder="Model name"
-                  />
+                {providerConfigs.configs.length === 0 && !providerConfigs.loading && (
+                  <p className="text-sm text-muted-foreground py-4 text-center">
+                    No providers configured yet. Add one below.
+                  </p>
                 )}
               </div>
 
-              {/* API Key */}
-              {providerConfig?.requiresApiKey && (
-                <div className="space-y-2">
-                  <Label>API Key</Label>
-                  <Input
-                    type="password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="sk-..."
-                  />
-                </div>
-              )}
-
-              {/* Base URL */}
-              {providerConfig?.requiresBaseUrl && (
-                <div className="space-y-2">
-                  <Label>Base URL</Label>
-                  <Input
-                    value={baseUrl}
-                    onChange={(e) => setBaseUrl(e.target.value)}
-                    placeholder="https://api.example.com/v1"
-                  />
-                </div>
-              )}
-
-              {/* AWS Bedrock credentials */}
-              {provider === "bedrock" && (
-                <>
-                  <div className="space-y-2">
-                    <Label>Authentication</Label>
-                    <select
-                      value={awsAuthMode}
-                      onChange={(e) => setAwsAuthMode(e.target.value as "bearer" | "iam")}
-                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                    >
-                      <option value="bearer">Bearer Token</option>
-                      <option value="iam">IAM Access Keys</option>
-                    </select>
+              {/* Add provider form */}
+              {showAddProvider ? (
+                <div className="border rounded-lg p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">Add Provider</Label>
+                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowAddProvider(false)}>
+                      <X className="h-3 w-3" />
+                    </Button>
                   </div>
-
-                  {awsAuthMode === "bearer" ? (
-                    <div className="space-y-2">
-                      <Label>Bearer Token</Label>
-                      <Input
-                        type="password"
-                        value={awsBearerToken}
-                        onChange={(e) => setAwsBearerToken(e.target.value)}
-                        placeholder="AWS bearer token"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Or set the AWS_BEARER_TOKEN_BEDROCK environment variable
-                      </p>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="space-y-2">
-                        <Label>AWS Access Key ID</Label>
-                        <Input
-                          type="password"
-                          value={awsAccessKeyId}
-                          onChange={(e) => setAwsAccessKeyId(e.target.value)}
-                          placeholder="AKIA..."
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>AWS Secret Access Key</Label>
-                        <Input
-                          type="password"
-                          value={awsSecretAccessKey}
-                          onChange={(e) => setAwsSecretAccessKey(e.target.value)}
-                          placeholder="wJal..."
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  <div className="space-y-2">
-                    <Label>AWS Region</Label>
-                    <select
-                      value={awsRegion}
-                      onChange={(e) => setAwsRegion(e.target.value)}
-                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                    >
-                      <option value="us-east-1">US East (N. Virginia) — us-east-1</option>
-                      <option value="us-east-2">US East (Ohio) — us-east-2</option>
-                      <option value="us-west-2">US West (Oregon) — us-west-2</option>
-                      <option value="eu-west-1">Europe (Ireland) — eu-west-1</option>
-                      <option value="eu-west-2">Europe (London) — eu-west-2</option>
-                      <option value="eu-west-3">Europe (Paris) — eu-west-3</option>
-                      <option value="eu-central-1">Europe (Frankfurt) — eu-central-1</option>
-                      <option value="ap-southeast-1">Asia Pacific (Singapore) — ap-southeast-1</option>
-                      <option value="ap-southeast-2">Asia Pacific (Sydney) — ap-southeast-2</option>
-                      <option value="ap-northeast-1">Asia Pacific (Tokyo) — ap-northeast-1</option>
-                      <option value="ap-south-1">Asia Pacific (Mumbai) — ap-south-1</option>
-                      <option value="ca-central-1">Canada (Central) — ca-central-1</option>
-                      <option value="sa-east-1">South America (São Paulo) — sa-east-1</option>
-                    </select>
-                  </div>
-                </>
+                  <select
+                    value={newProvider}
+                    onChange={(e) => {
+                      const p = e.target.value as Provider;
+                      setNewProvider(p);
+                      const pc = PROVIDERS.find((x) => x.id === p);
+                      setNewModel(pc?.models[0] || "");
+                    }}
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                  >
+                    {PROVIDERS.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                  {(() => {
+                    const pc = PROVIDERS.find((p) => p.id === newProvider);
+                    return (
+                      <>
+                        {pc && pc.models.length > 0 ? (
+                          <select value={newModel} onChange={(e) => setNewModel(e.target.value)}
+                            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm">
+                            {pc.models.map((m) => <option key={m} value={m}>{m}</option>)}
+                          </select>
+                        ) : (
+                          <Input value={newModel} onChange={(e) => setNewModel(e.target.value)} placeholder="Model name" />
+                        )}
+                        {pc?.requiresApiKey && (
+                          <Input type="password" value={newApiKey} onChange={(e) => setNewApiKey(e.target.value)} placeholder="API key" />
+                        )}
+                        {pc?.requiresBaseUrl && (
+                          <Input value={newBaseUrl} onChange={(e) => setNewBaseUrl(e.target.value)} placeholder="Base URL" />
+                        )}
+                      </>
+                    );
+                  })()}
+                  <Button
+                    size="sm"
+                    className="w-full"
+                    disabled={!newModel || addingProvider}
+                    onClick={async () => {
+                      setAddingProvider(true);
+                      try {
+                        await providerConfigs.create({
+                          provider: newProvider,
+                          model: newModel,
+                          api_key: newApiKey || undefined,
+                          base_url: newBaseUrl || undefined,
+                        });
+                        setShowAddProvider(false);
+                        setNewApiKey("");
+                        setNewBaseUrl("");
+                      } finally {
+                        setAddingProvider(false);
+                      }
+                    }}
+                  >
+                    {addingProvider ? "Adding..." : "Add Provider"}
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="outline" size="sm" className="gap-1 w-full" onClick={() => setShowAddProvider(true)}>
+                  <Plus className="h-3 w-3" />
+                  Add Provider
+                </Button>
               )}
+
+              <Separator />
 
               {/* Custom AI Rules */}
               <div className="space-y-2">
@@ -437,8 +568,7 @@ export default function SettingsPage() {
                   className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-y"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Leave empty to use defaults (React + TypeScript + Tailwind +
-                  shadcn/ui)
+                  Leave empty to use defaults (React + TypeScript + Tailwind + shadcn/ui)
                 </p>
               </div>
             </div>

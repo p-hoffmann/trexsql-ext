@@ -43,21 +43,21 @@ COPY src/ /usr/src/trexsql/src/
 RUN cargo build --release
 
 # Stage 2: Build devx frontend
-FROM node:20-trixie-slim AS devx-builder
+FROM node:22-trixie-slim AS devx-builder
 WORKDIR /build
 COPY plugins/devx/package.json plugins/devx/package-lock.json plugins/devx/tsconfig*.json plugins/devx/vite.config.ts plugins/devx/vite.config.spa.ts plugins/devx/index.html ./
 COPY plugins/devx/src/ ./src/
 RUN npm install && npm run build
 
 # Stage 3: Build web frontend
-FROM node:20-trixie-slim AS web-builder
+FROM node:22-trixie-slim AS web-builder
 WORKDIR /build
 COPY plugins/web/package.json plugins/web/package-lock.json plugins/web/tsconfig*.json plugins/web/vite.config.ts plugins/web/index.html plugins/web/components.json ./
 COPY plugins/web/src/ ./src/
 RUN npm install && npm run build
 
 # Stage 4: Build notebook frontend
-FROM node:20-trixie-slim AS notebook-builder
+FROM node:22-trixie-slim AS notebook-builder
 WORKDIR /build
 COPY plugins/notebook/package.json plugins/notebook/package-lock.json plugins/notebook/tsconfig*.json plugins/notebook/vite.config.ts plugins/notebook/vite.config.parcel.ts plugins/notebook/index.html ./
 COPY plugins/notebook/src/ ./src/
@@ -65,7 +65,7 @@ COPY plugins/notebook/public/ ./public/
 RUN npm install && npm run build
 
 # Stage 5: Build docs site
-FROM node:20-trixie-slim AS docs-builder
+FROM node:22-trixie-slim AS docs-builder
 WORKDIR /build
 COPY plugins/docs/package.json plugins/docs/package-lock.json plugins/docs/tsconfig.json plugins/docs/docusaurus.config.ts plugins/docs/sidebars.ts ./
 COPY plugins/docs/docs/ ./docs/
@@ -74,7 +74,7 @@ COPY plugins/docs/static/ ./static/
 RUN npm install && npm run build
 
 # Stage 6: Runtime
-FROM node:20-trixie-slim
+FROM node:22-trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libssl3 libgomp1 ca-certificates libvulkan1 curl git && \
@@ -151,6 +151,14 @@ RUN npm install -g playwright@latest && \
     npx playwright install --with-deps chromium && \
     rm -rf /tmp/* /root/.cache/ms-playwright-*
 
+# Install Claude Code CLI for subscription-based AI usage
+RUN npm install -g @anthropic-ai/claude-code
+
+# Install GitHub CLI with Copilot extension for subscription-based AI usage
+ARG GH_VERSION=2.65.0
+RUN curl -fsSL https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${TARGETARCH}.deb -o /tmp/gh.deb && \
+    dpkg -i /tmp/gh.deb && rm /tmp/gh.deb
+
 # Copy functions
 COPY functions/ ./functions/
 
@@ -159,6 +167,9 @@ RUN mkdir -p ./plugins/runtime && echo '{"nodeModulesDir":"auto"}' > ./plugins/r
 
 # Copy dev plugins (use pre-built dist from builder stages)
 COPY plugins/devx/ ./plugins-dev/devx/
+# Install SDK deps in isolated edge function directories
+RUN cd ./plugins-dev/devx/fn-copilot && npm install --omit=dev 2>/dev/null || true
+RUN cd ./plugins-dev/devx/fn-claude-code && npm install --omit=dev 2>/dev/null || true
 COPY --from=devx-builder /build/dist/ ./plugins-dev/devx/dist/
 COPY plugins/web/ ./plugins-dev/web/
 COPY --from=web-builder /build/dist/ ./plugins-dev/web/dist/
@@ -180,6 +191,10 @@ ENV DUCKDB_EXTENSION_DIRECTORY=/usr/share/trexsql/extensions
 
 # Ensure workspace directory exists and is writable by node user
 RUN mkdir -p /tmp/devx-workspaces && chown node:node /tmp/devx-workspaces
+
+# Ensure config directories exist for OAuth token persistence
+RUN mkdir -p /home/node/.claude /home/node/.config/gh && \
+    chown -R node:node /home/node/.claude /home/node/.config/gh
 
 EXPOSE 8001 8000
 USER node

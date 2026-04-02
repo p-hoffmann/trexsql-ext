@@ -310,6 +310,7 @@ define_vtab_2param!(DevxProcessStartVTab, ProcessStartBind, ProcessStartInit, pr
 define_vtab_2param!(DevxProcessStopVTab, ProcessStopBind, ProcessStopInit, process_manager::process_stop);
 define_vtab_2param!(DevxProcessStatusVTab, ProcessStatusBind, ProcessStatusInit, process_manager::process_status);
 define_vtab_2param!(DevxProcessOutputVTab, ProcessOutputBind, ProcessOutputInit, process_manager::process_output);
+define_vtab_2param!(DevxProcessInputVTab, ProcessInputBind, ProcessInputInit, process_manager::process_input);
 
 // ---------------------------------------------------------------------------
 // Extension entrypoint
@@ -336,5 +337,6 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_table_function::<DevxProcessStopVTab>("trex_devx_process_stop")?;
     con.register_table_function::<DevxProcessStatusVTab>("trex_devx_process_status")?;
     con.register_table_function::<DevxProcessOutputVTab>("trex_devx_process_output")?;
+    con.register_table_function::<DevxProcessInputVTab>("trex_devx_process_input")?;
     Ok(())
 }

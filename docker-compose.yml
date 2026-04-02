@@ -1,6 +1,8 @@
 volumes:
   core-pgdata:
   devx-workspaces:
+  claude-config:
+  gh-config:
 
 services:
   postgres:
@@ -37,6 +39,8 @@ services:
     #   - ./plugins/web/dist:/usr/src/plugins/@trex/web/dist
     volumes:
       - devx-workspaces:/tmp/devx-workspaces
+      - claude-config:/home/node/.claude
+      - gh-config:/home/node/.config/gh
     depends_on:
       postgres:
         condition: service_healthy
