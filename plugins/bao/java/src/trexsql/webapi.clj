@@ -12,7 +12,8 @@
             [clojure.tools.logging :as log]
             [reitit.ring :as ring])
   (:import [java.util HashMap ArrayList Map]
-           [java.io File]))
+           [java.io File]
+           [java.sql DriverManager Connection PreparedStatement ResultSet]))
 
 (defonce ^:private source-repository (atom nil))
 (defonce ^:private global-config (atom {:cache-path "./data/cache"}))
@@ -626,6 +627,194 @@
               (log/error e "Failed to count patients")
               (internal-error (.getMessage e)))))))))
 
+(defn- pg-query
+  "Execute a SQL query against PostgreSQL and return results as a vector of maps.
+   Each map has string keys matching column names."
+  [^Connection conn ^String sql]
+  (with-open [stmt (.createStatement conn)
+              rs (.executeQuery stmt sql)]
+    (let [meta (.getMetaData rs)
+          col-count (.getColumnCount meta)
+          col-names (mapv #(.getColumnLabel meta (inc %)) (range col-count))]
+      (loop [rows []]
+        (if (.next rs)
+          (recur (conj rows
+                   (into {}
+                     (map (fn [i]
+                            [(get col-names i) (.getObject rs (inc i))])
+                       (range col-count)))))
+          rows)))))
+
+(defn- compute-pct
+  "Compute percentage rounded to 1 decimal place."
+  [n total]
+  (if (zero? total)
+    0.0
+    (/ (Math/round (* 1000.0 (/ (double n) (double total)))) 10.0)))
+
+(defn- table1-handler
+  "Compute Table 1 (baseline characteristics) for a generated cohort.
+   Queries PostgreSQL directly since the cohort table is written there by WebAPI."
+  [{:keys [path-params body-params]}]
+  (let [source-key (:source-key path-params)
+        source (find-source-by-key source-key)]
+    (if-not source
+      (not-found (str "Source not found: " source-key))
+      (let [{:keys [cohortDefinitionId conceptIds topN]} body-params
+            top-n (or topN 10)
+            cdm-schema (get-cdm-schema source)
+            results-schema (get-results-schema source)
+            credentials (source->credentials source)]
+        (cond
+          (nil? cohortDefinitionId)
+          (bad-request "cohortDefinitionId is required")
+
+          (not (integer? cohortDefinitionId))
+          (bad-request "cohortDefinitionId must be an integer")
+
+          (str/blank? cdm-schema)
+          (bad-request "CDM schema not configured for this source")
+
+          (str/blank? results-schema)
+          (bad-request "Results schema not configured for this source")
+
+          (not (or (= "postgres" (:dialect credentials))
+                   (= "postgresql" (:dialect credentials))))
+          (bad-request "Table 1 is only supported for PostgreSQL sources")
+
+          :else
+          (try
+            (let [jdbc-url (:connection-string credentials)
+                  user (:user credentials)
+                  password (:password credentials)
+                  start-time (System/currentTimeMillis)]
+              (with-open [conn (DriverManager/getConnection jdbc-url user password)]
+                (.setReadOnly conn true)
+                (.setAutoCommit conn false)
+                (let [cohort-id (int cohortDefinitionId)
+                      ;; Cohort size
+                      cohort-size-sql (format "SELECT COUNT(DISTINCT subject_id) as cnt FROM %s.cohort WHERE cohort_definition_id = %d"
+                                              results-schema cohort-id)
+                      cohort-size (or (some-> (pg-query conn cohort-size-sql) first (get "cnt") long) 0)
+
+                      ;; Total population size
+                      total-size-sql (format "SELECT COUNT(DISTINCT person_id) as cnt FROM %s.person" cdm-schema)
+                      total-size (or (some-> (pg-query conn total-size-sql) first (get "cnt") long) 0)
+
+                      ;; Gender distribution
+                      gender-sql (format
+                        "SELECT c.concept_name as characteristic, COUNT(DISTINCT p.person_id) as n
+                         FROM %s.cohort co
+                         JOIN %s.person p ON p.person_id = co.subject_id
+                         JOIN %s.concept c ON c.concept_id = p.gender_concept_id
+                         WHERE co.cohort_definition_id = %d
+                         GROUP BY c.concept_name
+                         ORDER BY n DESC"
+                        results-schema cdm-schema cdm-schema cohort-id)
+                      gender-rows (mapv (fn [r]
+                                          {:characteristic (get r "characteristic")
+                                           :n (long (get r "n"))
+                                           :pct (compute-pct (get r "n") cohort-size)})
+                                    (pg-query conn gender-sql))
+
+                      ;; Age groups
+                      age-sql (format
+                        "SELECT CASE
+                           WHEN EXTRACT(YEAR FROM co.cohort_start_date) - p.year_of_birth < 18 THEN '<18'
+                           WHEN EXTRACT(YEAR FROM co.cohort_start_date) - p.year_of_birth BETWEEN 18 AND 34 THEN '18-34'
+                           WHEN EXTRACT(YEAR FROM co.cohort_start_date) - p.year_of_birth BETWEEN 35 AND 49 THEN '35-49'
+                           WHEN EXTRACT(YEAR FROM co.cohort_start_date) - p.year_of_birth BETWEEN 50 AND 64 THEN '50-64'
+                           ELSE '65+'
+                         END as characteristic,
+                         COUNT(DISTINCT p.person_id) as n
+                         FROM %s.cohort co
+                         JOIN %s.person p ON p.person_id = co.subject_id
+                         WHERE co.cohort_definition_id = %d
+                         GROUP BY characteristic
+                         ORDER BY MIN(EXTRACT(YEAR FROM co.cohort_start_date) - p.year_of_birth)"
+                        results-schema cdm-schema cohort-id)
+                      age-rows (mapv (fn [r]
+                                       {:characteristic (get r "characteristic")
+                                        :n (long (get r "n"))
+                                        :pct (compute-pct (get r "n") cohort-size)})
+                                 (pg-query conn age-sql))
+
+                      ;; Top conditions
+                      conditions-sql (if (and conceptIds (seq conceptIds))
+                                       (format
+                                         "SELECT c.concept_name as characteristic, co2.condition_concept_id as concept_id,
+                                                 COUNT(DISTINCT co2.person_id) as n
+                                          FROM %s.cohort co
+                                          JOIN %s.condition_occurrence co2 ON co2.person_id = co.subject_id
+                                          JOIN %s.concept c ON c.concept_id = co2.condition_concept_id
+                                          WHERE co.cohort_definition_id = %d
+                                            AND co2.condition_concept_id IN (%s)
+                                          GROUP BY c.concept_name, co2.condition_concept_id
+                                          ORDER BY n DESC"
+                                         results-schema cdm-schema cdm-schema cohort-id
+                                         (str/join "," (map str conceptIds)))
+                                       (format
+                                         "SELECT c.concept_name as characteristic, co2.condition_concept_id as concept_id,
+                                                 COUNT(DISTINCT co2.person_id) as n
+                                          FROM %s.cohort co
+                                          JOIN %s.condition_occurrence co2 ON co2.person_id = co.subject_id
+                                          JOIN %s.concept c ON c.concept_id = co2.condition_concept_id
+                                          WHERE co.cohort_definition_id = %d
+                                          GROUP BY c.concept_name, co2.condition_concept_id
+                                          ORDER BY n DESC
+                                          LIMIT %d"
+                                         results-schema cdm-schema cdm-schema cohort-id top-n))
+                      condition-rows (mapv (fn [r]
+                                             {:characteristic (get r "characteristic")
+                                              :conceptId (long (get r "concept_id"))
+                                              :n (long (get r "n"))
+                                              :pct (compute-pct (get r "n") cohort-size)})
+                                       (pg-query conn conditions-sql))
+
+                      ;; Top drugs
+                      drugs-sql (if (and conceptIds (seq conceptIds))
+                                  (format
+                                    "SELECT c.concept_name as characteristic, de.drug_concept_id as concept_id,
+                                            COUNT(DISTINCT de.person_id) as n
+                                     FROM %s.cohort co
+                                     JOIN %s.drug_exposure de ON de.person_id = co.subject_id
+                                     JOIN %s.concept c ON c.concept_id = de.drug_concept_id
+                                     WHERE co.cohort_definition_id = %d
+                                       AND de.drug_concept_id IN (%s)
+                                     GROUP BY c.concept_name, de.drug_concept_id
+                                     ORDER BY n DESC"
+                                    results-schema cdm-schema cdm-schema cohort-id
+                                    (str/join "," (map str conceptIds)))
+                                  (format
+                                    "SELECT c.concept_name as characteristic, de.drug_concept_id as concept_id,
+                                            COUNT(DISTINCT de.person_id) as n
+                                     FROM %s.cohort co
+                                     JOIN %s.drug_exposure de ON de.person_id = co.subject_id
+                                     JOIN %s.concept c ON c.concept_id = de.drug_concept_id
+                                     WHERE co.cohort_definition_id = %d
+                                     GROUP BY c.concept_name, de.drug_concept_id
+                                     ORDER BY n DESC
+                                     LIMIT %d"
+                                    results-schema cdm-schema cdm-schema cohort-id top-n))
+                      drug-rows (mapv (fn [r]
+                                        {:characteristic (get r "characteristic")
+                                         :conceptId (long (get r "concept_id"))
+                                         :n (long (get r "n"))
+                                         :pct (compute-pct (get r "n") cohort-size)})
+                                  (pg-query conn drugs-sql))
+
+                      exec-time (- (System/currentTimeMillis) start-time)]
+                  (ok {:cohortSize cohort-size
+                       :totalSize total-size
+                       :executionTimeMs exec-time
+                       :sections [{:name "Gender" :type "demographics" :rows gender-rows}
+                                  {:name "Age Group" :type "demographics" :rows age-rows}
+                                  {:name "Conditions" :type "condition" :rows condition-rows}
+                                  {:name "Drugs" :type "drug" :rows drug-rows}]}))))
+            (catch Exception e
+              (log/error e "Failed to compute Table 1")
+              (internal-error (.getMessage e)))))))))
+
 ;; Router
 
 (def routes
@@ -636,6 +825,7 @@
                :delete {:handler delete-cache-handler}}]
     ["/cache/status" {:get {:handler get-cache-status-handler}}]
     ["/cache/count" {:post {:handler count-patients-handler}}]
+    ["/cache/table1" {:post {:handler table1-handler}}]
     ["/cache/job" {:delete {:handler cancel-cache-job-handler}}]
     ["/circe/execute" {:post {:handler execute-circe-handler}}]
     ["/circe/render" {:post {:handler render-circe-handler}}]

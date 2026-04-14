@@ -3,7 +3,7 @@ import type { ToolDefinition } from "./types.ts";
 import { safeJoin } from "./path_safety.ts";
 
 export const deleteFileTool: ToolDefinition<{ path: string }> = {
-  name: "delete_file",
+  name: "DeleteFile",
   description: "Delete a file from the workspace.",
   parameters: {
     type: "object",

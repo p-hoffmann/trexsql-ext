@@ -2,7 +2,7 @@
 import type { ToolDefinition, AgentContext } from "./types.ts";
 
 export const getDatabaseSchemaTool: ToolDefinition = {
-  name: "get_database_schema",
+  name: "DatabaseSchema",
   description: "Get the database schema for the current app. Returns tables, columns, and their types.",
   modifiesState: false,
   defaultConsent: "always",

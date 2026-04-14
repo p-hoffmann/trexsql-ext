@@ -19,7 +19,7 @@ export const codeSearchTool: ToolDefinition<{
   path?: string;
   max_results?: number;
 }> = {
-  name: "code_search",
+  name: "CodeSearch",
   description:
     "Search for a literal string across all code files in the workspace. Returns matching lines with surrounding context.",
   parameters: {

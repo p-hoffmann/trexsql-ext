@@ -6,7 +6,7 @@ export const addDependencyTool: ToolDefinition<{
   packages: string[];
   dev?: boolean;
 }> = {
-  name: "add_dependency",
+  name: "AddDependency",
   description:
     "Install npm packages in the workspace. Runs `npm install` with the specified packages.",
   parameters: {

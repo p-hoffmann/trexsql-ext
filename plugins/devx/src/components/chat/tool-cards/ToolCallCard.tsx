@@ -10,8 +10,8 @@ interface ToolCallCardProps {
   toolCall: ToolCall;
 }
 
-const FILE_TOOLS = new Set(["write_file", "edit_file", "search_replace", "read_file", "list_files", "delete_file"]);
-const SEARCH_TOOLS = new Set(["grep", "code_search"]);
+const FILE_TOOLS = new Set(["Write", "Edit", "SearchReplace", "Read", "Glob", "DeleteFile"]);
+const SEARCH_TOOLS = new Set(["Grep", "CodeSearch"]);
 
 export function ToolCallCard({ toolCall }: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(false);

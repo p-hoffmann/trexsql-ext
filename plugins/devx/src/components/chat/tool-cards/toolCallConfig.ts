@@ -21,37 +21,37 @@ export interface ToolConfig {
 
 const toolConfigMap: Record<string, ToolConfig> = {
   // File write tools
-  write_file: { label: "Write File", icon: Pencil, accentColor: "amber" },
-  edit_file: { label: "Edit File", icon: Pencil, accentColor: "amber" },
-  search_replace: { label: "Search & Replace", icon: Pencil, accentColor: "amber" },
+  Write: { label: "Write File", icon: Pencil, accentColor: "amber" },
+  Edit: { label: "Edit File", icon: Pencil, accentColor: "amber" },
+  SearchReplace: { label: "Search & Replace", icon: Pencil, accentColor: "amber" },
 
   // File read tools
-  read_file: { label: "Read File", icon: FileText, accentColor: "blue" },
-  list_files: { label: "List Files", icon: FileText, accentColor: "blue" },
+  Read: { label: "Read File", icon: FileText, accentColor: "blue" },
+  Glob: { label: "List Files", icon: FileText, accentColor: "blue" },
 
   // Delete tools
-  delete_file: { label: "Delete File", icon: Trash2, accentColor: "red" },
+  DeleteFile: { label: "Delete File", icon: Trash2, accentColor: "red" },
 
   // Code intelligence
-  grep: { label: "Search", icon: Search, accentColor: "blue" },
-  code_search: { label: "Code Search", icon: Search, accentColor: "blue" },
+  Grep: { label: "Search", icon: Search, accentColor: "blue" },
+  CodeSearch: { label: "Code Search", icon: Search, accentColor: "blue" },
 
   // SQL / DB tools
-  execute_sql: { label: "Execute SQL", icon: Database, accentColor: "indigo" },
-  get_database_schema: { label: "Database Schema", icon: Database, accentColor: "indigo" },
-  get_table_data: { label: "Table Data", icon: Database, accentColor: "indigo" },
+  ExecuteSQL: { label: "Execute SQL", icon: Database, accentColor: "indigo" },
+  DatabaseSchema: { label: "Database Schema", icon: Database, accentColor: "indigo" },
+  TableData: { label: "Table Data", icon: Database, accentColor: "indigo" },
 
   // System tools
-  run_type_checks: { label: "Type Check", icon: Terminal, accentColor: "gray" },
-  read_logs: { label: "Read Logs", icon: Terminal, accentColor: "gray" },
+  TypeCheck: { label: "Type Check", icon: Terminal, accentColor: "gray" },
+  ReadLogs: { label: "Read Logs", icon: Terminal, accentColor: "gray" },
 
   // Image generation
-  generate_image: { label: "Generate Image", icon: Image, accentColor: "purple" },
+  GenerateImage: { label: "Generate Image", icon: Image, accentColor: "purple" },
 
   // Plan tools
-  planning_questionnaire: { label: "Planning", icon: ClipboardList, accentColor: "violet" },
-  write_plan: { label: "Write Plan", icon: ClipboardList, accentColor: "violet" },
-  exit_plan: { label: "Exit Plan", icon: ClipboardList, accentColor: "violet" },
+  AskUserQuestion: { label: "Planning", icon: ClipboardList, accentColor: "violet" },
+  WritePlan: { label: "Write Plan", icon: ClipboardList, accentColor: "violet" },
+  ExitPlanMode: { label: "Exit Plan", icon: ClipboardList, accentColor: "violet" },
 };
 
 const defaultConfig: ToolConfig = {
@@ -74,8 +74,9 @@ const mcpConfig: ToolConfig = {
 
 function formatToolName(name: string): string {
   return name
-    .replace(/^(git_|mcp_)/, "")
+    .replace(/^(Git|mcp_)/, "")
     .replace(/_/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
@@ -86,7 +87,7 @@ export function getToolConfig(toolName: string): ToolConfig {
   }
 
   // Git tools
-  if (toolName.startsWith("git_")) {
+  if (toolName.startsWith("Git")) {
     return { ...gitConfig, label: formatToolName(toolName) };
   }
 

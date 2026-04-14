@@ -2,7 +2,7 @@
 import type { ToolDefinition, AgentContext } from "./types.ts";
 
 export const generateImageTool: ToolDefinition = {
-  name: "generate_image",
+  name: "GenerateImage",
   description: "Generate an image using DALL-E. Provide a detailed prompt describing the desired image. The image will be saved to the workspace.",
   modifiesState: true,
   defaultConsent: "ask",

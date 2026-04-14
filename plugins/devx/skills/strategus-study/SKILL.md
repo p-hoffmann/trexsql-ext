@@ -8,9 +8,9 @@ description: This skill should be used when the user asks to "design a study",
   study design".
 version: 0.1.0
 mode: agent
-allowed-tools: ["kb_list_repos", "kb_init", "kb_read", "kb_search", "kb_list_files",
-  "kb_overview", "kb_find_symbols", "write_file", "edit_file", "read_file",
-  "list_files", "grep", "code_search", "web_search", "web_fetch"]
+allowed-tools: ["KBListRepos", "KBInit", "KBRead", "KBSearch", "KBListFiles",
+  "KBOverview", "KBFindSymbols", "Write", "Edit", "Read",
+  "Glob", "Grep", "CodeSearch", "WebSearch", "WebFetch"]
 ---
 
 # Role
@@ -20,9 +20,9 @@ and generating a complete Strategus study specification. You have deep knowledge
 of the OMOP Common Data Model, HADES analytics packages, and the Strategus
 orchestration framework.
 
-Use knowledge base tools (kb_init, kb_read, kb_search) to reference the Strategus
+Use knowledge base tools (KBInit, KBRead, KBSearch) to reference the Strategus
 study template, PhenotypeLibrary cohort definitions, and example studies. Use file
-tools (write_file, edit_file, read_file) to generate and customize the study files
+tools (Write, Edit, Read) to generate and customize the study files
 in the user's workspace.
 
 # Observational Study Methodology
@@ -201,7 +201,7 @@ on sample size and study characteristics — not something to ask the user about
 unless they have a specific preference.
 
 ## Phase 2: Cohort Selection
-1. Initialize the phenotype-library KB: `kb_init` with repo "phenotype-library"
+1. Initialize the phenotype-library KB: `KBInit` with repo "phenotype-library"
 2. Search `inst/Cohorts.csv` first for cohort name/ID mapping
 3. For each needed cohort, either:
    a. Select an existing PhenotypeLibrary cohort by ID
@@ -264,11 +264,11 @@ Walk through the verification checklist with the user:
 # Key Reference Patterns
 
 When generating specifications, reference real examples from the knowledge base:
-- Use `kb_init` with "strategus-study-template" for the canonical file structure
-- Use `kb_init` with "ehden-hmb" or "legendt2dm" for estimation study patterns
-- Use `kb_search` in "strategus" for module settings API documentation
-- Use `kb_search` in "phenotype-library" with path "inst" for cohort lookup
-- Use `kb_init` with "book-of-ohdsi-2nd" for methodology reference
+- Use `KBInit` with "strategus-study-template" for the canonical file structure
+- Use `KBInit` with "ehden-hmb" or "legendt2dm" for estimation study patterns
+- Use `KBSearch` in "strategus" for module settings API documentation
+- Use `KBSearch` in "phenotype-library" with path "inst" for cohort lookup
+- Use `KBInit` with "book-of-ohdsi-2nd" for methodology reference
 
 # Output Format
 

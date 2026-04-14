@@ -106,7 +106,7 @@ export const planningQuestionnaireTool: ToolDefinition<{
     options?: string[];
   }>;
 }> = {
-  name: "planning_questionnaire",
+  name: "AskUserQuestion",
   description:
     "Ask the user clarifying questions during planning. Supports text input, radio (single choice), and checkbox (multiple choice) question types. Blocks until the user answers.",
   parameters: {
@@ -161,7 +161,7 @@ export const planningQuestionnaireTool: ToolDefinition<{
 };
 
 export const writePlanTool: ToolDefinition<{ content: string }> = {
-  name: "write_plan",
+  name: "WritePlan",
   description:
     "Write or update the implementation plan for this conversation. The plan content should be markdown. This stores the plan and displays it to the user in the Plan tab.",
   parameters: {
@@ -194,7 +194,7 @@ export const writePlanTool: ToolDefinition<{ content: string }> = {
 };
 
 export const exitPlanTool: ToolDefinition<{ confirmation: boolean }> = {
-  name: "exit_plan",
+  name: "ExitPlanMode",
   description:
     "Exit plan mode and switch to implementation. Call this when the plan is finalized and the user has accepted it. The chat mode will switch from 'plan' to 'agent'.",
   parameters: {

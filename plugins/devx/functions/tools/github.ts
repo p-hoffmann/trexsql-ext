@@ -39,7 +39,7 @@ function injectToken(remoteUrl: string, token: string): string {
 }
 
 export const gitPushTool: ToolDefinition<{ branch?: string }> = {
-  name: "git_push",
+  name: "GitPush",
   description: "Push commits to the GitHub remote repository.",
   parameters: {
     type: "object",
@@ -64,7 +64,7 @@ export const gitPushTool: ToolDefinition<{ branch?: string }> = {
 };
 
 export const gitPullTool: ToolDefinition<{ branch?: string }> = {
-  name: "git_pull",
+  name: "GitPull",
   description: "Pull latest changes from the GitHub remote repository.",
   parameters: {
     type: "object",

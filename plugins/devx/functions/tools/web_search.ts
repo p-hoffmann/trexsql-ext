@@ -2,7 +2,7 @@
 import type { ToolDefinition, AgentContext } from "./types.ts";
 
 export const webSearchTool: ToolDefinition = {
-  name: "web_search",
+  name: "WebSearch",
   description: "Search the web for information. Returns a list of search results with titles, URLs, and snippets.",
   modifiesState: false,
   defaultConsent: "always",

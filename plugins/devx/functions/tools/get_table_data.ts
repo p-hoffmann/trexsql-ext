@@ -2,7 +2,7 @@
 import type { ToolDefinition, AgentContext } from "./types.ts";
 
 export const getTableDataTool: ToolDefinition = {
-  name: "get_table_data",
+  name: "TableData",
   description: "Preview data from a table in the app's database. Returns up to 50 rows.",
   modifiesState: false,
   defaultConsent: "always",

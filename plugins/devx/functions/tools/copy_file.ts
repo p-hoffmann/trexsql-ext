@@ -7,7 +7,7 @@ export const copyFileTool: ToolDefinition<{
   source: string;
   destination: string;
 }> = {
-  name: "copy_file",
+  name: "CopyFile",
   description: "Copy a file to a new path in the workspace. Creates parent directories.",
   parameters: {
     type: "object",

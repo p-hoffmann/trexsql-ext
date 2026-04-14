@@ -101,7 +101,7 @@ async function runPlaywright(
 // ── browser_navigate ────────────────────────────────────────────────
 
 export const browserNavigateTool: ToolDefinition<{ url: string }> = {
-  name: "browser_navigate",
+  name: "BrowserNavigate",
   description:
     "Navigate to a URL in the browser and return the page's text content, links, and form elements. Use this to load a page and see what's on it.",
   parameters: {
@@ -149,7 +149,7 @@ export const browserNavigateTool: ToolDefinition<{ url: string }> = {
 // ── browser_click ───────────────────────────────────────────────────
 
 export const browserClickTool: ToolDefinition<{ selector: string; current_url: string }> = {
-  name: "browser_click",
+  name: "BrowserClick",
   description:
     'Click an element on the page by CSS selector or text. Examples: "button.submit", "text=Sign In", "a[href=\\"/about\\"]". Returns the page content after clicking.',
   parameters: {
@@ -186,7 +186,7 @@ export const browserClickTool: ToolDefinition<{ selector: string; current_url: s
 // ── browser_fill ────────────────────────────────────────────────────
 
 export const browserFillTool: ToolDefinition<{ selector: string; value: string; current_url: string }> = {
-  name: "browser_fill",
+  name: "BrowserFill",
   description:
     "Fill a form field with a value. Use CSS selectors to target the input element.",
   parameters: {
@@ -226,7 +226,7 @@ export const browserFillTool: ToolDefinition<{ selector: string; value: string; 
 // ── browser_get_text ────────────────────────────────────────────────
 
 export const browserGetTextTool: ToolDefinition<{ current_url: string }> = {
-  name: "browser_get_text",
+  name: "BrowserGetText",
   description:
     "Get the current page's text content, links, and form elements without navigating. Useful to re-read a page after interactions.",
   parameters: {
@@ -274,7 +274,7 @@ export const browserGetTextTool: ToolDefinition<{ current_url: string }> = {
 // ── browser_screenshot ──────────────────────────────────────────────
 
 export const browserScreenshotTool: ToolDefinition<{ current_url: string; full_page?: boolean }> = {
-  name: "browser_screenshot",
+  name: "BrowserScreenshot",
   description:
     "Capture the current page's visual layout. Returns page text content and computed CSS styles (font sizes, colors, spacing, dimensions) for design analysis.",
   parameters: {
@@ -320,7 +320,7 @@ export const browserScreenshotTool: ToolDefinition<{ current_url: string; full_p
 // ── browser_evaluate ────────────────────────────────────────────────
 
 export const browserEvaluateTool: ToolDefinition<{ expression: string; current_url: string }> = {
-  name: "browser_evaluate",
+  name: "BrowserEvaluate",
   description:
     "Execute a JavaScript expression in the browser page context and return the result. Useful for checking console errors, DOM state, or running assertions.",
   parameters: {

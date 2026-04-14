@@ -2,7 +2,7 @@
 import type { ToolDefinition } from "./types.ts";
 
 export const executeSqlTool: ToolDefinition<{ sql: string }> = {
-  name: "execute_sql",
+  name: "ExecuteSQL",
   description:
     "Execute SQL against the app's database schema on Trex. The app must have a database created first.",
   parameters: {

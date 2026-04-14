@@ -8,7 +8,7 @@ export const listFilesTool: ToolDefinition<{
   recursive?: boolean;
   include_hidden?: boolean;
 }> = {
-  name: "list_files",
+  name: "Glob",
   description:
     "List files and directories in the workspace. Excludes node_modules, .git, dist, etc. by default.",
   parameters: {

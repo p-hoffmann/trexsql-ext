@@ -2,6 +2,8 @@
 import type { ToolDefinition } from "./types.ts";
 import { setChatSummaryTool } from "./set_chat_summary.ts";
 import { updateTodosTool } from "./update_todos.ts";
+// Shell
+import { bashTool } from "./bash.ts";
 // File operations
 import { writeFileTool } from "./write_file.ts";
 import { editFileTool } from "./edit_file.ts";
@@ -50,16 +52,34 @@ import {
 } from "./knowledge_base.ts";
 // Subagents
 import { spawnAgentTool } from "./spawn_agent.ts";
+// Task management
+import {
+  taskCreateTool, taskGetTool, taskListTool, taskUpdateTool, taskStopTool,
+} from "./task_tools.ts";
 // Playwright browser tools
 import {
   browserNavigateTool, browserClickTool, browserFillTool,
   browserGetTextTool, browserScreenshotTool, browserEvaluateTool,
 } from "./playwright.ts";
+// Enter plan mode
+import { enterPlanModeTool } from "./enter_plan_mode.ts";
+// Worktree
+import { enterWorktreeTool, exitWorktreeTool } from "./worktree.ts";
+// Cron
+import { cronCreateTool, cronDeleteTool, cronListTool } from "./cron.ts";
+// Messaging
+import { sendMessageTool } from "./send_message.ts";
+// Skills
+import { skillTool } from "./skill_tool.ts";
+// Tool search
+import { toolSearchTool } from "./tool_search.ts";
 
 /** All registered tools */
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   setChatSummaryTool,
   updateTodosTool,
+  // Shell
+  bashTool,
   // File operations
   writeFileTool,
   editFileTool,
@@ -120,6 +140,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   kbFindSymbolsTool,
   // Subagents
   spawnAgentTool,
+  // Task management
+  taskCreateTool,
+  taskGetTool,
+  taskListTool,
+  taskUpdateTool,
+  taskStopTool,
   // Playwright browser tools
   browserNavigateTool,
   browserClickTool,
@@ -127,6 +153,21 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   browserGetTextTool,
   browserScreenshotTool,
   browserEvaluateTool,
+  // Enter plan mode
+  enterPlanModeTool,
+  // Worktree
+  enterWorktreeTool,
+  exitWorktreeTool,
+  // Cron
+  cronCreateTool,
+  cronDeleteTool,
+  cronListTool,
+  // Messaging
+  sendMessageTool,
+  // Skills
+  skillTool,
+  // Tool search
+  toolSearchTool,
 ];
 
 /**
@@ -154,11 +195,13 @@ export function buildToolSet(
 
     // Plan mode: only read-only tools + plan-specific tools
     const PLAN_MODE_TOOLS = new Set([
-      "read_file", "list_files", "grep", "code_search",
-      "git_status", "git_log", "git_branch_list",
-      "planning_questionnaire", "write_plan", "exit_plan",
-      "kb_list_repos", "kb_init", "kb_update", "kb_read", "kb_search",
-      "kb_list_files", "kb_overview", "kb_find_symbols",
+      "Read", "Glob", "Grep", "CodeSearch",
+      "GitStatus", "GitLog", "GitBranchList",
+      "AskUserQuestion", "WritePlan", "ExitPlanMode",
+      "KBListRepos", "KBInit", "KBUpdate", "KBRead", "KBSearch",
+      "KBListFiles", "KBOverview", "KBFindSymbols",
+      "TaskGet", "TaskList",
+      "CronList", "ToolSearch",
     ]);
     if (mode === "plan" && !PLAN_MODE_TOOLS.has(tool.name)) continue;
 

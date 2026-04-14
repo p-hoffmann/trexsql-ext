@@ -3,7 +3,7 @@ import type { ToolDefinition } from "./types.ts";
 import { gitOps } from "../git.ts";
 
 export const gitInitTool: ToolDefinition<Record<string, never>> = {
-  name: "git_init",
+  name: "GitInit",
   description: "Initialize a git repository in the app workspace.",
   parameters: { type: "object", properties: {}, required: [] },
   defaultConsent: "ask",
@@ -15,7 +15,7 @@ export const gitInitTool: ToolDefinition<Record<string, never>> = {
 };
 
 export const gitCommitTool: ToolDefinition<{ message: string }> = {
-  name: "git_commit",
+  name: "GitCommit",
   description: "Stage all changes and create a git commit.",
   parameters: {
     type: "object",
@@ -33,7 +33,7 @@ export const gitCommitTool: ToolDefinition<{ message: string }> = {
 };
 
 export const gitStatusTool: ToolDefinition<Record<string, never>> = {
-  name: "git_status",
+  name: "GitStatus",
   description: "Show uncommitted changes in the workspace.",
   parameters: { type: "object", properties: {}, required: [] },
   defaultConsent: "always",
@@ -46,7 +46,7 @@ export const gitStatusTool: ToolDefinition<Record<string, never>> = {
 };
 
 export const gitLogTool: ToolDefinition<{ limit?: number }> = {
-  name: "git_log",
+  name: "GitLog",
   description: "Show recent git commit history.",
   parameters: {
     type: "object",
@@ -67,7 +67,7 @@ export const gitLogTool: ToolDefinition<{ limit?: number }> = {
 };
 
 export const gitDiffTool: ToolDefinition<Record<string, never>> = {
-  name: "git_diff",
+  name: "GitDiff",
   description: "Show diff of uncommitted changes.",
   parameters: { type: "object", properties: {}, required: [] },
   defaultConsent: "always",
@@ -78,7 +78,7 @@ export const gitDiffTool: ToolDefinition<Record<string, never>> = {
 };
 
 export const gitBranchListTool: ToolDefinition<Record<string, never>> = {
-  name: "git_branch_list",
+  name: "GitBranchList",
   description: "List git branches and show the current branch.",
   parameters: { type: "object", properties: {}, required: [] },
   defaultConsent: "always",
@@ -90,7 +90,7 @@ export const gitBranchListTool: ToolDefinition<Record<string, never>> = {
 };
 
 export const gitBranchCreateTool: ToolDefinition<{ name: string }> = {
-  name: "git_branch_create",
+  name: "GitBranchCreate",
   description: "Create a new git branch.",
   parameters: {
     type: "object",
@@ -106,7 +106,7 @@ export const gitBranchCreateTool: ToolDefinition<{ name: string }> = {
 };
 
 export const gitBranchSwitchTool: ToolDefinition<{ name: string }> = {
-  name: "git_branch_switch",
+  name: "GitBranchSwitch",
   description: "Switch to a different git branch.",
   parameters: {
     type: "object",
@@ -122,7 +122,7 @@ export const gitBranchSwitchTool: ToolDefinition<{ name: string }> = {
 };
 
 export const gitRevertTool: ToolDefinition<{ commit_hash: string }> = {
-  name: "git_revert",
+  name: "GitRevert",
   description: "Revert the workspace to a specific commit.",
   parameters: {
     type: "object",

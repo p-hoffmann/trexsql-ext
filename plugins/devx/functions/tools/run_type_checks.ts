@@ -3,7 +3,7 @@ import type { ToolDefinition } from "./types.ts";
 import { duckdb, escapeSql } from "../duckdb.ts";
 
 export const runTypeChecksTool: ToolDefinition<Record<string, never>> = {
-  name: "run_type_checks",
+  name: "TypeCheck",
   description:
     "Run TypeScript type checking (npx tsc --noEmit) in the workspace and return any errors.",
   parameters: {

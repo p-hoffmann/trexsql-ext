@@ -7,7 +7,7 @@ export const readFileTool: ToolDefinition<{
   start_line?: number;
   end_line?: number;
 }> = {
-  name: "read_file",
+  name: "Read",
   description:
     "Read the contents of a file in the workspace. Optionally specify a line range (1-indexed).",
   parameters: {

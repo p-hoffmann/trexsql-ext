@@ -2,7 +2,7 @@
 import type { ToolDefinition, AgentContext } from "./types.ts";
 
 export const refreshAppPreviewTool: ToolDefinition = {
-  name: "refresh_app_preview",
+  name: "RefreshPreview",
   description:
     "Refresh the app preview in the user's browser. Use after making changes that should be reflected in the preview iframe.",
   modifiesState: false,

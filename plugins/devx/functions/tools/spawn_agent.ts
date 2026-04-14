@@ -10,7 +10,7 @@ export const spawnAgentTool: ToolDefinition<{
   agent_name: string;
   task: string;
 }> = {
-  name: "spawn_agent",
+  name: "Agent",
   description:
     "Spawn a subagent to handle a specific subtask autonomously. The subagent runs with its own system prompt and tool set, then returns a result summary. Use this for focused tasks like code exploration, code review, or security scanning.",
   parameters: {

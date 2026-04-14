@@ -22,7 +22,7 @@ let registered = false;
 module.exports = function registerDevxTools(workspacePath) {
   if (registered) return;
   registered = true;
-  defineTool("read_file", {
+  defineTool("Read", {
     description: "Read the contents of a file",
     parameters: z.object({
       path: z.string().describe("File path relative to workspace"),
@@ -45,7 +45,7 @@ module.exports = function registerDevxTools(workspacePath) {
     skipPermission: true,
   });
 
-  defineTool("write_file", {
+  defineTool("Write", {
     description: "Write content to a file (creates directories if needed)",
     parameters: z.object({
       path: z.string().describe("File path relative to workspace"),
@@ -60,7 +60,7 @@ module.exports = function registerDevxTools(workspacePath) {
     skipPermission: true,
   });
 
-  defineTool("edit_file", {
+  defineTool("Edit", {
     description: "Replace a string in a file",
     parameters: z.object({
       path: z.string().describe("File path relative to workspace"),
@@ -78,7 +78,7 @@ module.exports = function registerDevxTools(workspacePath) {
     skipPermission: true,
   });
 
-  defineTool("list_files", {
+  defineTool("Glob", {
     description: "List files and directories in a path",
     parameters: z.object({
       path: z.string().optional().describe("Directory path relative to workspace (default: root)"),
@@ -99,7 +99,7 @@ module.exports = function registerDevxTools(workspacePath) {
     skipPermission: true,
   });
 
-  defineTool("grep", {
+  defineTool("Grep", {
     description: "Search for a pattern in files",
     parameters: z.object({
       pattern: z.string().describe("Search pattern (regex)"),
@@ -142,7 +142,7 @@ module.exports = function registerDevxTools(workspacePath) {
     skipPermission: true,
   });
 
-  defineTool("delete_file", {
+  defineTool("DeleteFile", {
     description: "Delete a file",
     parameters: z.object({
       path: z.string().describe("File path relative to workspace"),

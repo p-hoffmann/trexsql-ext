@@ -2,7 +2,7 @@
 import type { ToolDefinition, AgentContext } from "./types.ts";
 
 export const webFetchTool: ToolDefinition = {
-  name: "web_fetch",
+  name: "WebFetch",
   description: "Fetch the content of a web page. Returns the text content with HTML tags stripped.",
   modifiesState: false,
   defaultConsent: "always",

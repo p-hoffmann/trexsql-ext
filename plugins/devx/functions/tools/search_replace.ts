@@ -8,7 +8,7 @@ export const searchReplaceTool: ToolDefinition<{
   replace: string;
   regex?: boolean;
 }> = {
-  name: "search_replace",
+  name: "SearchReplace",
   description:
     "Find and replace a string or regex pattern in a file. Replaces all occurrences.",
   parameters: {
