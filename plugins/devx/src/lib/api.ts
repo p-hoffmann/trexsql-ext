@@ -1,6 +1,6 @@
 import { API_BASE } from "./config";
 import type {
-  Chat, Message, DevxSettings, AgentTodo, ToolCall, ConsentRequest,
+  Chat, Message, DevxSettings, ProviderConfigRecord, AgentTodo, ToolCall, ConsentRequest,
   App, DevServerStatus, FileTreeEntry, Problem,
   GitFile, GitCommit, GitBranches, GitHubStatus, GitHubDeviceCode, GitHubRepo,
   McpServer, McpTool, Plan, QuestionnaireRequest, BuildAction,
@@ -112,6 +112,42 @@ export async function saveSettings(settings: Partial<DevxSettings>): Promise<Dev
     method: "PUT",
     body: JSON.stringify(settings),
   });
+}
+
+// Provider Configs (multi-provider)
+export async function getProviderConfigs(): Promise<ProviderConfigRecord[]> {
+  return apiFetch("/provider-configs");
+}
+
+export async function createProviderConfig(config: {
+  provider: string;
+  model: string;
+  api_key?: string;
+  base_url?: string;
+  display_name?: string;
+}): Promise<ProviderConfigRecord> {
+  return apiFetch("/provider-configs", {
+    method: "POST",
+    body: JSON.stringify(config),
+  });
+}
+
+export async function updateProviderConfig(
+  id: string,
+  updates: Partial<{ provider: string; model: string; api_key: string; base_url: string; display_name: string }>,
+): Promise<ProviderConfigRecord> {
+  return apiFetch(`/provider-configs/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function deleteProviderConfig(id: string): Promise<void> {
+  await apiFetch(`/provider-configs/${id}`, { method: "DELETE" });
+}
+
+export async function activateProviderConfig(id: string): Promise<void> {
+  await apiFetch(`/provider-configs/${id}/activate`, { method: "PUT" });
 }
 
 // App CRUD
@@ -335,6 +371,66 @@ export async function getGitHubStatus(): Promise<GitHubStatus> {
 export async function disconnectGitHub(): Promise<void> {
   await apiFetch("/integrations/github", { method: "DELETE" });
 }
+
+// --- Claude Code Auth ---
+
+export async function getClaudeCodeAuthStatus(): Promise<{
+  installed: boolean;
+  authenticated: boolean;
+  version: string | null;
+  account: string | null;
+}> {
+  return apiFetch("/claude-code/auth-status");
+}
+
+export async function startClaudeCodeLogin(): Promise<{
+  status: string;
+  login_url?: string;
+  needs_code?: boolean;
+  message: string;
+}> {
+  return apiFetch("/claude-code/login", { method: "POST" });
+}
+
+export async function submitClaudeCodeLoginCode(code: string): Promise<{
+  status: string;
+  message: string;
+}> {
+  return apiFetch("/claude-code/login-code", {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
+}
+
+export async function claudeCodeLogout(): Promise<{ ok: boolean; message: string }> {
+  return apiFetch("/claude-code/logout", { method: "POST" });
+}
+
+// --- GitHub Copilot Auth ---
+
+export async function getCopilotAuthStatus(): Promise<{
+  installed: boolean;
+  authenticated: boolean;
+  version: string | null;
+  account: string | null;
+}> {
+  return apiFetch("/copilot/auth-status");
+}
+
+export async function startCopilotLogin(): Promise<{
+  status: string;
+  login_url?: string;
+  user_code?: string;
+  message: string;
+}> {
+  return apiFetch("/copilot/login", { method: "POST" });
+}
+
+export async function copilotLogout(): Promise<{ ok: boolean; message: string }> {
+  return apiFetch("/copilot/logout", { method: "POST" });
+}
+
+// --- GitHub Repos ---
 
 export async function listGitHubRepos(): Promise<GitHubRepo[]> {
   return apiFetch("/integrations/github/repos");

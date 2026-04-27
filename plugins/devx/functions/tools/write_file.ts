@@ -8,7 +8,7 @@ export const writeFileTool: ToolDefinition<{
   content: string;
   description?: string;
 }> = {
-  name: "write_file",
+  name: "Write",
   description:
     "Create or overwrite a file in the workspace. Creates parent directories automatically.",
   parameters: {

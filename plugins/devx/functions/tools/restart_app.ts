@@ -5,7 +5,7 @@ import { getAppWorkspacePath } from "./workspace.ts";
 import { duckdb, escapeSql } from "../duckdb.ts";
 
 export const restartAppTool: ToolDefinition = {
-  name: "restart_app",
+  name: "RestartApp",
   description:
     "Restart the dev server for the current app. Use after making config changes or when the app is in a broken state. For a full rebuild (clear node_modules and reinstall), set removeNodeModules to true.",
   modifiesState: true,

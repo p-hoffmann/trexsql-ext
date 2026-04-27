@@ -2,7 +2,7 @@
 import type { ToolDefinition, AgentContext } from "./types.ts";
 
 export const webCrawlTool: ToolDefinition = {
-  name: "web_crawl",
+  name: "WebCrawl",
   description: "Crawl a web page and its linked pages (depth 1). Returns the main page content plus content from linked pages.",
   modifiesState: false,
   defaultConsent: "always",

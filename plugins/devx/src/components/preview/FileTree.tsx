@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { ChevronRight, ChevronDown, FilePlus, FolderPlus, Pencil, Trash2 } from "lucide-react";
+import { ChevronRight, ChevronDown, FilePlus, FolderPlus, Pencil, Trash2, RefreshCw } from "lucide-react";
 import { FileIcon } from "./FileIcon";
 import type { FileTreeEntry } from "@/lib/types";
 
@@ -294,7 +294,17 @@ export function FileTree({
 }
 
 // Header with new file/folder buttons (used by CodeTab)
-export function FileTreeActions({ onNewFile, onNewFolder }: { onNewFile: () => void; onNewFolder: () => void }) {
+export function FileTreeActions({
+  onNewFile,
+  onNewFolder,
+  onRefresh,
+  refreshing,
+}: {
+  onNewFile: () => void;
+  onNewFolder: () => void;
+  onRefresh?: () => void;
+  refreshing?: boolean;
+}) {
   return (
     <div className="flex items-center gap-0.5">
       <button onClick={onNewFile} className="h-5 w-5 flex items-center justify-center rounded hover:bg-muted" title="New File">
@@ -303,6 +313,16 @@ export function FileTreeActions({ onNewFile, onNewFolder }: { onNewFile: () => v
       <button onClick={onNewFolder} className="h-5 w-5 flex items-center justify-center rounded hover:bg-muted" title="New Folder">
         <FolderPlus className="h-3 w-3 text-muted-foreground" />
       </button>
+      {onRefresh && (
+        <button
+          onClick={onRefresh}
+          disabled={refreshing}
+          className="h-5 w-5 flex items-center justify-center rounded hover:bg-muted disabled:opacity-50"
+          title="Refresh file tree"
+        >
+          <RefreshCw className={`h-3 w-3 text-muted-foreground ${refreshing ? "animate-spin" : ""}`} />
+        </button>
+      )}
     </div>
   );
 }

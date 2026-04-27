@@ -150,61 +150,42 @@ const ALLOWED_EXECUTABLES = new Set([
   "node", "deno", "python", "python3", "bash", "sh", "bun", "npx", "uvx",
 ]);
 
+import { duckdb, escapeSql } from "../duckdb.ts";
+
 async function executeCommandHook(
   hook: Hook,
   input: Record<string, unknown>,
 ): Promise<HookResult> {
   if (!hook.command) return { action: "approve" };
 
-  const timeout = hook.timeout_ms || 10000;
-
   try {
-    // Parse command into executable + args
+    // Parse command to validate executable against allow-list
     const parts = hook.command.split(/\s+/);
     const executable = parts[0];
 
-    // Validate executable against allow-list
     if (!ALLOWED_EXECUTABLES.has(executable)) {
       console.error(`[hooks] Blocked disallowed executable: ${executable}`);
       return { action: "approve" };
     }
 
-    const cmd = new Deno.Command(executable, {
-      args: parts.slice(1),
-      stdin: "piped",
-      stdout: "piped",
-      stderr: "piped",
-      env: {
-        DEVX_HOOK_EVENT: String(input.event || ""),
-        DEVX_TOOL_NAME: String(input.toolName || ""),
-      },
-    });
+    // Run command via DuckDB devx-ext, piping input JSON via echo
+    const inputJson = JSON.stringify(input).replace(/'/g, "'\\''");
+    const envVars = `DEVX_HOOK_EVENT='${escapeSql(String(input.event || ""))}' DEVX_TOOL_NAME='${escapeSql(String(input.toolName || ""))}'`;
+    const shellCmd = `echo '${escapeSql(inputJson)}' | ${envVars} ${hook.command} 2>&1`;
+    const timeoutSec = Math.ceil((hook.timeout_ms || 10000) / 1000);
+    const fullCmd = `timeout ${timeoutSec} bash -c '${escapeSql(shellCmd)}'`;
 
-    const process = cmd.spawn();
+    const raw = await duckdb(
+      `SELECT * FROM trex_devx_run_command('/tmp', '${escapeSql(fullCmd)}')`
+    );
+    const result = JSON.parse(raw);
 
-    // Write input as JSON to stdin
-    const writer = process.stdin.getWriter();
-    await writer.write(new TextEncoder().encode(JSON.stringify(input)));
-    await writer.close();
-
-    // Wait for completion with timeout
-    const result = await Promise.race([
-      process.output(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => {
-          try { process.kill("SIGTERM"); } catch { /* already dead */ }
-          reject(new Error(`Hook timed out after ${timeout}ms`));
-        }, timeout),
-      ),
-    ]);
-
-    if (!result.success) {
-      const stderr = new TextDecoder().decode(result.stderr);
-      console.error(`[hooks] Command hook failed:`, stderr);
+    if (result.exit_code && result.exit_code !== 0) {
+      console.error(`[hooks] Command hook failed:`, result.output);
       return { action: "approve" }; // Don't block on hook failures
     }
 
-    const stdout = new TextDecoder().decode(result.stdout).trim();
+    const stdout = (result.output || "").trim();
     if (!stdout) return { action: "approve" };
 
     // Parse JSON response from hook

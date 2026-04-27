@@ -2,7 +2,7 @@
 import type { ToolDefinition } from "./types.ts";
 
 export const setChatSummaryTool: ToolDefinition<{ summary: string }> = {
-  name: "set_chat_summary",
+  name: "SetChatSummary",
   description: "Set a concise summary/title for this chat conversation.",
   parameters: {
     type: "object",

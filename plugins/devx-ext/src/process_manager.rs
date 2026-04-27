@@ -42,6 +42,7 @@ struct OutputLine {
 
 struct ManagedProcess {
     child: Child,
+    stdin: Option<std::process::ChildStdin>,
     stdout_buf: Arc<Mutex<VecDeque<OutputLine>>>,
     stderr_buf: Arc<Mutex<VecDeque<OutputLine>>>,
     status: Arc<Mutex<Status>>,
@@ -106,10 +107,13 @@ pub fn process_start(process_id: &str, config_json: &str) -> Result<String, Box<
         .args(&arg_refs)
         .current_dir(path)
         .env("PORT", port.to_string())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("{cmd} spawn failed: {e}"))?;
+
+    let child_stdin = child.stdin.take();
 
     let pid = child.id();
 
@@ -129,7 +133,7 @@ pub fn process_start(process_id: &str, config_json: &str) -> Result<String, Box<
             let reader = BufReader::new(stdout);
             for line in reader.lines() {
                 let Ok(text) = line else { break };
-                // Detect URL
+                // Detect URL or "listening on port" pattern
                 if let Some(m) = text.find("http://localhost:") {
                     let rest = &text[m..];
                     let end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
@@ -138,6 +142,11 @@ pub fn process_start(process_id: &str, config_json: &str) -> Result<String, Box<
                     if u.is_none() {
                         *u = Some(found_url.to_string());
                         let mut s = st.lock().unwrap();
+                        *s = Status::Running;
+                    }
+                } else if text.contains("listening on port") {
+                    let mut s = st.lock().unwrap();
+                    if *s == Status::Starting {
                         *s = Status::Running;
                     }
                 }
@@ -173,6 +182,7 @@ pub fn process_start(process_id: &str, config_json: &str) -> Result<String, Box<
 
     let managed = ManagedProcess {
         child,
+        stdin: child_stdin,
         stdout_buf,
         stderr_buf,
         status,
@@ -274,5 +284,27 @@ pub fn process_output(process_id: &str, since_line_id: &str) -> Result<String, B
         Ok(json!({"lines": lines, "last_id": last_id}).to_string())
     } else {
         Ok(json!({"lines": [], "last_id": since}).to_string())
+    }
+}
+
+/// Write input to a managed process's stdin.
+pub fn process_input(process_id: &str, input_text: &str) -> Result<String, Box<dyn Error>> {
+    use std::io::Write;
+    let mut reg = registry().lock().unwrap();
+    if let Some(proc) = reg.get_mut(process_id) {
+        if let Some(ref mut stdin) = proc.stdin {
+            stdin
+                .write_all(input_text.as_bytes())
+                .map_err(|e| format!("Failed to write to stdin: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("Failed to write newline: {e}"))?;
+            stdin.flush().map_err(|e| format!("Failed to flush stdin: {e}"))?;
+            Ok(json!({"ok": true}).to_string())
+        } else {
+            Err("Process stdin not available".into())
+        }
+    } else {
+        Err(format!("Process not found: {process_id}").into())
     }
 }

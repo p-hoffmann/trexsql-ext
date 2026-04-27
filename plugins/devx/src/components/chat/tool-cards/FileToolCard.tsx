@@ -5,9 +5,10 @@ interface FileToolCardProps {
 }
 
 export function FileToolCard({ toolCall }: FileToolCardProps) {
-  const filePath = (toolCall.args.path ?? toolCall.args.file_path) as string | undefined;
-  const isWriteOp = ["write_file", "edit_file", "search_replace"].includes(toolCall.name);
-  const writeContent = (toolCall.args.content ?? toolCall.args.new_str ?? toolCall.args.replacement) as string | undefined;
+  const args = toolCall.args || {};
+  const filePath = (args.path ?? args.file_path) as string | undefined;
+  const isWriteOp = ["write_file", "edit_file", "search_replace"].includes(toolCall.name || "");
+  const writeContent = (args.content ?? args.new_str ?? args.replacement) as string | undefined;
 
   return (
     <div className="space-y-2 text-xs">

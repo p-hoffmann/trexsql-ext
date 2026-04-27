@@ -10,7 +10,7 @@ export const spawnAgentTool: ToolDefinition<{
   agent_name: string;
   task: string;
 }> = {
-  name: "spawn_agent",
+  name: "Agent",
   description:
     "Spawn a subagent to handle a specific subtask autonomously. The subagent runs with its own system prompt and tool set, then returns a result summary. Use this for focused tasks like code exploration, code review, or security scanning.",
   parameters: {
@@ -83,13 +83,18 @@ export const spawnAgentTool: ToolDefinition<{
       // Import streamAgentChat dynamically to avoid circular dependency
       const { streamAgentChat } = await import("../agent.ts");
 
-      // Get user settings for model creation
-      const settingsResult = await ctx.sql(
-        `SELECT provider, model, api_key, base_url, ai_rules, auto_approve, max_steps
-         FROM devx.settings WHERE user_id = $1`,
+      // Get active provider config + user prefs for model creation
+      const activePC = await ctx.sql(
+        `SELECT provider, model, api_key, base_url FROM devx.provider_configs WHERE user_id = $1 AND is_active = true LIMIT 1`,
         [ctx.userId],
       );
-      const settings = settingsResult.rows[0] || {};
+      const prefsResult = await ctx.sql(
+        `SELECT ai_rules, auto_approve, max_steps FROM devx.settings WHERE user_id = $1`,
+        [ctx.userId],
+      );
+      const settings = activePC.rows[0]
+        ? { ...activePC.rows[0], ...(prefsResult.rows[0] || {}) }
+        : (await ctx.sql(`SELECT provider, model, api_key, base_url, ai_rules, auto_approve, max_steps FROM devx.settings WHERE user_id = $1`, [ctx.userId])).rows[0] || {};
 
       // Determine model — use agent's model or inherit parent's
       const effectiveModel = agentDef.model === "inherit" ? settings.model : agentDef.model;

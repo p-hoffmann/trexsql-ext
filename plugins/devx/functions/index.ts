@@ -27,6 +27,9 @@ import { handleSecurityRoutes } from "./routes/security_routes.ts";
 import { handleVisualEditingRoutes } from "./routes/visual_editing_routes.ts";
 import { handleSupabaseRoutes } from "./routes/supabase_routes.ts";
 import { handleSkillsRoutes } from "./routes/skills_routes.ts";
+import { handleClaudeCodeRoutes } from "./routes/claude_code_routes.ts";
+import { handleCopilotRoutes } from "./routes/copilot_routes.ts";
+import { handleProviderConfigRoutes } from "./routes/provider_config_routes.ts";
 import { syncBuiltins } from "./skills/sync.ts";
 import {
   parseSlashInput,
@@ -109,6 +112,7 @@ Deno.serve(async (req: Request) => {
       return Response.json({ status: "ok", plugin: "@trex/devx" }, { headers: corsHeaders });
     }
 
+
     // Ensure built-in skills/commands/agents are synced (runs once per worker lifecycle)
     // TREX_FUNCTION_PATH points to the actual function dir; go up one level to get the plugin root
     const fnPath = Deno.env.get("TREX_FUNCTION_PATH") || new URL("../", import.meta.url).pathname;
@@ -119,6 +123,9 @@ Deno.serve(async (req: Request) => {
     const routeResult =
       await handleGitRoutes(path, method, req, userId, sql, corsHeaders) ||
       await handleGithubRoutes(path, method, req, userId, sql, corsHeaders) ||
+      await handleClaudeCodeRoutes(path, method, req, userId, sql, corsHeaders) ||
+      await handleCopilotRoutes(path, method, req, userId, sql, corsHeaders) ||
+      await handleProviderConfigRoutes(path, method, req, userId, sql, corsHeaders) ||
       await handleMcpRoutes(path, method, req, userId, sql, corsHeaders) ||
       await handleSupabaseRoutes(path, method, req, userId, sql, corsHeaders) ||
       await handleTrexRoutes(path, method, req, userId, sql, corsHeaders) ||
@@ -258,24 +265,54 @@ Deno.serve(async (req: Request) => {
         return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
       }
 
-      // Get user settings
-      const settingsResult = await sql(
-        `SELECT provider, model, api_key, base_url, ai_rules, auto_approve, max_steps, max_tool_steps, auto_fix_problems FROM devx.settings WHERE user_id = $1`,
+      // Get active provider config (multi-provider) with user-level prefs from settings
+      const activeProviderResult = await sql(
+        `SELECT pc.provider, pc.model, pc.api_key, pc.base_url
+         FROM devx.provider_configs pc
+         WHERE pc.user_id = $1 AND pc.is_active = true
+         LIMIT 1`,
         [userId],
       );
-      const settings = settingsResult.rows[0] || {
-        provider: "anthropic",
-        model: "claude-sonnet-4-6-20250627",
-        api_key: null,
-        base_url: null,
-        ai_rules: null,
-        auto_approve: false,
-        max_steps: 25,
-        max_tool_steps: 10,
-        auto_fix_problems: false,
-      };
+      const userPrefsResult = await sql(
+        `SELECT ai_rules, auto_approve, max_steps, max_tool_steps, auto_fix_problems FROM devx.settings WHERE user_id = $1`,
+        [userId],
+      );
+      const providerConfig = activeProviderResult.rows[0];
+      const userPrefs = userPrefsResult.rows[0] || {};
 
-      if (!settings.api_key) {
+      // Fall back to devx.settings if no provider_configs row exists (backward compat)
+      let settings;
+      if (providerConfig) {
+        settings = {
+          ...providerConfig,
+          ai_rules: userPrefs.ai_rules || null,
+          auto_approve: userPrefs.auto_approve ?? false,
+          max_steps: userPrefs.max_steps ?? 100,
+          max_tool_steps: userPrefs.max_tool_steps ?? 10,
+          auto_fix_problems: userPrefs.auto_fix_problems ?? false,
+        };
+      } else {
+        // Legacy fallback
+        const legacyResult = await sql(
+          `SELECT provider, model, api_key, base_url, ai_rules, auto_approve, max_steps, max_tool_steps, auto_fix_problems FROM devx.settings WHERE user_id = $1`,
+          [userId],
+        );
+        settings = legacyResult.rows[0] || {
+          provider: "anthropic",
+          model: "claude-sonnet-4-20250514",
+          api_key: null,
+          base_url: null,
+          ai_rules: null,
+          auto_approve: false,
+          max_steps: 100,
+          max_tool_steps: 10,
+          auto_fix_problems: false,
+        };
+      }
+
+      // Subscription-based and Bedrock providers don't require an API key
+      const noKeyProviders = new Set(["claude-code", "copilot", "bedrock"]);
+      if (!settings.api_key && !noKeyProviders.has(settings.provider)) {
         return Response.json(
           { error: "No API key configured. Please set up your provider in Settings." },
           { status: 400, headers: corsHeaders },
@@ -609,6 +646,39 @@ Deno.serve(async (req: Request) => {
               });
               fullContent = agentResult.content;
               if (agentResult.toolCalls.length > 0) savedToolCalls = agentResult.toolCalls;
+            } else if (settings.provider === "claude-code") {
+              const { streamClaudeCodeChat } = await import("./claude_code_agent.ts");
+              const agentResult = await streamClaudeCodeChat({
+                chatId,
+                userId,
+                appId: chatCheck.rows[0].app_id,
+                chatMode,
+                settings,
+                history,
+                send,
+                sqlFn: sql,
+                skillContext,
+                commandOverride,
+                hasComponentSelection,
+              });
+              fullContent = agentResult.content;
+            } else if (settings.provider === "copilot") {
+              // Copilot SDK: use agent-style streaming even in build/ask mode
+              const { streamCopilotChat } = await import("./copilot_agent.ts");
+              const agentResult = await streamCopilotChat({
+                chatId,
+                userId,
+                appId: chatCheck.rows[0].app_id,
+                chatMode,
+                settings,
+                history,
+                send,
+                sqlFn: sql,
+                skillContext,
+                commandOverride,
+                hasComponentSelection,
+              });
+              fullContent = agentResult.content;
             } else if (settings.provider === "anthropic") {
               fullContent = await streamAnthropic(settings, history, send, systemPrompt);
             } else if (settings.provider === "google") {
@@ -816,7 +886,7 @@ Deno.serve(async (req: Request) => {
               chatMode: "agent",
               settings: {
                 ...agentSettings,
-                max_steps: matchedSkill?.allowed_tools ? 25 : 15,
+                max_steps: matchedSkill?.allowed_tools ? 100 : 100,
                 auto_approve: true,
               },
               history: [{ role: "user", content: run.task + ". Use your tools to thoroughly analyze the project." }],

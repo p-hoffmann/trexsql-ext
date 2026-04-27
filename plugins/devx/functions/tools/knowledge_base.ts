@@ -58,6 +58,7 @@ const SUPPORTED_REPOS: Record<string, string> = {
   "sql-render": "https://github.com/OHDSI/SqlRender.git",
   // Study Templates & Examples
   "strategus-study-template": "https://github.com/ohdsi-studies/StrategusStudyRepoTemplate.git",
+  "tutorial-strategus-study": "https://github.com/ohdsi-studies/TutorialStrategusStudy.git",
   "ehden-hmb": "https://github.com/ohdsi-studies/ehden-hmb.git",
   "legendt2dm": "https://github.com/ohdsi-studies/LegendT2dm.git",
   "reward": "https://github.com/ohdsi-studies/Reward.git",
@@ -153,6 +154,7 @@ const REPO_CATEGORIES: Record<string, { description: string; repos: Record<strin
     description: "Strategus study design templates and reference implementations",
     repos: {
       "strategus-study-template": "Official Strategus study repo template with standard file structure",
+      "tutorial-strategus-study": "Annotated Strategus tutorial study — canonical reference for network-study coordinator vs site workflow",
       "ehden-hmb": "EHDEN Heavy Menstrual Bleeding — CohortMethod estimation example",
       "legendt2dm": "LEGEND-T2DM — Large-scale multi-database estimation study",
       "reward": "REWARD — Characterization and incidence study example",
@@ -229,7 +231,7 @@ function safeKbJoin(kbPath: string, ...paths: string[]): string {
 // ── kb_list_repos ───────────────────────────────────────────────────
 
 export const kbListReposTool: ToolDefinition<{ category?: string }> = {
-  name: "kb_list_repos",
+  name: "KBListRepos",
   description:
     "List available OHDSI knowledge base repositories organized by category. " +
     "Call without arguments to see all categories and repos. " +
@@ -280,7 +282,7 @@ export const kbListReposTool: ToolDefinition<{ category?: string }> = {
 // ── kb_init ─────────────────────────────────────────────────────────
 
 export const kbInitTool: ToolDefinition<{ repo: string }> = {
-  name: "kb_init",
+  name: "KBInit",
   description:
     "Initialize a knowledge base by cloning an OHDSI reference repository. " +
     "Supported: atlas, webapi, hades, strategus, data2evidence, and all HADES packages " +
@@ -338,7 +340,7 @@ export const kbInitTool: ToolDefinition<{ repo: string }> = {
 // ── kb_update ───────────────────────────────────────────────────────
 
 export const kbUpdateTool: ToolDefinition<{ repo: string }> = {
-  name: "kb_update",
+  name: "KBUpdate",
   description:
     "Update a knowledge base repository to the latest version by running git pull. " +
     "The repo must be initialized first with kb_init.",
@@ -383,7 +385,7 @@ export const kbReadTool: ToolDefinition<{
   start_line?: number;
   end_line?: number;
 }> = {
-  name: "kb_read",
+  name: "KBRead",
   description:
     "Read a file from a knowledge base repository. Optionally specify a line range (1-indexed).",
   parameters: {
@@ -430,7 +432,7 @@ export const kbSearchTool: ToolDefinition<{
   include_glob?: string;
   max_results?: number;
 }> = {
-  name: "kb_search",
+  name: "KBSearch",
   description:
     "Search file contents in a knowledge base repo with a regex pattern. " +
     "Returns matching lines with file path and line numbers.",
@@ -528,7 +530,7 @@ export const kbListFilesTool: ToolDefinition<{
   path?: string;
   recursive?: boolean;
 }> = {
-  name: "kb_list_files",
+  name: "KBListFiles",
   description:
     "List files and directories in a knowledge base repository. " +
     "Excludes node_modules, .git, dist, etc. by default.",
@@ -579,7 +581,7 @@ export const kbListFilesTool: ToolDefinition<{
 // ── kb_overview ─────────────────────────────────────────────────────
 
 export const kbOverviewTool: ToolDefinition<{ repo: string }> = {
-  name: "kb_overview",
+  name: "KBOverview",
   description:
     "Get a quick overview of a knowledge base repository: top-level directory structure, " +
     "file counts by extension, and total file count. Useful for orientation.",
@@ -682,7 +684,7 @@ export const kbFindSymbolsTool: ToolDefinition<{
   path?: string;
   max_results?: number;
 }> = {
-  name: "kb_find_symbols",
+  name: "KBFindSymbols",
   description:
     "Search for function, class, type, and interface definitions in a knowledge base repo. " +
     "Finds symbol definitions matching the query string. More targeted than kb_search for navigating code.",

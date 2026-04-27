@@ -7,7 +7,7 @@ export const editFileTool: ToolDefinition<{
   old_text: string;
   new_text: string;
 }> = {
-  name: "edit_file",
+  name: "Edit",
   description:
     "Replace a specific section of a file. The old_text must appear exactly once in the file.",
   parameters: {

@@ -7,7 +7,7 @@ export const renameFileTool: ToolDefinition<{
   source: string;
   destination: string;
 }> = {
-  name: "rename_file",
+  name: "RenameFile",
   description: "Move or rename a file in the workspace. Creates parent directories.",
   parameters: {
     type: "object",

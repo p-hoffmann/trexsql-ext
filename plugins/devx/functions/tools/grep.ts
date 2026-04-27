@@ -9,7 +9,7 @@ export const grepTool: ToolDefinition<{
   include_glob?: string;
   max_results?: number;
 }> = {
-  name: "grep",
+  name: "Grep",
   description:
     "Search file contents with a regex pattern. Returns matching lines with file path and line numbers.",
   parameters: {

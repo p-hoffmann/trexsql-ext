@@ -51,6 +51,19 @@ export interface DevxSettings {
   auto_fix_problems?: boolean;
 }
 
+export interface ProviderConfigRecord {
+  id: string;
+  user_id: string;
+  provider: Provider;
+  model: string;
+  api_key?: string;
+  base_url?: string;
+  display_name?: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 // Agent types
 
 export interface AgentTodo {
@@ -431,7 +444,7 @@ export interface Attachment {
   size_bytes: number;
 }
 
-export type Provider = "anthropic" | "openai" | "google" | "openai-compatible" | "bedrock";
+export type Provider = "anthropic" | "openai" | "google" | "openai-compatible" | "bedrock" | "claude-code" | "copilot";
 
 export interface ProviderConfig {
   id: Provider;
@@ -457,11 +470,8 @@ export const PROVIDERS: ProviderConfig[] = [
     id: "openai",
     name: "OpenAI",
     models: [
-      "gpt-4o",
-      "gpt-4o-mini",
-      "gpt-4-turbo",
-      "o1",
-      "o1-mini",
+      "gpt-5.3-codex",
+      "gpt-5-mini",
     ],
     requiresApiKey: true,
     requiresBaseUrl: false,
@@ -470,6 +480,7 @@ export const PROVIDERS: ProviderConfig[] = [
     id: "google",
     name: "Google",
     models: [
+      "gemini-3.1-pro",
       "gemini-2.5-pro-preview-06-05",
       "gemini-2.5-flash-preview-05-20",
       "gemini-2.0-flash",
@@ -494,6 +505,30 @@ export const PROVIDERS: ProviderConfig[] = [
       "qwen.qwen3-coder-next",
       "moonshotai.kimi-k2.5",
       "zai.glm-5",
+    ],
+    requiresApiKey: false,
+    requiresBaseUrl: false,
+  },
+  {
+    id: "claude-code",
+    name: "Claude Code (Subscription)",
+    models: [
+      "claude-sonnet-4-6",
+      "claude-opus-4-6",
+      "sonnet",
+      "opus",
+    ],
+    requiresApiKey: false,
+    requiresBaseUrl: false,
+  },
+  {
+    id: "copilot",
+    name: "GitHub Copilot (Subscription)",
+    models: [
+      "gpt-5.3-codex",
+      "gpt-5-mini",
+      "claude-sonnet-4-6",
+      "gemini-3.1-pro",
     ],
     requiresApiKey: false,
     requiresBaseUrl: false,

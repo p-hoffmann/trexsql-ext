@@ -5,7 +5,7 @@ export const updateTodosTool: ToolDefinition<{
   mode: "merge" | "replace";
   todos: Array<{ id: string; content?: string; status?: string }>;
 }> = {
-  name: "update_todos",
+  name: "TodoWrite",
   description:
     "Update the task/todo list for the current conversation. Use 'merge' mode to update specific todos by id, or 'replace' mode to set the entire list. Each todo has an id, content, and status (pending/in_progress/completed). Only one todo should be in_progress at a time.",
   parameters: {

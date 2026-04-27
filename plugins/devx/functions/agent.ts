@@ -132,6 +132,24 @@ export async function streamAgentChat({
   commandOverride,
   hasComponentSelection,
 }) {
+  // Dispatch to Claude Code SDK agent when that provider is selected
+  if (settings.provider === "claude-code") {
+    const { streamClaudeCodeChat } = await import("./claude_code_agent.ts");
+    return streamClaudeCodeChat({
+      chatId, userId, appId, chatMode, settings, history, send, sqlFn,
+      skillContext, commandOverride, hasComponentSelection,
+    });
+  }
+
+  // Dispatch to GitHub Copilot SDK agent when that provider is selected
+  if (settings.provider === "copilot") {
+    const { streamCopilotChat } = await import("./copilot_agent.ts");
+    return streamCopilotChat({
+      chatId, userId, appId, chatMode, settings, history, send, sqlFn,
+      skillContext, commandOverride, hasComponentSelection,
+    });
+  }
+
   const mode = chatMode || "agent";
   const maxSteps = settings.max_steps || DEFAULT_MAX_STEPS;
 

@@ -6,7 +6,7 @@ export const readLogsTool: ToolDefinition<{
   path?: string;
   lines?: number;
 }> = {
-  name: "read_logs",
+  name: "ReadLogs",
   description:
     "Read the last N lines from a log file in the workspace. Defaults to the dev server log if available.",
   parameters: {

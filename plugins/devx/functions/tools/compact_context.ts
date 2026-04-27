@@ -2,7 +2,7 @@
 import type { ToolDefinition } from "./types.ts";
 
 export const compactContextTool: ToolDefinition<{ reason?: string }> = {
-  name: "compact_context",
+  name: "CompactContext",
   description:
     "Summarize older messages in the conversation to free up context space. Call this when the conversation is getting long. Produces a summary that replaces the oldest messages in future requests.",
   parameters: {

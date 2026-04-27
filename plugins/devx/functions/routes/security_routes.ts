@@ -17,18 +17,18 @@ const CODE_EXTENSIONS = /\.(ts|tsx|js|jsx|mjs|cjs|json|env|yaml|yml|py|sql|html|
 
 // Tool allowlists per review type
 const CODE_REVIEW_TOOLS = [
-  "read_file", "list_files", "grep", "code_search", "git_diff", "git_log", "git_status",
+  "Read", "Glob", "Grep", "CodeSearch", "GitDiff", "GitLog", "GitStatus",
 ];
 const SECURITY_REVIEW_TOOLS = [
-  "read_file", "list_files", "grep", "code_search", "git_diff", "git_log", "git_status",
+  "Read", "Glob", "Grep", "CodeSearch", "GitDiff", "GitLog", "GitStatus",
 ];
 const QA_REVIEW_TOOLS = [
-  "browser_navigate", "browser_click", "browser_fill", "browser_get_text", "browser_evaluate",
-  "read_file", "list_files", "grep", "git_diff",
+  "BrowserNavigate", "BrowserClick", "BrowserFill", "BrowserGetText", "BrowserEvaluate",
+  "Read", "Glob", "Grep", "GitDiff",
 ];
 const DESIGN_REVIEW_TOOLS = [
-  "browser_navigate", "browser_click", "browser_screenshot", "browser_get_text",
-  "read_file", "list_files", "grep", "git_diff",
+  "BrowserNavigate", "BrowserClick", "BrowserScreenshot", "BrowserGetText",
+  "Read", "Glob", "Grep", "GitDiff",
 ];
 
 export async function handleSecurityRoutes(path, method, req, userId, sql, corsHeaders) {
@@ -117,18 +117,41 @@ export async function handleSecurityRoutes(path, method, req, userId, sql, corsH
     allowedTools: string[];
     maxSteps?: number;
   }) {
-    const settingsResult = await sql(
-      `SELECT provider, model, api_key, base_url, ai_rules, auto_approve, max_steps FROM devx.settings WHERE user_id = $1 LIMIT 1`,
+    // Read active provider config, fall back to legacy settings
+    const activePC = await sql(
+      `SELECT provider, model, api_key, base_url FROM devx.provider_configs WHERE user_id = $1 AND is_active = true LIMIT 1`,
       [userId],
     );
-    if (settingsResult.rows.length === 0 || !settingsResult.rows[0].api_key) {
-      return Response.json(
-        { error: "AI provider not configured. Set your API key in Settings." },
-        { status: 400, headers: corsHeaders },
-      );
-    }
+    const prefsResult = await sql(
+      `SELECT ai_rules, auto_approve, max_steps FROM devx.settings WHERE user_id = $1 LIMIT 1`,
+      [userId],
+    );
+    const providerRow = activePC.rows[0];
+    const prefs = prefsResult.rows[0] || {};
 
-    const settings = settingsResult.rows[0];
+    if (!providerRow) {
+      // Legacy fallback
+      const legacyResult = await sql(
+        `SELECT provider, model, api_key, base_url, ai_rules, auto_approve, max_steps FROM devx.settings WHERE user_id = $1 LIMIT 1`,
+        [userId],
+      );
+      if (legacyResult.rows.length === 0 || !legacyResult.rows[0].api_key) {
+        return Response.json(
+          { error: "AI provider not configured. Set your API key in Settings." },
+          { status: 400, headers: corsHeaders },
+        );
+      }
+      var settings = legacyResult.rows[0];
+    } else {
+      const noKeyProviders = new Set(["claude-code", "copilot", "bedrock"]);
+      if (!providerRow.api_key && !noKeyProviders.has(providerRow.provider)) {
+        return Response.json(
+          { error: "AI provider not configured. Set your API key in Settings." },
+          { status: 400, headers: corsHeaders },
+        );
+      }
+      var settings = { ...providerRow, ...prefs };
+    }
 
     // Fetch previous review for context
     let previousContext = "";
@@ -177,19 +200,19 @@ export async function handleSecurityRoutes(path, method, req, userId, sql, corsH
             } else if (data.type === "tool_call_start") {
               // Show which tool the agent is using
               const toolMessages: Record<string, string> = {
-                read_file: "Reading file...",
-                list_files: "Exploring project structure...",
-                grep: "Searching codebase...",
-                code_search: "Searching code...",
-                git_diff: "Checking recent changes...",
-                git_log: "Reading git history...",
-                git_status: "Checking git status...",
-                browser_navigate: "Navigating to app...",
-                browser_click: "Interacting with app...",
-                browser_fill: "Filling form...",
-                browser_get_text: "Reading page content...",
-                browser_screenshot: "Taking screenshot...",
-                browser_evaluate: "Running browser check...",
+                Read: "Reading file...",
+                Glob: "Exploring project structure...",
+                Grep: "Searching codebase...",
+                CodeSearch: "Searching code...",
+                GitDiff: "Checking recent changes...",
+                GitLog: "Reading git history...",
+                GitStatus: "Checking git status...",
+                BrowserNavigate: "Navigating to app...",
+                BrowserClick: "Interacting with app...",
+                BrowserFill: "Filling form...",
+                BrowserGetText: "Reading page content...",
+                BrowserScreenshot: "Taking screenshot...",
+                BrowserEvaluate: "Running browser check...",
               };
               const msg = toolMessages[data.name] || `Using ${data.name}...`;
               send({ type: `${opts.eventPrefix}_progress`, message: msg });
@@ -273,7 +296,7 @@ export async function handleSecurityRoutes(path, method, req, userId, sql, corsH
     if (files.length === 0) {
       return null;
     }
-    return `${prefix}\n\nThe project has ${files.length} code files. Use your tools (read_file, grep, git_diff, list_files) to explore the codebase in depth. Here is a summary of the files for context:\n\n${files.map((f) => `- ${f.path} (${f.content.length} chars)`).join("\n")}`;
+    return `${prefix}\n\nThe project has ${files.length} code files. Use your tools (Read, Grep, GitDiff, Glob) to explore the codebase in depth. Here is a summary of the files for context:\n\n${files.map((f) => `- ${f.path} (${f.content.length} chars)`).join("\n")}`;
   }
 
   // Helper: build QA/Design review message with git diff and app URL.

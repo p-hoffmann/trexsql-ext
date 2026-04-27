@@ -182,9 +182,17 @@ export function useMessages(chatId: string | null, options?: { onAppCommand?: (c
             toolCallsRef.current = next;
             return next;
           });
-          // Trigger file refresh when agent writes/edits files
-          const fileTools = new Set(["write_file", "edit_file", "create_file", "delete_file"]);
-          if (fileTools.has(toolCall.name) && !toolCall.error) {
+          // Trigger file refresh when agent writes/edits files. Covers our registry,
+          // Claude Code SDK built-ins, MCP variants, and Bash (which routinely mutates
+          // files via heredocs, npm install, git checkout, etc.).
+          const FILE_MUTATING_TOOLS = new Set([
+            "Write", "Edit", "MultiEdit", "SearchReplace",
+            "DeleteFile", "CopyFile", "RenameFile", "NotebookEdit",
+            "Bash",
+          ]);
+          const stripped = toolCall.name.replace(/^mcp__[^_]+__/, "");
+          if (FILE_MUTATING_TOOLS.has(stripped) && !toolCall.error) {
+            console.debug("[file-refresh] triggered by tool:", toolCall.name);
             options?.onBuildAction?.({ action: "file_change" });
           }
         },
