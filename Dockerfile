@@ -42,13 +42,6 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs && \
 COPY src/ /usr/src/trexsql/src/
 RUN cargo build --release
 
-# Stage 2: Build devx frontend
-FROM node:22-trixie-slim AS devx-builder
-WORKDIR /build
-COPY plugins/devx/package.json plugins/devx/package-lock.json plugins/devx/tsconfig*.json plugins/devx/vite.config.ts plugins/devx/vite.config.spa.ts plugins/devx/index.html ./
-COPY plugins/devx/src/ ./src/
-RUN npm install && npm run build
-
 # Stage 3: Build web frontend
 FROM node:22-trixie-slim AS web-builder
 WORKDIR /build
@@ -166,11 +159,6 @@ COPY functions/ ./functions/
 RUN mkdir -p ./plugins/runtime && echo '{"nodeModulesDir":"auto"}' > ./plugins/runtime/deno.json
 
 # Copy dev plugins (use pre-built dist from builder stages)
-COPY plugins/devx/ ./plugins-dev/devx/
-# Install SDK deps in isolated edge function directories
-RUN cd ./plugins-dev/devx/fn-copilot && npm install --omit=dev 2>/dev/null || true
-RUN cd ./plugins-dev/devx/fn-claude-code && npm install --omit=dev 2>/dev/null || true
-COPY --from=devx-builder /build/dist/ ./plugins-dev/devx/dist/
 COPY plugins/web/ ./plugins-dev/web/
 COPY --from=web-builder /build/dist/ ./plugins-dev/web/dist/
 COPY plugins/notebook/ ./plugins-dev/notebook/
@@ -188,9 +176,6 @@ RUN openssl req -new -x509 -days 3650 -nodes \
 
 ENV SCHEMA_DIR=/usr/src/core/schema
 ENV DUCKDB_EXTENSION_DIRECTORY=/usr/share/trexsql/extensions
-
-# Ensure workspace directory exists and is writable by node user
-RUN mkdir -p /tmp/devx-workspaces && chown node:node /tmp/devx-workspaces
 
 # Ensure config directories exist for OAuth token persistence
 RUN mkdir -p /home/node/.claude /home/node/.config/gh && \
