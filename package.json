@@ -9,7 +9,6 @@
     "@trex/circe": "latest",
     "@trex/cql2elm": "latest",
     "@trex/db": "latest",
-    "@trex/devx-ext": "latest",
     "@trex/docs": "latest",
     "@trex/etl": "latest",
     "@trex/fhir": "latest",

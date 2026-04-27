@@ -61,6 +61,24 @@ app.get(`${BASE_PATH}/api/settings/public`, apiLimiter, async (_req, res) => {
   }
 });
 
+// Web shell extension config — env-driven nav items.
+// TREX_WEB_NAV_EXTRA is a JSON array of { path, label, plugin } entries.
+// Each entry adds a top-nav link in the web shell that routes to a single-spa
+// mount of the named plugin (loaded from /plugins/trex/<plugin>/<plugin>-spa.js).
+app.get(`${BASE_PATH}/api/web-config`, apiLimiter, (_req, res) => {
+  let navExtra: unknown[] = [];
+  const raw = Deno.env.get("TREX_WEB_NAV_EXTRA");
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) navExtra = parsed;
+    } catch (err) {
+      console.warn("[web-config] invalid TREX_WEB_NAV_EXTRA:", err);
+    }
+  }
+  res.json({ navExtra });
+});
+
 // Mount GoTrue-compatible auth router
 app.use(`${BASE_PATH}/auth/v1`, authRouter);
 

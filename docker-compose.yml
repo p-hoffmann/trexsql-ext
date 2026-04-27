@@ -1,6 +1,5 @@
 volumes:
   core-pgdata:
-  devx-workspaces:
   claude-config:
   gh-config:
 
@@ -38,7 +37,6 @@ services:
     #   - ./plugins/docs:/usr/src/plugins/@trex/docs
     #   - ./plugins/web/dist:/usr/src/plugins/@trex/web/dist
     volumes:
-      - devx-workspaces:/tmp/devx-workspaces
       - claude-config:/home/node/.claude
       - gh-config:/home/node/.config/gh
     depends_on:

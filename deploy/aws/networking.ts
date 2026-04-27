@@ -12,10 +12,6 @@ export interface NetworkingResult {
   alb: aws.lb.LoadBalancer;
   targetGroup: aws.lb.TargetGroup;
   httpsListener?: aws.lb.Listener;
-  efs: aws.efs.FileSystem;
-  efsSecurityGroup: aws.ec2.SecurityGroup;
-  efsMountTargets: aws.efs.MountTarget[];
-  efsAccessPoint: aws.efs.AccessPoint;
 }
 
 export function createNetworking(
@@ -70,47 +66,6 @@ export function createNetworking(
     egress: [
       { protocol: "-1", fromPort: 0, toPort: 0, cidrBlocks: ["0.0.0.0/0"] },
     ],
-  });
-
-  // EFS for DuckDB workspace persistence
-  const efsSecurityGroup = new aws.ec2.SecurityGroup(`trex-${env}-efs-sg`, {
-    vpcId: vpc.vpcId,
-    ingress: [
-      {
-        protocol: "tcp",
-        fromPort: 2049,
-        toPort: 2049,
-        securityGroups: [ecsSecurityGroup.id],
-      },
-    ],
-    egress: [
-      { protocol: "-1", fromPort: 0, toPort: 0, cidrBlocks: ["0.0.0.0/0"] },
-    ],
-  });
-
-  const efs = new aws.efs.FileSystem(`trex-${env}-efs`, {
-    encrypted: true,
-    tags: { Name: `trex-${env}-workspaces` },
-  });
-
-  const efsMountTargets = vpc.privateSubnetIds.apply((subnetIds) =>
-    subnetIds.map(
-      (subnetId, i) =>
-        new aws.efs.MountTarget(`trex-${env}-efs-mt-${i}`, {
-          fileSystemId: efs.id,
-          subnetId,
-          securityGroups: [efsSecurityGroup.id],
-        })
-    )
-  );
-
-  const efsAccessPoint = new aws.efs.AccessPoint(`trex-${env}-efs-ap`, {
-    fileSystemId: efs.id,
-    rootDirectory: {
-      path: "/devx-workspaces",
-      creationInfo: { ownerGid: 1000, ownerUid: 1000, permissions: "755" },
-    },
-    posixUser: { gid: 1000, uid: 1000 },
   });
 
   // Application Load Balancer
@@ -176,9 +131,5 @@ export function createNetworking(
     alb,
     targetGroup,
     httpsListener,
-    efs,
-    efsSecurityGroup,
-    efsMountTargets: efsMountTargets as any,
-    efsAccessPoint,
   };
 }

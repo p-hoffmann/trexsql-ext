@@ -155,7 +155,6 @@ RUN cd /usr/src/core/server && npm install --omit=dev && \
     cd /usr/src/core/event && npm install --omit=dev
 COPY functions/ ./functions/
 COPY --from=npm-deps /usr/src/node_modules/@trex ./plugins/@trex
-COPY plugins/devx/ ./plugins-dev/devx/
 COPY plugins/web/ ./plugins-dev/web/
 COPY plugins/storage/ ./plugins-dev/storage/
 COPY plugins/pg-meta/ ./plugins-dev/pg-meta/

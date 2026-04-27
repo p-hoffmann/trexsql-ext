@@ -2,9 +2,11 @@ import { useSession, authClient } from "@/lib/auth-client";
 import { Navigate, Outlet, Link, NavLink, useLocation } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { useWebConfig } from "@/lib/web-config";
 
 export function Layout() {
   const { data: session, isPending } = useSession();
+  const { navExtra } = useWebConfig();
 
   if (isPending) {
     return (
@@ -23,7 +25,13 @@ export function Layout() {
   }
 
   const location = useLocation();
-  const isEmbed = location.pathname === "/docs" || location.pathname === "/devx";
+  const isEmbed =
+    location.pathname === "/docs" ||
+    navExtra.some(
+      (item) =>
+        location.pathname === item.path ||
+        location.pathname.startsWith(item.path + "/"),
+    );
 
   const initials = session.user?.name
     ?.split(" ")
@@ -45,12 +53,17 @@ export function Layout() {
                }>
               Docs
             </NavLink>
-            <NavLink to="/devx"
-               className={({ isActive }) =>
-                 `text-sm transition-colors ${isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`
-               }>
-              DevX
-            </NavLink>
+            {navExtra.map((item) => (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                className={({ isActive }) =>
+                  `text-sm transition-colors ${isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`
+                }
+              >
+                {item.label}
+              </NavLink>
+            ))}
             {session.user.role === "admin" && (
               <NavLink to="/admin"
                 className={({ isActive }) =>

@@ -1,6 +1,5 @@
 volumes:
   core-pgdata:
-  devx-workspaces:
   claude-config:
   gh-config:
 
@@ -35,16 +34,9 @@ services:
       - ./core/server:/usr/src/core/server
       - ./core/event:/usr/src/core/event
       - ./functions:/usr/src/functions
-      - ./plugins/devx/functions:/usr/src/plugins-dev/devx/functions
-      - ./plugins/devx/fn-claude-code/server.js:/usr/src/plugins-dev/devx/fn-claude-code/server.js
-      - ./plugins/devx/fn-claude-code/kb_mcp.js:/usr/src/plugins-dev/devx/fn-claude-code/kb_mcp.js
-      - ./plugins/devx/dist:/usr/src/plugins-dev/devx/dist
-      - ./plugins/devx/migrations:/usr/src/plugins-dev/devx/migrations
-      - ./plugins/devx/skills:/usr/src/plugins-dev/devx/skills
       - ./plugins/web/dist:/usr/src/plugins-dev/web/dist
       - ./plugins/notebook/dist:/usr/src/plugins-dev/notebook/dist
       - ./plugins/storage:/usr/src/plugins-dev/storage
-      - devx-workspaces:/tmp/devx-workspaces
       - claude-config:/home/node/.claude
       - gh-config:/home/node/.config/gh
     depends_on:
