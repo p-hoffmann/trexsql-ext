@@ -17,7 +17,6 @@ def _setup_two_nodes(node_factory):
     node_a = node_factory()
     node_b = node_factory()
 
-    # Node A: US data
     node_a.execute(
         "CREATE TABLE orders AS "
         "SELECT i as id, 'US' as region, random() * 100 as price "
@@ -31,7 +30,6 @@ def _setup_two_nodes(node_factory):
         f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_a.flight_port})"
     )
 
-    # Node B: EU data, joins Node A
     node_b.execute(
         "CREATE TABLE orders AS "
         "SELECT i as id, 'EU' as region, random() * 100 as price "
@@ -53,7 +51,6 @@ def test_gossip_convergence(node_factory):
     """Both nodes see each other via trex_db_nodes() after gossip join."""
     node_a, node_b = _setup_two_nodes(node_factory)
 
-    # Wait for both nodes to see 2 members
     wait_for(
         node_a,
         "SELECT * FROM trex_db_nodes()",
@@ -72,7 +69,6 @@ def test_swarm_tables_both_nodes(node_factory):
     """trex_db_tables() shows orders table from both nodes."""
     node_a, node_b = _setup_two_nodes(node_factory)
 
-    # Wait for convergence first
     wait_for(
         node_a,
         "SELECT * FROM trex_db_nodes()",
@@ -93,7 +89,6 @@ def test_distributed_query_regions(node_factory):
     """Distributed query returns rows from both US and EU regions."""
     node_a, node_b = _setup_two_nodes(node_factory)
 
-    # Wait for convergence
     wait_for(
         node_a,
         "SELECT * FROM trex_db_nodes()",
@@ -101,7 +96,6 @@ def test_distributed_query_regions(node_factory):
         timeout=15,
     )
 
-    # Run distributed query
     result = wait_for(
         node_a,
         "SELECT * FROM trex_db_query("
@@ -110,7 +104,6 @@ def test_distributed_query_regions(node_factory):
         timeout=10,
     )
 
-    # Build a dict of region -> count
     region_counts = {row[0]: int(row[1]) for row in result}
     assert "US" in region_counts, f"Missing US region in {region_counts}"
     assert "EU" in region_counts, f"Missing EU region in {region_counts}"

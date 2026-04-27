@@ -247,7 +247,6 @@ def test_delete_dataset(fhir):
     did = _create_dataset(fhir)
     status, _, _ = fhir.delete(f"/datasets/{did}")
     assert status == 204
-    # confirm gone
     status, _, _ = fhir.get(f"/datasets/{did}")
     assert status == 404
 

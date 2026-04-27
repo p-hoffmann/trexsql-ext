@@ -41,7 +41,6 @@ export function Functions() {
   const roleMappings: RoleScopeRow[] = result.data?.roleScopeMappings || [];
   const urlScopes: UrlScopeRow[] = result.data?.urlScopeRequirements || [];
 
-  // Collect all unique scopes from both roles and URL requirements
   const allScopes = useMemo(() => {
     const set = new Set<string>();
     for (const r of roleMappings) r.scopes.forEach((s) => set.add(s));
@@ -49,7 +48,6 @@ export function Functions() {
     return Array.from(set).sort();
   }, [roleMappings, urlScopes]);
 
-  // Filter by selected scope
   const filteredRoleMappings = useMemo(
     () => selectedScope ? roleMappings.filter((r) => r.scopes.includes(selectedScope)) : roleMappings,
     [roleMappings, selectedScope]

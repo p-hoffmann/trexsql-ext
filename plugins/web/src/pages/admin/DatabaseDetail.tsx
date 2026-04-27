@@ -435,9 +435,7 @@ export function DatabaseDetail() {
       <Separator />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Left column */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Details card */}
           <Card>
             <CardHeader>
               <CardTitle>Connection Details</CardTitle>
@@ -584,7 +582,6 @@ export function DatabaseDetail() {
             </CardContent>
           </Card>
 
-          {/* Credentials card */}
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -657,9 +654,7 @@ export function DatabaseDetail() {
           </Card>
         </div>
 
-        {/* Right column */}
         <div className="space-y-6">
-          {/* Info card */}
           <Card>
             <CardHeader>
               <CardTitle>Info</CardTitle>
@@ -702,7 +697,6 @@ export function DatabaseDetail() {
             </CardContent>
           </Card>
 
-          {/* Actions card */}
           <Card>
             <CardHeader>
               <CardTitle>Actions</CardTitle>
@@ -743,7 +737,6 @@ export function DatabaseDetail() {
         </div>
       </div>
 
-      {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -771,7 +764,6 @@ export function DatabaseDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Add Credential Dialog */}
       <Dialog
         open={addCredOpen}
         onOpenChange={(open) => {

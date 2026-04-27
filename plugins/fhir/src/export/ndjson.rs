@@ -143,7 +143,6 @@ pub async fn execute_export(
 
         match executor.submit(sql).await {
             QueryResult::Select { rows, .. } => {
-                // TODO: write to NDJSON files
                 results.push((rt.clone(), rows.len()));
             }
             QueryResult::Error(e) => {

@@ -22,7 +22,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use tracing::warn;
 
-// ── Result types ─────────────────────────────────────────────────────────────
 
 /// Result of a read query — Arrow RecordBatches.
 pub enum PoolResult {
@@ -40,7 +39,6 @@ pub enum WriteResult {
     Error(String),
 }
 
-// ── Internal request types ───────────────────────────────────────────────────
 
 struct ReadRequest {
     sql: String,
@@ -53,7 +51,6 @@ struct WriteRequest {
     response_tx: std::sync::mpsc::SyncSender<WriteResult>,
 }
 
-// ── Connection handle for direct/streaming access ────────────────────────────
 
 /// Opaque handle returned by [`acquire_direct`]. Must be returned via
 /// [`release_direct`] when the caller is done.
@@ -61,7 +58,6 @@ pub struct ConnectionHandle {
     index: usize,
 }
 
-// ── SharedPool ───────────────────────────────────────────────────────────────
 
 struct Worker {
     _handle: JoinHandle<()>,
@@ -89,7 +85,6 @@ impl SharedPool {
             return Err("read_pool_size must be > 0".to_string());
         }
 
-        // --- Read workers ---
         let mut read_senders = Vec::with_capacity(read_pool_size);
         let mut read_workers = Vec::with_capacity(read_pool_size);
 
@@ -107,7 +102,6 @@ impl SharedPool {
             read_workers.push(Worker { _handle: handle });
         }
 
-        // --- Write worker (single, serialized) ---
         let write_conn = base_conn
             .try_clone()
             .map_err(|e| format!("write worker clone: {e}"))?;
@@ -118,7 +112,6 @@ impl SharedPool {
             .spawn(move || write_worker_loop(write_conn, write_rx))
             .map_err(|e| format!("spawn write worker: {e}"))?;
 
-        // --- Direct connections (for with_connection and streaming) ---
         let direct_count = read_pool_size;
         let mut direct_connections = Vec::with_capacity(direct_count);
         for i in 0..direct_count {
@@ -142,7 +135,6 @@ impl SharedPool {
     }
 }
 
-// ── Worker loops ─────────────────────────────────────────────────────────────
 
 fn read_worker_loop(conn: Connection, receiver: Receiver<ReadRequest>) {
     while let Ok(req) = receiver.recv() {
@@ -180,7 +172,6 @@ fn write_worker_loop(conn: Connection, receiver: Receiver<WriteRequest>) {
     }
 }
 
-// ── Query execution ──────────────────────────────────────────────────────────
 
 fn execute_read(conn: &Connection, sql: &str) -> PoolResult {
     match conn.prepare(sql) {
@@ -235,7 +226,6 @@ fn execute_write_params(conn: &Connection, sql: &str, params: &[String]) -> Writ
     }
 }
 
-// ── Query classification ─────────────────────────────────────────────────────
 
 /// Returns `true` if the SQL statement is expected to return result rows.
 pub fn is_result_returning_query(sql: &str) -> bool {
@@ -259,7 +249,6 @@ fn is_action_pragma(upper: &str) -> bool {
         || after.starts_with("IMPORT_DATABASE")
 }
 
-// ── JSON serialization ───────────────────────────────────────────────────────
 
 /// Convert Arrow RecordBatches to a JSON array string.
 pub fn record_batches_to_json(batches: &[RecordBatch]) -> String {
@@ -401,7 +390,6 @@ fn column_value_to_json(
     }
 }
 
-// ── Public API ───────────────────────────────────────────────────────────────
 
 /// Initialise the shared pool from an existing Connection.
 /// Clones the connection for each worker thread.
@@ -414,11 +402,9 @@ pub fn init_from_connection(conn: &Connection, read_pool_size: usize) -> Result<
     POOL.set(Arc::new(pool))
         .map_err(|_| "pool already initialised".to_string())?;
 
-    // Initialize streaming pool
     let streaming = StreamingPool::new(conn, read_pool_size)?;
     let _ = STREAMING_POOL.set(streaming);
 
-    // Initialize shared connection provider
     let shared_conn = conn
         .try_clone()
         .map_err(|e| format!("shared conn clone: {e}"))?;
@@ -446,7 +432,6 @@ fn get_pool() -> Result<&'static Arc<SharedPool>, String> {
     POOL.get().ok_or_else(|| "pool not initialised".to_string())
 }
 
-// ── Read API (Arrow) ─────────────────────────────────────────────────────────
 
 /// Submit a read query and block, returning Arrow Schema + RecordBatches.
 pub fn read_arrow(sql: &str) -> Result<(Arc<Schema>, Vec<RecordBatch>), String> {
@@ -520,7 +505,6 @@ pub fn read_arrow_on(worker_id: usize, sql: &str) -> Result<(Arc<Schema>, Vec<Re
     }
 }
 
-// ── Write API ────────────────────────────────────────────────────────────────
 
 /// Submit a write query through the serialised write queue. Blocks until done.
 pub fn write(sql: &str) -> Result<(), String> {
@@ -547,7 +531,6 @@ pub fn write_params(sql: &str, params: &[String]) -> Result<(), String> {
     }
 }
 
-// ── Auto-classify API ────────────────────────────────────────────────────────
 
 /// Auto-classify the SQL as read or write, then route accordingly.
 /// Returns JSON for reads, "[]" for writes.
@@ -574,7 +557,6 @@ pub fn execute_arrow(sql: &str) -> PoolResult {
     }
 }
 
-// ── Direct connection API ────────────────────────────────────────────────────
 
 /// Run a closure with direct access to a pooled connection (round-robin).
 /// The closure runs on the calling thread with a Mutex-locked connection.
@@ -641,7 +623,6 @@ pub fn release_direct(_handle: ConnectionHandle) -> Result<(), String> {
     Ok(())
 }
 
-// ── Streaming pool ───────────────────────────────────────────────────────────
 
 static STREAMING_POOL: OnceLock<StreamingPool> = OnceLock::new();
 
@@ -688,7 +669,6 @@ pub fn get_streaming_pool() -> Option<&'static StreamingPool> {
     STREAMING_POOL.get()
 }
 
-// ── Connection provider ──────────────────────────────────────────────────────
 
 static CONNECTION_PROVIDER: OnceLock<Arc<Mutex<Connection>>> = OnceLock::new();
 
@@ -697,7 +677,6 @@ pub fn get_connection() -> Option<Arc<Mutex<Connection>>> {
     CONNECTION_PROVIDER.get().cloned()
 }
 
-// ── Pool management ──────────────────────────────────────────────────────────
 
 /// Force a trivial query on every read worker to refresh the DuckDB catalog
 /// after DDL changes. Call this after write operations that change schema.
@@ -732,7 +711,6 @@ pub fn next_read_worker_id() -> Result<usize, String> {
     Ok(pool.next_read.fetch_add(1, Ordering::Relaxed) % pool.read_senders.len())
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn extract_panic_message(err: Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = err.downcast_ref::<&str>() {
@@ -744,7 +722,6 @@ fn extract_panic_message(err: Box<dyn std::any::Any + Send>) -> String {
     }
 }
 
-// ── Session API with automatic transaction detection ─────────────────────────
 
 struct SessionState {
     /// Index into `SharedPool::direct_connections`. `Some` = in transaction.
@@ -948,7 +925,6 @@ fn execute_on_direct_params(idx: usize, sql: &str, params: &[String]) -> PoolRes
     }
 }
 
-// ── DuckDB extension entrypoint ──────────────────────────────────────────────
 
 const DEFAULT_POOL_SIZE: usize = 4;
 
@@ -966,7 +942,6 @@ pub unsafe fn extension_entrypoint(con: Connection) -> std::result::Result<(), B
     Ok(())
 }
 
-// ── C ABI exports ────────────────────────────────────────────────────────────
 //
 // These are discovered by consumer extensions via dlsym(RTLD_DEFAULT, ...).
 // Each function uses simple C types at the boundary (pointers, lengths, ints).
@@ -1289,7 +1264,6 @@ pub extern "C" fn trex_pool_execute_transaction(
     Box::into_raw(Box::new(cresult))
 }
 
-// ── Session C ABI exports ────────────────────────────────────────────────────
 
 /// Create a new session. Returns a unique session ID (always > 0).
 #[no_mangle]

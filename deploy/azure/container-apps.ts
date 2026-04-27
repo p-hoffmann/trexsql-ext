@@ -58,14 +58,13 @@ export function createContainerApps(opts: {
     },
   });
 
-  // Build environment variables
   const trexEnvVars = pulumi
     .all([opts.databaseUrl, opts.authSecret, opts.s3Endpoint])
     .apply(([dbUrl, secret, s3Endpoint]) => {
       const env = buildTrexEnvVars({
         databaseUrl: dbUrl,
         authSecret: secret,
-        endpointUrl: "https://placeholder", // Will be updated after app creation
+        endpointUrl: "https://placeholder",
         pluginsInformationUrl: opts.pluginsInformationUrl,
         tpmRegistryUrl: opts.tpmRegistryUrl,
         s3Bucket: opts.s3BucketName,

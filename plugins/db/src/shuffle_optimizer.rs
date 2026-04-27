@@ -181,7 +181,6 @@ impl ShuffleInsertionRule {
         &self,
         plan: Arc<dyn ExecutionPlan>,
     ) -> DFResult<Arc<dyn ExecutionPlan>> {
-        // First, recurse into children.
         let children: Vec<Arc<dyn ExecutionPlan>> = plan
             .children()
             .iter()

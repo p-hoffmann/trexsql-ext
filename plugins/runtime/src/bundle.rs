@@ -44,7 +44,7 @@ pub fn create_bundle_sync(
   output: &str,
   options: Option<BundleOptions>,
 ) -> Result<String> {
-  // Install rustls crypto provider (ring) before any TLS operations
+  // Required before any TLS operation; rustls panics if no provider is installed.
   let _ = rustls::crypto::ring::default_provider().install_default();
 
   let options = options.unwrap_or_default();

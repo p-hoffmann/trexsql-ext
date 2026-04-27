@@ -105,7 +105,6 @@ export function useCellExecution(
 
   const executeCell = useCallback(
     async (cellId: CellId, code: string, language: 'python' | 'r') => {
-      // Resolve the appropriate kernel for this language
       const targetKernel = getKernelForLanguage?.(language) ?? kernel
       if (!targetKernel) {
         onNoKernel?.(cellId)

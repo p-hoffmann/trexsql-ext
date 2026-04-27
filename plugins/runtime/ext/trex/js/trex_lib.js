@@ -66,7 +66,6 @@ export async function executeQueryStream(database, sql, params = []) {
                         break;
                     }
                     
-                    // Check if the chunk is an error message
                     try {
                         const parsed = JSON.parse(chunk);
                         if (parsed.error) {
@@ -74,9 +73,9 @@ export async function executeQueryStream(database, sql, params = []) {
                             break;
                         }
                     } catch (e) {
-                        // Not JSON, continue normally
+                        // Chunk is not a JSON-encoded error; treat as normal data.
                     }
-                    
+
                     controller.enqueue(chunk);
                 }
             } catch (error) {
@@ -499,9 +498,9 @@ export function createRequestListener(onMessage) {
 						
 						const respond = (response) => op_req_respond(requestId, response);
 						
-						onMessage({ 
+						onMessage({
 							service: originalMessage.service,
-							request: request  // Request object with special tokio channel tag
+							request: request
 						}, respond);
 					}
 					
@@ -539,7 +538,7 @@ export class TrexHttpClient {
 
 		if (response instanceof Response) {
 			let data;
-			// Read body as text first (can only read body once), then try to parse as JSON
+			// Body is a single-use stream; read once as text, then attempt JSON parse.
 			const textBody = await response.text().catch((err) => {
 				console.warn("TrexHttpClient: Failed to read response body:", err);
 				return "";

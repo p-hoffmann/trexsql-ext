@@ -18,7 +18,7 @@ def _setup_two_nodes(node_factory):
     node_a = node_factory()
     node_b = node_factory()
 
-    # Node A: deterministic prices 0..999
+    # Node A: deterministic prices 0..999.
     node_a.execute(
         "CREATE TABLE orders AS "
         "SELECT i as id, 'US' as region, CAST(i AS DOUBLE) as price "
@@ -32,7 +32,7 @@ def _setup_two_nodes(node_factory):
         f"SELECT trex_db_register_service('flight', '127.0.0.1', {node_a.flight_port})"
     )
 
-    # Node B: deterministic prices 1000..1999
+    # Node B: deterministic prices 1000..1999.
     node_b.execute(
         "CREATE TABLE orders AS "
         "SELECT i as id, 'EU' as region, CAST(i + 1000 AS DOUBLE) as price "

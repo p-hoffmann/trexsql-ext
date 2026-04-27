@@ -503,12 +503,12 @@ impl VScalar for TrexCreateBundleScalar {
 
   fn signatures() -> Vec<ScalarFunctionSignature> {
     vec![
-      // 2-argument version: trex_create_bundle(entrypoint, output)
+      // trex_create_bundle(entrypoint, output)
       ScalarFunctionSignature::exact(
         vec![LogicalTypeId::Varchar.into(), LogicalTypeId::Varchar.into()],
         LogicalTypeId::Varchar.into(),
       ),
-      // 3-argument version: trex_create_bundle(entrypoint, output, options_json)
+      // trex_create_bundle(entrypoint, output, options_json)
       ScalarFunctionSignature::exact(
         vec![
           LogicalTypeId::Varchar.into(),

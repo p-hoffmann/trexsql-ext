@@ -29,15 +29,13 @@ export class TrexConnection  {
     translatefn;
 
      constructor(
-       // conn,
-       // database,
         conn,
         writeConn,
         schemaName,
         vocabSchemaName,
         resultSchemaName,
         dialect,
-        translatefn, 
+        translatefn,
     ) {
         this.connection = conn
         this.writeConn = writeConn
@@ -51,9 +49,8 @@ export class TrexConnection  {
 
     parseResults(result) {
         function formatResult(value) {
-            // TODO: investigate if more cases are needed to handle DATE, TIMESTAMP and BIT datetypes
             switch (typeof value) {
-                case "bigint": //bigint
+                case "bigint":
                     return Number(value) * 1;
                 default:
                     return value;
@@ -81,10 +78,8 @@ export class TrexConnection  {
         callback
     ) {
         try {
-            // Convert atlas to JSON string if it's an object
             const atlasStr = (typeof atlas === 'string') ? atlas : JSON.stringify(atlas);
 
-            // Convert to base64
             const toBase64 = (s) => {
                 if (typeof Buffer !== 'undefined' && Buffer.from) {
                     return Buffer.from(s, 'utf8').toString('base64');
@@ -96,18 +91,14 @@ export class TrexConnection  {
             };
             const atlasB64 = toBase64(atlasStr);
 
-            // Build options JSON with schema information
-            // Use the schema names from the connection configuration
             const resultSchema = this.resultSchemaName || this.schemaName;
 
-            // cohortId must be an integer, not a string
             const cohortIdInt = parseInt(cohortId, 10);
             if (Number.isNaN(cohortIdInt)) {
                 callback(new Error("Invalid cohortId: expected an integer"), null);
                 return;
             }
 
-            // Build options as object and stringify to ensure proper JSON escaping
             const optionsObj = {
                 cdmSchema: cdmSchema,
                 resultSchema: resultSchema,
@@ -115,14 +106,12 @@ export class TrexConnection  {
                 cohortId: cohortIdInt,
                 generateStats: true
             };
+            // Escape single quotes for embedding in SQL string literal.
             const options = JSON.stringify(optionsObj).replace(/'/g, "''");
 
-            // Use circe_sql_render_translate to get properly rendered and translated SQL for DuckDB dialect
-            // Third parameter is additional render options (empty object)
             const sql = `SELECT circe_sql_render_translate(circe_json_to_sql('${atlasB64}', '${options}'), 'duckdb', '{}') AS sql`;
             const result = await this.connection.execute(sql, []);
 
-            // Extract the generated SQL from the result and return in same format as old atlas_query
             if (result && result.length > 0 && result[0].sql) {
                 callback(null, {sql: result[0].sql});
             } else {
@@ -139,10 +128,8 @@ export class TrexConnection  {
         callback
     ) {
         try {
-            // Convert cohort definition to JSON string if it's an object
             const cohortStr = (typeof cohortDefinition === 'string') ? cohortDefinition : JSON.stringify(cohortDefinition);
 
-            // Convert to base64
             const toBase64 = (s) => {
                 if (typeof Buffer !== 'undefined' && Buffer.from) {
                     return Buffer.from(s, 'utf8').toString('base64');
@@ -154,21 +141,17 @@ export class TrexConnection  {
             };
             const cohortDefinitionBase64 = toBase64(cohortStr);
 
-            // Execute circe_check_cohort function to validate the cohort definition
             const sql = `SELECT circe_check_cohort('${cohortDefinitionBase64}') AS warnings`;
             const result = await this.connection.execute(sql, []);
 
-            // Parse the JSON warnings from the result
             if (result && result.length > 0 && result[0].warnings) {
                 const warnings = JSON.parse(result[0].warnings);
-                // Extract just the messages from the warnings array
                 const messages = warnings.map(w => ({
                     severity: w.severity,
                     message: w.message
                 }));
                 callback(null, messages);
             } else {
-                // No warnings - return empty array
                 callback(null, []);
             }
         } catch (err) {
@@ -226,7 +209,8 @@ export class TrexConnection  {
     }
 
      #parseSql(temp, parameters) {
-        temp = this.#getSqlStatementWithSchemaName(this.schemaName, temp); //THIS HAS TO COME BEFORE
+        // Schema substitution must run before dialect translation.
+        temp = this.#getSqlStatementWithSchemaName(this.schemaName, temp);
         return this.translatefn(
             temp,
             this.schemaName,
@@ -318,28 +302,14 @@ export class TrexConnection  {
     }
 
     commit(callback) {
-        /*this.conn.exec("COMMIT", (commitError) => {
-            if (commitError) {
-                throw commitError;
-            }
-            if (callback) {
-                callback(null, null);
-            }
-        });*/
         throw new Error("commit is not yet implemented");
-
     }
 
     setAutoCommitToFalse() {
         throw new Error("setAutoCommitToFalse is not yet implemented");
     }
 
-   
-
-   
-
     async close() {
-        //await this.database.close();
         console.log(`Duckdb database connection has been closed`);
     }
 
@@ -381,25 +351,6 @@ export class TrexConnection  {
         schemaName,
         sql
     ) {
-        /*let duckdbNativeSchemName = null;
-
-        //TODO: Unify implementation between patient list and Add to cohort
-        if (this.conn["duckdbNativeDBName"]) {
-            duckdbNativeSchemName = `${this.conn["duckdbNativeDBName"]}.${this.conn["studyAnalyticsCredential"].schema}`;
-        } else {
-            duckdbNativeSchemName = this["duckdbNativeDBName"];
-        }
-        //If inner join is happening between duckdb and native database for ex: postgres, then the replaced example would be <ALIAS_NATIVE_DBNAME>.<SCHEMANAME>.COHORT
-        if (duckdbNativeSchemName) {
-            sql = sql.replace(
-                /\$\$SCHEMA\$\$.COHORT_DEFINITION/g,
-                `${duckdbNativeSchemName}.COHORT_DEFINITION`
-            );
-            sql = sql.replace(
-                /\$\$SCHEMA\$\$.COHORT/g,
-                `${duckdbNativeSchemName}.COHORT`
-            );
-        }*/
         const databaseName = this.connection.getdatabase();
         const replacement = schemaName === "" ? "" : `${databaseName}.${schemaName}.`;
         sql = sql.replace(/\$\$SCHEMA\$\$\./g, replacement);

@@ -19,7 +19,11 @@ pub async fn system_export(
     validate_dataset_id(&dataset_id)?;
 
     let resource_types: Vec<String> = if let Some(types) = params.get("_type") {
-        types.split(',').map(|s| s.trim().to_string()).collect()
+        let parsed: Vec<String> = types.split(',').map(|s| s.trim().to_string()).collect();
+        for rt in &parsed {
+            validate_resource_type(rt, &state.registry)?;
+        }
+        parsed
     } else {
         state.registry.resource_type_names()
     };

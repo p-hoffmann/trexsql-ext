@@ -11,18 +11,14 @@ def test_db_register_chdb(node_factory):
     """Start chdb + db, register chdb as service, verify it appears in trex_db_services()."""
     node = node_factory(load_chdb=True, load_db=True)
 
-    # Start chdb engine
     node.execute("SELECT trex_chdb_start('')")
-
-    # Start db
     node.execute(
         f"SELECT trex_db_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
 
-    # Register chdb as metadata-only service (port=0, no real listener)
+    # Register chdb as metadata-only service (port=0, no real listener).
     node.execute("SELECT trex_db_register_service('chdb', '127.0.0.1', 0)")
 
-    # Verify chdb shows up in trex_db_services()
     services = wait_for(
         node,
         "SELECT * FROM trex_db_services()",
@@ -31,21 +27,19 @@ def test_db_register_chdb(node_factory):
     )
     chdb_rows = [r for r in services if r[1] == "chdb"]
     assert len(chdb_rows) >= 1
-    assert chdb_rows[0][4] == "running"  # status column
+    assert chdb_rows[0][4] == "running"
 
 
 def test_chdb_queries_with_db(node_factory):
     """chdb queries still work while db is active."""
     node = node_factory(load_chdb=True, load_db=True)
 
-    # Start chdb + db + register
     node.execute("SELECT trex_chdb_start('')")
     node.execute(
         f"SELECT trex_db_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
     node.execute("SELECT trex_db_register_service('chdb', '127.0.0.1', 0)")
 
-    # Run a chdb query -- should work fine alongside db
     result = node.execute("SELECT * FROM trex_chdb_scan('SELECT 1 as a')")
     assert len(result) == 1
     assert result[0][0] == "1"
@@ -56,14 +50,12 @@ def test_two_node_chdb_discovery(node_factory):
     node_a = node_factory(load_chdb=True, load_db=True)
     node_b = node_factory(load_chdb=True, load_db=True)
 
-    # Node A: start chdb + db, register chdb
     node_a.execute("SELECT trex_chdb_start('')")
     node_a.execute(
         f"SELECT trex_db_start('0.0.0.0', {node_a.gossip_port}, 'test-cluster')"
     )
     node_a.execute("SELECT trex_db_register_service('chdb', '127.0.0.1', 0)")
 
-    # Node B: start chdb + db (join Node A via seeds), register chdb
     node_b.execute("SELECT trex_chdb_start('')")
     node_b.execute(
         f"SELECT trex_db_start_seeds('0.0.0.0', {node_b.gossip_port}, 'test-cluster', "
@@ -71,7 +63,6 @@ def test_two_node_chdb_discovery(node_factory):
     )
     node_b.execute("SELECT trex_db_register_service('chdb', '127.0.0.1', 0)")
 
-    # Wait for gossip convergence -- both nodes see 2 chdb services
     wait_for(
         node_a,
         "SELECT * FROM trex_db_services()",
@@ -92,20 +83,17 @@ def test_chdb_service_coexistence(node_factory):
     """Single node runs flight + db + chdb; both services registered and visible."""
     node = node_factory(load_chdb=True, load_db=True)
 
-    # Start all services
     node.execute("SELECT trex_chdb_start('')")
     node.execute(f"SELECT trex_db_flight_start('0.0.0.0', {node.flight_port})")
     node.execute(
         f"SELECT trex_db_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
 
-    # Register both services
     node.execute(
         f"SELECT trex_db_register_service('flight', '127.0.0.1', {node.flight_port})"
     )
     node.execute("SELECT trex_db_register_service('chdb', '127.0.0.1', 0)")
 
-    # Verify both service types appear in trex_db_services()
     services = wait_for(
         node,
         "SELECT * FROM trex_db_services()",

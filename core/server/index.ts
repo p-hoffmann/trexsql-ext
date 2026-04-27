@@ -199,29 +199,51 @@ app.post(`${BASE_PATH}/api/cli-token`, apiLimiter, express.json(), async (req, r
 });
 
 // Dynamic plugin registration — register functions from a given directory.
-// Internal endpoint: called by devx edge function to register D2E app functions.
-// Security: only allows paths within known workspace directories.
+// Loads code from disk and spawns workers, so it must require admin auth and
+// strict containment within an allow-listed workspace directory (resolved via
+// Deno.realPath to defeat `..` traversal and symlink escape).
 app.post(`${BASE_PATH}/api/plugins/register`, apiLimiter, express.json(), async (req, res) => {
   try {
+    const user = await getAuthUser(req);
+    if (!user || user.role !== "admin") {
+      res.status(401).json({ error: "Admin authentication required" });
+      return;
+    }
     const { path: dirPath } = req.body || {};
     if (!dirPath || typeof dirPath !== "string") {
       res.status(400).json({ error: "path is required" });
       return;
     }
-    // Only allow registration from devx workspace directories
     const allowedPrefixes = [
       Deno.env.get("DEVX_WORKSPACE_DIR") || "/tmp/devx-workspaces",
       "/var/devx-workspaces",
     ];
-    let normalized = dirPath;
-    while (normalized.endsWith("/")) {
-      normalized = normalized.slice(0, -1);
+    let canonical: string;
+    try {
+      canonical = await Deno.realPath(dirPath);
+    } catch {
+      res.status(400).json({ error: "Invalid path" });
+      return;
     }
-    if (!allowedPrefixes.some((p) => normalized.startsWith(p + "/"))) {
+    const resolvedPrefixes = (
+      await Promise.all(
+        allowedPrefixes.map(async (p) => {
+          try {
+            return await Deno.realPath(p);
+          } catch {
+            return null;
+          }
+        }),
+      )
+    ).filter((p): p is string => p !== null);
+    const contained = resolvedPrefixes.some(
+      (p) => canonical === p || canonical.startsWith(p + "/"),
+    );
+    if (!contained) {
       res.status(403).json({ error: "Path not in allowed workspace directory" });
       return;
     }
-    const result = await Plugins.registerFromPath(app, normalized);
+    const result = await Plugins.registerFromPath(app, canonical);
     if (result.ok) {
       res.json(result);
     } else {
@@ -262,7 +284,6 @@ const POSTGREST_PORT = Deno.env.get("POSTGREST_PORT") || "3000";
 app.all(`${BASE_PATH}/rest/v1/*`, (req, res) => {
   const targetPath = req.originalUrl.replace(`${BASE_PATH}/rest/v1`, "") || "/";
 
-  // Build headers to forward
   const headers: Record<string, string> = {};
   const forwardHeaders = [
     "authorization", "apikey", "prefer", "range", "content-type",
@@ -290,7 +311,6 @@ app.all(`${BASE_PATH}/rest/v1/*`, (req, res) => {
     },
     (proxyRes) => {
       res.status(proxyRes.statusCode || 500);
-      // Forward response headers
       const skipHeaders = new Set(["transfer-encoding"]);
       for (const [key, value] of Object.entries(proxyRes.headers)) {
         if (!skipHeaders.has(key) && value !== undefined) {
@@ -308,7 +328,6 @@ app.all(`${BASE_PATH}/rest/v1/*`, (req, res) => {
     }
   });
 
-  // Pipe request body
   req.pipe(proxyReq);
 });
 
@@ -579,7 +598,6 @@ server.on("upgrade", (req, socket, head) => {
         if (status.status !== "running") { socket.destroy(); return; }
         const port = status.url ? new URL(status.url).port : String(status.port);
 
-        // Make upgrade request to the dev server
         const proxyReq = httpRequest(`http://localhost:${port}${urlPath}`, {
           method: "GET",
           headers: { ...req.headers, host: `localhost:${port}` },

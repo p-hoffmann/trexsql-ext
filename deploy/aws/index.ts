@@ -11,16 +11,13 @@ export function deployAws(config: DeployConfig) {
   const env = config.environment;
   const sizing = getSizing("aws", env);
 
-  // Secrets (DB password, auth secret)
   const secrets = createSecrets(env);
 
   // ACM certificate — optional; if not set, ALB uses HTTP only
   const certArn = new pulumi.Config("deploy").get("certificateArn");
 
-  // Networking (VPC, ALB, security groups)
   const networking = createNetworking(env, sizing, certArn);
 
-  // RDS PostgreSQL
   const rds = createRds(
     env,
     sizing,
@@ -30,10 +27,8 @@ export function deployAws(config: DeployConfig) {
     secrets.dbPasswordPlain
   );
 
-  // S3 bucket for storage plugin
   const s3 = createS3(env);
 
-  // ECS Fargate
   const protocol = certArn ? "https" : "http";
   const endpointUrl = pulumi.interpolate`${protocol}://${networking.alb.dnsName}`;
 

@@ -14,10 +14,6 @@ use crate::shuffle_descriptor::{ShuffleDescriptor, ShuffleTarget};
 use crate::shuffle_partition;
 use crate::shuffle_transport;
 
-// ---------------------------------------------------------------------------
-// Data types
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PartitionStrategy {
@@ -65,10 +61,6 @@ pub struct PartitionConfig {
     #[serde(default)]
     pub nodes: Option<Vec<String>>,
 }
-
-// ---------------------------------------------------------------------------
-// Gossip helpers
-// ---------------------------------------------------------------------------
 
 pub fn publish_partition_metadata(
     table_name: &str,
@@ -120,10 +112,6 @@ pub fn get_all_partition_metadata() -> Result<Vec<(String, PartitionMetadata)>, 
 
     Ok(result)
 }
-
-// ---------------------------------------------------------------------------
-// Assignment
-// ---------------------------------------------------------------------------
 
 /// Target node info used for partition assignment.
 pub struct TargetNode {
@@ -213,10 +201,6 @@ pub fn assign_partitions(
     Ok(assignments)
 }
 
-// ---------------------------------------------------------------------------
-// DDL generation from Arrow schema
-// ---------------------------------------------------------------------------
-
 pub fn generate_create_table_sql(table_name: &str, schema: &SchemaRef) -> String {
     let columns: Vec<String> = schema
         .fields()
@@ -262,10 +246,6 @@ fn arrow_type_to_sql(dt: &DataType) -> &'static str {
         _ => "VARCHAR",
     }
 }
-
-// ---------------------------------------------------------------------------
-// Range partitioning
-// ---------------------------------------------------------------------------
 
 /// Partition batches by range on a single column.
 ///

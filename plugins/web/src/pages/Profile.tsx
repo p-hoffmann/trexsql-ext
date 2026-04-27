@@ -286,8 +286,6 @@ function SecurityTab() {
   );
 }
 
-// --- Linked Accounts Tab ---
-
 function LinkedAccountsTab() {
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -370,7 +368,6 @@ function LinkedAccountsTab() {
       </CardHeader>
       <CardContent>
         <div className="flex flex-col gap-4">
-          {/* Linked accounts */}
           {accounts.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               No linked accounts found.
@@ -422,7 +419,6 @@ function LinkedAccountsTab() {
             ))
           )}
 
-          {/* Unlinked providers */}
           {unlinkedProviders.length > 0 && (
             <>
               <Separator />
@@ -454,8 +450,6 @@ function LinkedAccountsTab() {
     </Card>
   );
 }
-
-// --- Sessions Tab ---
 
 function SessionsTab() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -766,7 +760,6 @@ function ApiKeysTab() {
         </CardContent>
       </Card>
 
-      {/* Create key dialog */}
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
         <DialogContent>
           <DialogHeader>
@@ -805,7 +798,6 @@ function ApiKeysTab() {
         </DialogContent>
       </Dialog>
 
-      {/* One-time key display dialog */}
       <Dialog open={!!createdKey} onOpenChange={(open) => { if (!open) setCreatedKey(null); }}>
         <DialogContent>
           <DialogHeader>

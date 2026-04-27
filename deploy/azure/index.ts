@@ -11,13 +11,10 @@ export function deployAzure(config: DeployConfig) {
   const env = config.environment;
   const sizing = getSizing("azure", env);
 
-  // Secrets
   const secrets = createSecrets();
 
-  // Networking (resource group, VNet, subnets)
   const networking = createNetworking(env, config.region);
 
-  // PostgreSQL Flexible Server
   const postgres = createPostgres({
     env,
     sizing,
@@ -28,14 +25,12 @@ export function deployAzure(config: DeployConfig) {
     adminPassword: secrets.dbPasswordPlain,
   });
 
-  // Blob Storage with S3-compatible access
   const storage = createStorage({
     env,
     resourceGroupName: networking.resourceGroup.name,
     location: networking.resourceGroup.location,
   });
 
-  // Container Apps
   const containerApps = createContainerApps({
     env,
     sizing,

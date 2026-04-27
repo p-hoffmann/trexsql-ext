@@ -78,7 +78,6 @@ async function writeFunctionMeta(slug: string, meta: FunctionMeta): Promise<void
   await Deno.writeTextFile(metaPath, JSON.stringify(meta, null, 2));
 }
 
-// List all functions
 router.get(`${BASE_PATH}/v1/projects/:ref/functions`, async (req, res) => {
   const user = await requireAdmin(req);
   if (!user) {
@@ -101,7 +100,6 @@ router.get(`${BASE_PATH}/v1/projects/:ref/functions`, async (req, res) => {
   }
 });
 
-// Get function metadata
 router.get(`${BASE_PATH}/v1/projects/:ref/functions/:slug`, async (req, res) => {
   const user = await requireAdmin(req);
   if (!user) {
@@ -125,7 +123,6 @@ router.get(`${BASE_PATH}/v1/projects/:ref/functions/:slug`, async (req, res) => 
   res.json(response);
 });
 
-// Get function source code / ESZIP bundle
 router.get(`${BASE_PATH}/v1/projects/:ref/functions/:slug/body`, async (req, res) => {
   const user = await requireAdmin(req);
   if (!user) {
@@ -192,7 +189,6 @@ router.post(`${BASE_PATH}/v1/projects/:ref/functions`, async (req, res) => {
   const funcDir = join(FUNCTIONS_DIR, slug);
 
   try {
-    // Collect raw body (ESZ bundle from CLI)
     const chunks: Uint8Array[] = [];
     for await (const chunk of req) {
       chunks.push(typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk);
@@ -206,7 +202,6 @@ router.post(`${BASE_PATH}/v1/projects/:ref/functions`, async (req, res) => {
 
     await Deno.mkdir(funcDir, { recursive: true });
 
-    // Write the ESZ bundle
     const bundlePath = join(funcDir, "esbuild.esz");
     await Deno.writeFile(bundlePath, bodyBuffer);
 
@@ -214,7 +209,6 @@ router.post(`${BASE_PATH}/v1/projects/:ref/functions`, async (req, res) => {
     const entrypointPath = (req.query.entrypoint_path as string) || "index.ts";
     const entrypointFile = entrypointPath.split("/").pop() || "index.ts";
 
-    // Try to decode as text for the main entrypoint
     try {
       const text = new TextDecoder().decode(bodyBuffer);
       if (text.includes("Deno.serve") || text.includes("export default") || text.includes("export function")) {
@@ -272,14 +266,11 @@ router.post(`${BASE_PATH}/v1/projects/:ref/functions/deploy`, async (req, res) =
       return;
     }
 
-    // Create function directory
     await Deno.mkdir(funcDir, { recursive: true });
 
-    // Write source code
     const entrypoint = entrypoint_path || "index.ts";
     await Deno.writeTextFile(join(funcDir, entrypoint), sourceCode);
 
-    // Write import map if provided
     let importMapPath: string | null = null;
     if (import_map) {
       importMapPath = "deno.json";
@@ -289,7 +280,6 @@ router.post(`${BASE_PATH}/v1/projects/:ref/functions/deploy`, async (req, res) =
       );
     }
 
-    // Read existing metadata for version increment
     const existing = await readFunctionMeta(slug);
     const version = existing ? existing.version + 1 : 1;
     const created_at = existing?.created_at || now;
@@ -316,7 +306,6 @@ router.post(`${BASE_PATH}/v1/projects/:ref/functions/deploy`, async (req, res) =
   }
 });
 
-// Delete function
 router.delete(`${BASE_PATH}/v1/projects/:ref/functions/:slug`, async (req, res) => {
   const user = await requireAdmin(req);
   if (!user) {
@@ -1025,7 +1014,6 @@ router.get(`${BASE_PATH}/v1/projects/:ref/types/typescript`, apiLimiter, async (
   try {
     const { pool } = await import("../db.ts");
 
-    // Fetch columns
     const colResult = await pool.query(
       `SELECT table_schema, table_name, column_name, is_nullable, column_default, udt_name
        FROM information_schema.columns
@@ -1043,7 +1031,6 @@ router.get(`${BASE_PATH}/v1/projects/:ref/types/typescript`, apiLimiter, async (
     );
     const viewSet = new Set(viewResult.rows.map((r: any) => `${r.table_schema}.${r.table_name}`));
 
-    // Fetch enums
     const enumResult = await pool.query(
       `SELECT n.nspname AS schema, t.typname AS name, e.enumlabel AS value
        FROM pg_enum e
@@ -1062,7 +1049,6 @@ router.get(`${BASE_PATH}/v1/projects/:ref/types/typescript`, apiLimiter, async (
       enumTypes.add(row.name);
     }
 
-    // Fetch functions
     const funcResult = await pool.query(
       `SELECT n.nspname AS schema, p.proname AS name,
               pg_get_function_arguments(p.oid) AS args,
@@ -1076,7 +1062,6 @@ router.get(`${BASE_PATH}/v1/projects/:ref/types/typescript`, apiLimiter, async (
       [includedSchemas],
     );
 
-    // Group columns by schema.table
     type ColInfo = { column_name: string; is_nullable: string; column_default: string | null; udt_name: string };
     const tablesBySchema: Record<string, Record<string, ColInfo[]>> = {};
     for (const row of colResult.rows) {
@@ -1085,7 +1070,6 @@ router.get(`${BASE_PATH}/v1/projects/:ref/types/typescript`, apiLimiter, async (
       tablesBySchema[row.table_schema][row.table_name].push(row);
     }
 
-    // Build output
     const lines: string[] = [];
     lines.push(`export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]`);
     lines.push(``);

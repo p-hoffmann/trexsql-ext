@@ -18,8 +18,6 @@ use libduckdb_sys as ffi;
 use std::cell::Cell;
 use std::error::Error;
 
-// ── Database access via shared trex_pool (session-based) ─────────────────────
-
 thread_local! {
     /// When set, `execute_sql` and `query_sql` route through this session.
     static ACTIVE_SESSION: Cell<Option<u64>> = const { Cell::new(None) };
@@ -106,7 +104,6 @@ pub fn escape_sql_str(s: &str) -> String {
     s.replace('\'', "''")
 }
 
-// ── Extension Entrypoint ─────────────────────────────────────────────────────
 
 unsafe fn extension_entrypoint(connection: Connection) -> Result<(), Box<dyn Error>> {
     connection.register_table_function::<compile::CompileVTab>("trex_transform_compile")?;

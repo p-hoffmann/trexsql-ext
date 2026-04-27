@@ -21,18 +21,15 @@ def test_pgwire_server_lifecycle(node_factory):
     """Start server, verify status shows running, stop, verify status empty."""
     node = node_factory(load_pgwire=True, load_db=False)
 
-    # Start pgwire server (empty password, empty credentials)
     node.execute(
         f"SELECT trex_pgwire_start('127.0.0.1', {node.pgwire_port}, '', '')"
     )
 
-    # Verify server is running
     status = node.execute("SELECT * FROM trex_pgwire_status()")
     assert len(status) == 1, f"Expected 1 status row, got {len(status)}"
-    assert status[0][0] == "127.0.0.1"  # hostname
-    assert status[0][1] == str(node.pgwire_port)  # port
+    assert status[0][0] == "127.0.0.1"
+    assert status[0][1] == str(node.pgwire_port)
 
-    # Stop pgwire server
     node.execute(
         f"SELECT trex_pgwire_stop('127.0.0.1', {node.pgwire_port})"
     )
@@ -103,7 +100,6 @@ def test_pgwire_data_visibility(node_factory):
     """Table created via trexsql node is visible through pgwire."""
     node = node_factory(load_pgwire=True, load_db=False)
 
-    # Create table through the trexsql node directly
     node.execute(
         "CREATE TABLE orders AS "
         "SELECT i as id, 'US' as region FROM range(10) t(i)"
@@ -142,7 +138,6 @@ def test_pgwire_scram_auth_with_password(node_factory):
         f"SELECT trex_pgwire_start('127.0.0.1', {node.pgwire_port}, 'secret', '')"
     )
 
-    # Wrong password should fail
     with pytest.raises(psycopg2.OperationalError):
         psycopg2.connect(
             host="127.0.0.1",
@@ -152,7 +147,6 @@ def test_pgwire_scram_auth_with_password(node_factory):
             dbname="memory",
         )
 
-    # Correct password should succeed
     conn = psycopg2.connect(
         host="127.0.0.1",
         port=node.pgwire_port,
@@ -182,16 +176,13 @@ def test_pgwire_server_status_after_stop(node_factory):
         f"SELECT trex_pgwire_start('127.0.0.1', {node.pgwire_port}, '', '')"
     )
 
-    # Confirm it's running
     status = node.execute("SELECT * FROM trex_pgwire_status()")
     assert len(status) == 1
 
-    # Stop
     node.execute(
         f"SELECT trex_pgwire_stop('127.0.0.1', {node.pgwire_port})"
     )
 
-    # Status should be empty after stop
     status = wait_for(
         node,
         "SELECT * FROM trex_pgwire_status()",

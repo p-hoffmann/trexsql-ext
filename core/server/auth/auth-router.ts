@@ -448,6 +448,14 @@ router.put("/user", apiLimiter, async (req, res) => {
          WHERE "userId" = $2 AND "providerId" = 'credential'`,
         [newHash, claims.sub],
       );
+
+      // Revoke all outstanding refresh tokens so a stolen token doesn't survive
+      // a password change.
+      await pool.query(
+        `UPDATE trex.refresh_token SET revoked = true, "updatedAt" = NOW()
+         WHERE "userId" = $1 AND revoked = false`,
+        [claims.sub],
+      );
     }
 
     if (updates.length > 0) {
@@ -568,6 +576,14 @@ router.post("/change-password", apiLimiter, async (req, res) => {
       `UPDATE trex.account SET password = $1, "updatedAt" = NOW()
        WHERE "userId" = $2 AND "providerId" = 'credential'`,
       [newHash, user.id],
+    );
+
+    // Revoke all outstanding refresh tokens so a stolen token doesn't survive
+    // a password change.
+    await pool.query(
+      `UPDATE trex.refresh_token SET revoked = true, "updatedAt" = NOW()
+       WHERE "userId" = $1 AND revoked = false`,
+      [user.id],
     );
 
     res.json({ success: true });

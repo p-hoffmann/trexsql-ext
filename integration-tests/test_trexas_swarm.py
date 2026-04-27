@@ -19,23 +19,17 @@ def test_swarm_register_trexas(node_factory):
     """Start trexas + gossip, register trexas as service, verify it appears in trex_db_services()."""
     node = node_factory(load_trexas=True, load_flight=True, load_swarm=True)
 
-    # Start trex server
     node.execute(
         f"SELECT trex_start_server('127.0.0.1', {node.trexas_port}, "
         f"'{MAIN_SERVICE_PATH}', '{EVENT_WORKER_PATH}')"
     )
-
-    # Start gossip
     node.execute(
         f"SELECT trex_db_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
-
-    # Register trexas as service
     node.execute(
         f"SELECT trex_db_register_service('trexas', '127.0.0.1', {node.trexas_port})"
     )
 
-    # Verify trexas shows up in trex_db_services()
     services = wait_for(
         node,
         "SELECT * FROM trex_db_services()",
@@ -44,14 +38,13 @@ def test_swarm_register_trexas(node_factory):
     )
     trexas_rows = [r for r in services if r[1] == "trexas"]
     assert len(trexas_rows) >= 1
-    assert trexas_rows[0][4] == "running"  # status column
+    assert trexas_rows[0][4] == "running"
 
 
 def test_trexas_queries_with_swarm(node_factory):
     """Trex server still serves HTTP while gossip is active."""
     node = node_factory(load_trexas=True, load_flight=True, load_swarm=True)
 
-    # Start trex server + swarm + register
     node.execute(
         f"SELECT trex_start_server('127.0.0.1', {node.trexas_port}, "
         f"'{MAIN_SERVICE_PATH}', '{EVENT_WORKER_PATH}')"
@@ -63,7 +56,6 @@ def test_trexas_queries_with_swarm(node_factory):
         f"SELECT trex_db_register_service('trexas', '127.0.0.1', {node.trexas_port})"
     )
 
-    # Verify HTTP health endpoint still works alongside gossip
     deadline = time.time() + 10
     resp_data = None
     while time.time() < deadline:
@@ -85,7 +77,6 @@ def test_two_node_trexas_discovery(node_factory):
     node_a = node_factory(load_trexas=True, load_flight=True, load_swarm=True)
     node_b = node_factory(load_trexas=True, load_flight=True, load_swarm=True)
 
-    # Node A: start trex server + swarm, register trexas
     node_a.execute(
         f"SELECT trex_start_server('127.0.0.1', {node_a.trexas_port}, "
         f"'{MAIN_SERVICE_PATH}', '{EVENT_WORKER_PATH}')"
@@ -97,7 +88,6 @@ def test_two_node_trexas_discovery(node_factory):
         f"SELECT trex_db_register_service('trexas', '127.0.0.1', {node_a.trexas_port})"
     )
 
-    # Node B: start trex server + gossip (join Node A via seeds), register trexas
     node_b.execute(
         f"SELECT trex_start_server('127.0.0.1', {node_b.trexas_port}, "
         f"'{MAIN_SERVICE_PATH}', '{EVENT_WORKER_PATH}')"
@@ -110,7 +100,6 @@ def test_two_node_trexas_discovery(node_factory):
         f"SELECT trex_db_register_service('trexas', '127.0.0.1', {node_b.trexas_port})"
     )
 
-    # Wait for gossip convergence - both nodes see 2 trexas services
     wait_for(
         node_a,
         "SELECT * FROM trex_db_services()",
@@ -131,7 +120,6 @@ def test_trexas_service_coexistence(node_factory):
     """Single node runs flight + gossip + trexas; all services registered and visible."""
     node = node_factory(load_trexas=True, load_flight=True, load_swarm=True)
 
-    # Start all services
     node.execute(
         f"SELECT trex_start_server('127.0.0.1', {node.trexas_port}, "
         f"'{MAIN_SERVICE_PATH}', '{EVENT_WORKER_PATH}')"
@@ -141,7 +129,6 @@ def test_trexas_service_coexistence(node_factory):
         f"SELECT trex_db_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
 
-    # Register both services
     node.execute(
         f"SELECT trex_db_register_service('flight', '127.0.0.1', {node.flight_port})"
     )
@@ -149,7 +136,6 @@ def test_trexas_service_coexistence(node_factory):
         f"SELECT trex_db_register_service('trexas', '127.0.0.1', {node.trexas_port})"
     )
 
-    # Verify both service types appear in trex_db_services()
     services = wait_for(
         node,
         "SELECT * FROM trex_db_services()",

@@ -245,7 +245,6 @@ export function Databases() {
         }
       />
 
-      {/* Add Database Dialog */}
       <Dialog
         open={addOpen}
         onOpenChange={(open) => {

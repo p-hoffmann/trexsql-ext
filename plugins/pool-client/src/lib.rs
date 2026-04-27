@@ -12,9 +12,6 @@ use arrow_array::RecordBatch;
 use arrow_schema::Schema;
 use std::sync::{Arc, OnceLock};
 
-// ── C ABI function pointer types ─────────────────────────────────────────────
-
-// JSON-based
 type FnRead = unsafe extern "C" fn(*const u8, usize) -> *mut Opaque;
 type FnWrite = unsafe extern "C" fn(*const u8, usize, *mut *const u8, *mut usize) -> i32;
 type FnExecute = unsafe extern "C" fn(*const u8, usize) -> *mut Opaque;
@@ -28,13 +25,11 @@ type FnPoolSize = unsafe extern "C" fn() -> usize;
 type FnWithConnExec = unsafe extern "C" fn(*const u8, usize) -> *mut Opaque;
 type FnExecTransaction = unsafe extern "C" fn(*const *const u8, *const usize, usize) -> *mut Opaque;
 
-// Session-based
 type FnSessionCreate = unsafe extern "C" fn() -> u64;
 type FnSessionExecuteArrow = unsafe extern "C" fn(u64, *const u8, usize) -> *mut Opaque;
 type FnSessionExecuteParamsArrow = unsafe extern "C" fn(u64, *const u8, usize, *const *const u8, *const usize, usize) -> *mut Opaque;
 type FnSessionDestroy = unsafe extern "C" fn(u64);
 
-// Arrow IPC-based
 type FnReadArrowIpc = unsafe extern "C" fn(*const u8, usize) -> *mut Opaque;
 type FnExecArrowIpc = unsafe extern "C" fn(*const u8, usize) -> *mut Opaque;
 type FnArrowIsError = unsafe extern "C" fn(*const Opaque) -> i32;
@@ -47,8 +42,6 @@ type FnArrowFree = unsafe extern "C" fn(*mut Opaque);
 pub struct Opaque {
     _opaque: [u8; 0],
 }
-
-// ── Function table ───────────────────────────────────────────────────────────
 
 struct PoolFns {
     read: FnRead,
@@ -174,7 +167,6 @@ unsafe fn discover_pool_fns() -> Option<PoolFns> {
     })
 }
 
-// ── Internal helpers ─────────────────────────────────────────────────────────
 
 fn json_result_to_string(fns: &PoolFns, result: *mut Opaque) -> Result<String, String> {
     if result.is_null() {
@@ -259,7 +251,6 @@ fn deserialize_arrow_ipc(
     Ok((schema, batches))
 }
 
-// ── Public API: JSON ─────────────────────────────────────────────────────────
 
 /// Execute a read query and return JSON result.
 pub fn read(sql: &str) -> Result<String, String> {
@@ -296,7 +287,6 @@ pub fn execute(sql: &str) -> Result<String, String> {
     json_result_to_string(fns, result)
 }
 
-// ── Public API: Arrow IPC ────────────────────────────────────────────────────
 
 /// Execute a read query and return Arrow RecordBatches (via IPC).
 pub fn read_arrow(
@@ -352,7 +342,6 @@ pub enum ArrowExecuteResult {
     Executed,
 }
 
-// ── Public API: Utilities ────────────────────────────────────────────────────
 
 /// Check if SQL is a result-returning query.
 pub fn is_result_returning_query(sql: &str) -> bool {
@@ -407,7 +396,6 @@ pub fn execute_transaction(sqls: &[&str]) -> Result<(), String> {
     json_result_to_string(fns, result).map(|_| ())
 }
 
-// ── Public API: Sessions ─────────────────────────────────────────────────────
 
 /// Create a new session. Returns a unique session ID.
 /// Sessions auto-detect transactions: when `BEGIN` is executed via

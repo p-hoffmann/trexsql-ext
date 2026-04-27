@@ -103,7 +103,6 @@ export function useKernel(options: UseKernelOptions = {}): UseKernelReturn {
           await kernel.disconnect()
         }
 
-        // Clean up previous subscription before setting a new one
         unsubscribeRef.current?.()
 
         const newKernel = findKernel(config)

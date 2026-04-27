@@ -32,7 +32,6 @@ export function SingleSpaMount({ plugin, basePath }: SingleSpaMountProps) {
         document.head.appendChild(link);
         cssLinkRef.current = link;
 
-        // Dynamic import of the single-spa entry module
         const parcelUrl = `${pluginBase}/${plugin}-spa.js`;
         const parcelModule = await import(/* @vite-ignore */ parcelUrl);
 
@@ -51,10 +50,8 @@ export function SingleSpaMount({ plugin, basePath }: SingleSpaMountProps) {
 
     return () => {
       cancelled = true;
-      // Clean up CSS
       cssLinkRef.current?.remove();
       cssLinkRef.current = null;
-      // Unmount parcel
       if (parcelRef.current) {
         parcelRef.current.unmount();
         parcelRef.current = null;

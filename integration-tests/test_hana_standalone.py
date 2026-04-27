@@ -84,7 +84,6 @@ def test_hana_execute_ddl(node_factory):
             f"SELECT trex_hana_execute('{HANA_TEST_URL}', "
             f"'CREATE TABLE {table_name} (ID INTEGER, NAME NVARCHAR(100))')"
         )
-        # Verify the table exists
         result = node.execute(
             f"SELECT * FROM trex_hana_scan("
             f"'SELECT TABLE_NAME FROM SYS.TABLES WHERE TABLE_NAME = ''{table_name}''', "
@@ -160,7 +159,6 @@ def test_hana_execute_multi_statement(node_factory):
             f"'CREATE TABLE {table1} (ID INT); CREATE TABLE {table2} (ID INT)')"
         )
         assert "2 statement" in result[0][0]
-        # Verify both tables exist
         check = node.execute(
             f"SELECT * FROM trex_hana_scan("
             f"'SELECT TABLE_NAME FROM SYS.TABLES "
@@ -303,15 +301,12 @@ def test_trex_hana_detach(node_factory):
     node.execute(
         f"SELECT * FROM trex_hana_attach('{HANA_TEST_URL}', 'test', '{ATTACH_SCHEMA}')"
     )
-    # Verify attached
     result = node.execute("SELECT * FROM trex_hana_tables()")
     assert len(result) >= 1
 
-    # Detach
     result = node.execute(f"SELECT trex_hana_detach('test', '{ATTACH_SCHEMA}')")
     assert "Detached" in result[0][0]
 
-    # Verify empty
     result = node.execute("SELECT * FROM trex_hana_tables()")
     assert result == []
 

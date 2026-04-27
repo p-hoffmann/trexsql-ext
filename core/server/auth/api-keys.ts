@@ -16,7 +16,6 @@ export async function ensureAuthKeys(): Promise<{
 }> {
   const client = await pool.connect();
   try {
-    // Check if keys already exist
     const existing = await client.query(
       `SELECT key, value FROM trex.setting WHERE key IN ('auth.anonKey', 'auth.serviceRoleKey', 'auth.jwtSecret')`,
     );

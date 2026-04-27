@@ -220,7 +220,6 @@ export const Notebook = forwardRef<NotebookHandle, NotebookProps>(function Noteb
   })
 
   const { isExecuting } = cellExecution
-  // Use aggregate status when multiple kernels are connected
   const effectiveStatus = kernelConfigs ? aggregateStatus : kernelStatus
   const kernelReady = effectiveStatus === 'idle' || effectiveStatus === 'busy'
 
@@ -240,7 +239,6 @@ export const Notebook = forwardRef<NotebookHandle, NotebookProps>(function Noteb
     await cellExecution.executeCells(codeCells)
   }, [notebook.cells, cellExecution])
 
-  // Enable virtualization for large notebooks (uses CSS content-visibility: auto)
   const useVirtualization = notebook.cells.length >= virtualizationThreshold
 
   const [activeDragId, setActiveDragId] = useState<CellId | null>(null)

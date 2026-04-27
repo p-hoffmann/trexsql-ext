@@ -19,8 +19,6 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-// ── Database access via shared trex_pool ─────────────────────────────────────
-
 /// Execute SQL using the shared trex_pool via a one-off session.
 fn execute_sql(sql: &str) -> Result<(), Box<dyn Error>> {
     let sid = trex_pool_client::create_session()
@@ -88,10 +86,6 @@ fn arrow_value_to_string(array: &dyn trex_pool_client::arrow_array::Array, row: 
     }
 }
 
-// init_shared_connection removed — using shared trex_pool
-
-// ── Migration File ───────────────────────────────────────────────────────────
-
 struct MigrationFile {
     version: i32,
     name: String,
@@ -143,7 +137,6 @@ fn compute_checksum(name: &str, version: i32, sql: &str) -> u64 {
     hasher.finish()
 }
 
-// ── File Discovery ───────────────────────────────────────────────────────────
 
 fn discover_migrations(dir_path: &str) -> Result<Vec<MigrationFile>, Box<dyn Error>> {
     let path = Path::new(dir_path);
@@ -186,7 +179,6 @@ fn discover_migrations(dir_path: &str) -> Result<Vec<MigrationFile>, Box<dyn Err
     Ok(migrations)
 }
 
-// ── Schema History ───────────────────────────────────────────────────────────
 
 #[allow(dead_code)]
 struct AppliedMigration {
@@ -252,7 +244,6 @@ fn build_insert_migration_sql(migration: &MigrationFile) -> String {
     )
 }
 
-// ── Verification ─────────────────────────────────────────────────────────────
 
 fn verify_migrations(
     discovered: &[MigrationFile],
@@ -281,7 +272,6 @@ fn verify_migrations(
     Ok(pending_indices)
 }
 
-// ── Migration Execution ──────────────────────────────────────────────────────
 
 struct MigrationResult {
     version: i32,
@@ -353,7 +343,6 @@ fn execute_migrations(
     Ok(results)
 }
 
-// ── MigrateVTab ──────────────────────────────────────────────────────────────
 
 #[repr(C)]
 struct MigrateBindData {
@@ -432,7 +421,6 @@ impl VTab for MigrateVTab {
     }
 }
 
-// ── MigrationStatusVTab ──────────────────────────────────────────────────────
 
 struct MigrationStatusResult {
     version: i32,
@@ -553,7 +541,6 @@ impl VTab for MigrationStatusVTab {
     }
 }
 
-// ── Schema-Scoped Helpers ────────────────────────────────────────────────────
 
 fn escape_sql_ident(s: &str) -> String {
     s.replace('"', "\"\"")
@@ -795,7 +782,6 @@ fn execute_migrations_in_schema(
     Ok(results)
 }
 
-// ── MigrateSchemaVTab ────────────────────────────────────────────────────────
 
 #[repr(C)]
 struct MigrateSchemaBindData {
@@ -901,7 +887,6 @@ impl VTab for MigrateSchemaVTab {
     }
 }
 
-// ── MigrationStatusSchemaVTab ────────────────────────────────────────────────
 
 #[repr(C)]
 struct MigrationStatusSchemaBindData {
@@ -1042,7 +1027,6 @@ impl VTab for MigrationStatusSchemaVTab {
     }
 }
 
-// ── Extension Entrypoint (manual C API, following hana pattern) ──────────────
 
 unsafe fn extension_entrypoint(connection: Connection) -> Result<(), Box<dyn Error>> {
     connection.register_table_function::<MigrateVTab>("trex_migration_run")?;

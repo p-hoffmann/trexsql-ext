@@ -572,7 +572,6 @@ pub fn start_flight_server(
                 .build()?;
 
             rt.block_on(async move {
-                // Verify pool is initialized
                 trex_pool_client::read_pool_size().map_err(|e| {
                     Box::new(std::io::Error::new(
                         std::io::ErrorKind::Other,
@@ -666,7 +665,6 @@ pub fn start_flight_server_with_tls(
                 .build()?;
 
             rt.block_on(async move {
-                // Verify pool is initialized
                 trex_pool_client::read_pool_size().map_err(|e| {
                     Box::new(std::io::Error::new(
                         std::io::ErrorKind::Other,

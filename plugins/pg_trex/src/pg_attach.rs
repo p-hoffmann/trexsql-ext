@@ -6,7 +6,6 @@ use std::sync::RwLock;
 use crate::pg_state::{self, escape_identifier, execute_ddl_batch, AttachedSchema};
 use crate::spi_bridge;
 
-// ── pg_attach(schema) ────────────────────────────────────────────────────
 
 #[derive(Debug)]
 pub struct PgAttachBindData {
@@ -176,7 +175,6 @@ impl VTab for PgAttachVTab {
     }
 }
 
-// ── pg_detach(schema) ────────────────────────────────────────────────────
 
 #[derive(Debug)]
 pub struct PgDetachBindData {
@@ -266,7 +264,6 @@ impl VTab for PgDetachVTab {
     }
 }
 
-// ── pg_tables() ──────────────────────────────────────────────────────────
 
 #[derive(Debug)]
 pub struct PgTablesBindData {

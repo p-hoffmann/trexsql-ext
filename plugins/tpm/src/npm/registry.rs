@@ -1,6 +1,7 @@
 use reqwest::blocking::Client;
 use semver::{Version, VersionReq};
 use sha1::{Digest, Sha1};
+use std::path::{Component, Path};
 use std::time::Duration;
 
 use super::types::{
@@ -8,6 +9,91 @@ use super::types::{
   NpmError, NpmPackageMetadata, NpmResult, NpmVersionMetadataExt,
   PackageInfoResponse, ResolveResponse, SeedResponse,
 };
+
+// Strict npm package-name validation. Reachable from SQL via
+// trex_plugin_install / trex_plugin_delete, so the value must never be
+// interpolated into a filesystem path without being checked here.
+fn is_valid_npm_segment(s: &str) -> bool {
+  !s.is_empty()
+    && s.len() <= 214
+    && !s.starts_with('.')
+    && !s.starts_with('_')
+    && s
+      .chars()
+      .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_')
+}
+
+fn validate_package_name(name: &str) -> NpmResult<()> {
+  if name.is_empty()
+    || name.len() > 250
+    || name.contains('\0')
+    || name.contains('\\')
+  {
+    return Err(NpmError::Other(format!("Invalid package name: {}", name)));
+  }
+  if let Some(rest) = name.strip_prefix('@') {
+    let mut parts = rest.splitn(2, '/');
+    let scope = parts.next().unwrap_or("");
+    let pkg = parts.next().unwrap_or("");
+    if parts.next().is_some()
+      || !is_valid_npm_segment(scope)
+      || !is_valid_npm_segment(pkg)
+    {
+      return Err(NpmError::Other(format!(
+        "Invalid scoped package name: {}",
+        name
+      )));
+    }
+  } else if name.contains('/') || !is_valid_npm_segment(name) {
+    return Err(NpmError::Other(format!("Invalid package name: {}", name)));
+  }
+  Ok(())
+}
+
+// Returns Ok(()) iff `child` (after canonicalization of an existing parent)
+// resolves to a path strictly inside `root`.
+fn assert_path_contained(root: &Path, child: &Path) -> NpmResult<()> {
+  let canon_root = root
+    .canonicalize()
+    .map_err(|e| NpmError::Other(format!("Cannot canonicalize root: {}", e)))?;
+  // For a child that doesn't yet exist (delete path may exist; install dest
+  // may not), canonicalize a known-existing ancestor and re-attach the tail.
+  let canon_child = if child.exists() {
+    child
+      .canonicalize()
+      .map_err(|e| NpmError::Other(format!("Cannot canonicalize: {}", e)))?
+  } else {
+    let mut cursor = child.to_path_buf();
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+      if cursor.exists() {
+        break;
+      }
+      match cursor.file_name() {
+        Some(name) => tail.push(name.to_os_string()),
+        None => return Err(NpmError::Other("Path has no parent".to_string())),
+      }
+      if !cursor.pop() {
+        return Err(NpmError::Other("Path has no parent".to_string()));
+      }
+    }
+    let mut canon = cursor.canonicalize().map_err(|e| {
+      NpmError::Other(format!("Cannot canonicalize ancestor: {}", e))
+    })?;
+    for seg in tail.into_iter().rev() {
+      canon.push(seg);
+    }
+    canon
+  };
+  if canon_child == canon_root || canon_child.starts_with(&canon_root) {
+    Ok(())
+  } else {
+    Err(NpmError::Other(format!(
+      "Refusing path that escapes root: {}",
+      child.display()
+    )))
+  }
+}
 
 pub struct NpmRegistry {
   client: Client,
@@ -245,6 +331,11 @@ impl NpmRegistry {
       }
     }
 
+    // Even though `resolved.package` came from a registry lookup, validate it
+    // before mixing it into a filesystem path — the registry URL is itself
+    // configurable (TPM_REGISTRY_URL) and could be attacker-controlled.
+    validate_package_name(&resolved.package)?;
+
     let package_dir = if resolved.package.starts_with('@') {
       let parts: Vec<&str> = resolved.package.splitn(2, '/').collect();
       if parts.len() == 2 {
@@ -259,6 +350,9 @@ impl NpmRegistry {
     std::fs::create_dir_all(&package_dir).map_err(|e| {
       NpmError::Other(format!("Failed to create install directory: {}", e))
     })?;
+
+    // After mkdir we can canonicalize and confirm containment within install_dir.
+    assert_path_contained(std::path::Path::new(install_dir), &package_dir)?;
 
     use flate2::read::GzDecoder;
     use std::io::Cursor;
@@ -279,6 +373,23 @@ impl NpmRegistry {
       let path = entry.path().map_err(|e| NpmError::Other(e.to_string()))?;
 
       let stripped_path = path.strip_prefix("package").unwrap_or(&path);
+
+      // Reject any tar entry that would escape package_dir: absolute paths,
+      // parent components, or root/prefix components. The tar crate's
+      // Entry::unpack() does NOT validate this on its own (per its docs).
+      if stripped_path.is_absolute()
+        || stripped_path.components().any(|c| {
+          matches!(
+            c,
+            Component::ParentDir | Component::Prefix(_) | Component::RootDir
+          )
+        })
+      {
+        return Err(NpmError::Other(format!(
+          "Refusing tar entry with unsafe path: {}",
+          stripped_path.display()
+        )));
+      }
 
       let dest_path = package_dir.join(stripped_path);
 
@@ -543,6 +654,10 @@ impl NpmRegistry {
     package_name: &str,
     install_dir: &str,
   ) -> NpmResult<DeleteResponse> {
+    // Reachable from SQL — validate before any path join, then re-check
+    // containment after canonicalization to catch symlink escapes.
+    validate_package_name(package_name)?;
+
     let package_dir = if package_name.starts_with('@') {
       let parts: Vec<&str> = package_name.splitn(2, '/').collect();
       if parts.len() == 2 {
@@ -553,6 +668,8 @@ impl NpmRegistry {
     } else {
       std::path::Path::new(install_dir).join(package_name)
     };
+
+    assert_path_contained(std::path::Path::new(install_dir), &package_dir)?;
 
     if !package_dir.exists() {
       return Ok(DeleteResponse {
