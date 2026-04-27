@@ -17,7 +17,7 @@ export function deployAws(config: DeployConfig) {
   // ACM certificate — optional; if not set, ALB uses HTTP only
   const certArn = new pulumi.Config("deploy").get("certificateArn");
 
-  // Networking (VPC, ALB, security groups, EFS)
+  // Networking (VPC, ALB, security groups)
   const networking = createNetworking(env, sizing, certArn);
 
   // RDS PostgreSQL
@@ -45,8 +45,6 @@ export function deployAws(config: DeployConfig) {
     subnetIds: networking.vpc.privateSubnetIds,
     securityGroupId: networking.ecsSecurityGroup.id,
     targetGroupArn: networking.targetGroup.arn,
-    efsId: networking.efs.id,
-    efsAccessPointId: networking.efsAccessPoint.id,
     databaseUrl: rds.connectionString,
     authSecret: secrets.authSecretPlain,
     endpointUrl,

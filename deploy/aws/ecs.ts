@@ -24,8 +24,6 @@ export function createEcs(opts: {
   subnetIds: pulumi.Input<string[]>;
   securityGroupId: pulumi.Input<string>;
   targetGroupArn: pulumi.Input<string>;
-  efsId: pulumi.Input<string>;
-  efsAccessPointId: pulumi.Input<string>;
   databaseUrl: pulumi.Input<string>;
   authSecret: pulumi.Input<string>;
   endpointUrl: pulumi.Input<string>;
@@ -86,27 +84,6 @@ export function createEcs(opts: {
     ),
   });
 
-  // EFS access for workspace persistence
-  new aws.iam.RolePolicy(`trex-${opts.env}-task-efs-policy`, {
-    role: taskRole.name,
-    policy: pulumi.output(opts.efsId).apply((efsId) =>
-      JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [
-          {
-            Effect: "Allow",
-            Action: [
-              "elasticfilesystem:ClientMount",
-              "elasticfilesystem:ClientWrite",
-              "elasticfilesystem:ClientRootAccess",
-            ],
-            Resource: `arn:aws:elasticfilesystem:*:*:file-system/${efsId}`,
-          },
-        ],
-      })
-    ),
-  });
-
   // CloudWatch log group
   const logGroup = new aws.cloudwatch.LogGroup(`trex-${opts.env}-logs`, {
     name: `/ecs/trex-${opts.env}-${pulumi.getStack()}`,
@@ -149,12 +126,6 @@ export function createEcs(opts: {
             { containerPort: TREX_PORT, protocol: "tcp" },
           ],
           environment: Object.entries(tEnv).map(([name, value]) => ({ name, value })),
-          mountPoints: [
-            {
-              sourceVolume: "devx-workspaces",
-              containerPath: "/tmp/devx-workspaces",
-            },
-          ],
           healthCheck: {
             command: ["CMD-SHELL", `curl -sf http://localhost:8001${TREX_HEALTH_CHECK.path} || exit 1`],
             interval: TREX_HEALTH_CHECK.intervalSeconds,
@@ -202,19 +173,6 @@ export function createEcs(opts: {
     executionRoleArn: executionRole.arn,
     taskRoleArn: taskRole.arn,
     containerDefinitions,
-    volumes: [
-      {
-        name: "devx-workspaces",
-        efsVolumeConfiguration: {
-          fileSystemId: opts.efsId,
-          transitEncryption: "ENABLED",
-          authorizationConfig: {
-            accessPointId: opts.efsAccessPointId,
-            iam: "ENABLED",
-          },
-        },
-      },
-    ],
   });
 
   const service = new aws.ecs.Service(`trex-${opts.env}-service`, {
