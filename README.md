@@ -12,8 +12,6 @@ cd trexsql-ext
 docker compose up -d
 ```
 
-UI at <http://localhost:8001/trex>.
-
 For live source mounts during plugin development, use `docker-compose.dev.yml`.
 
 ## What you get out of the box
@@ -109,8 +107,6 @@ To rebuild the trex container locally:
 ```bash
 docker compose -f docker-compose.dev.yml build trex
 ```
-
-For full development setup, see `CLAUDE.md`.
 
 ## License
 
