@@ -22,5 +22,13 @@
     "playwright": "^1.59.1",
     "pptxgenjs": "^4.0.1",
     "sharp": "^0.34.5"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.0.5",
+    "uuid": "^14.0.0",
+    "brace-expansion": "^2.0.2",
+    "@docusaurus/core": "^3.10.0",
+    "@docusaurus/preset-classic": "^3.10.0",
+    "@docusaurus/theme-mermaid": "^3.10.0"
   }
 }

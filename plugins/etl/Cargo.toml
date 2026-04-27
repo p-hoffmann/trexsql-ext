@@ -25,9 +25,9 @@ duckdb = { git = "https://github.com/p-hoffmann/trexsql-rs", tag = "v1.4.4-trex"
 duckdb-loadable-macros = { git = "https://github.com/p-hoffmann/trexsql-rs", tag = "v1.4.4-trex", optional = true }
 libduckdb-sys = { git = "https://github.com/p-hoffmann/trexsql-rs", tag = "v1.4.4-trex" }
 
-etl-lib = { git = "https://github.com/supabase/etl", package = "etl" }
-etl-config = { git = "https://github.com/supabase/etl" }
-etl-postgres = { git = "https://github.com/supabase/etl" }
+etl-lib = { git = "https://github.com/supabase/etl", rev = "e692ead6e5f5818b2d905ff5c8598246c4c1302b", package = "etl" }
+etl-config = { git = "https://github.com/supabase/etl", rev = "e692ead6e5f5818b2d905ff5c8598246c4c1302b" }
+etl-postgres = { git = "https://github.com/supabase/etl", rev = "e692ead6e5f5818b2d905ff5c8598246c4c1302b" }
 
 tokio = { version = "1", features = ["rt", "sync"] }
 secrecy = "0.10"
