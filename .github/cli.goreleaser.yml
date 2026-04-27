@@ -1,0 +1,28 @@
+version: 2
+project_name: cli
+
+builds:
+  - id: cli
+    dir: plugins/cli
+    binary: cli
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/supabase/cli/internal/utils.Version={{.Version}}
+    env: [CGO_ENABLED=0]
+    targets:
+      - darwin_amd64
+      - darwin_arm64
+      - linux_amd64
+      - linux_arm64
+      - windows_amd64
+      - windows_arm64
+
+archives:
+  - name_template: '{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}'
+
+release:
+  prerelease: auto
+  mode: append
+
+changelog:
+  use: github

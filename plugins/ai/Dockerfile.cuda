@@ -51,7 +51,6 @@ RUN apt-get update && apt-get install -y \
     libgomp1 \
     vulkan-tools \
     ca-certificates \
-    # Add essential CUDA runtime libraries manually if needed
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
