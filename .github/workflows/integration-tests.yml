@@ -83,36 +83,6 @@ jobs:
           path: plugins/db/build/debug/extension/db/db.trex
           retention-days: 1
 
-  build-devx-ext:
-    name: "Build devx_ext"
-    runs-on: ubuntu-24.04
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            plugins/devx-ext/target
-          key: devx-ext-${{ runner.os }}-${{ hashFiles('plugins/devx-ext/Cargo.lock') }}
-          restore-keys: devx-ext-${{ runner.os }}-
-
-      - name: Build devx_ext
-        run: make configure && make release
-        working-directory: plugins/devx-ext
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ext-devx-ext
-          path: plugins/devx-ext/build/release/devx_ext.trex
-          retention-days: 1
-
   build-pg-trex:
     name: "Build pg_trex"
     runs-on: ubuntu-24.04
@@ -654,12 +624,6 @@ jobs:
           name: ext-trexas
           path: plugins/runtime/build/debug/extension/trexas/
 
-      - name: Create workspace stubs
-        run: |
-          mkdir -p plugins-dev/devx/functions
-          echo '{}' > plugins-dev/devx/deno.json
-          echo '{}' > plugins-dev/devx/functions/deno.json
-
       - name: Setup test environment
         run: make configure
         working-directory: integration-tests
@@ -825,7 +789,7 @@ jobs:
   test-pg-trex:
     name: "Test pg_trex"
     runs-on: ubuntu-24.04
-    needs: [build-pool, build-rust-core, build-pg-trex, build-devx-ext]
+    needs: [build-pool, build-rust-core, build-pg-trex]
     timeout-minutes: 25
     steps:
       - name: Free Disk Space
@@ -860,11 +824,6 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ext-db
-          path: extensions/
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ext-devx-ext
           path: extensions/
 
       - name: List pg_trex build context
