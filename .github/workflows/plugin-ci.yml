@@ -94,7 +94,6 @@ jobs:
           - PKGPATH: ./plugins/docs
           - PKGPATH: ./plugins/web
           - PKGPATH: ./plugins/notebook
-          - PKGPATH: ./plugins/devx-ext
 
     runs-on: ${{ matrix.RUNNER || needs.pick_runner.outputs.random_runner }}
 
@@ -122,7 +121,7 @@ jobs:
             jq --arg v "-$(date +%s)-$GITHUB_SHA" '.version+=$v' package.json > tmppkg; mv tmppkg package.json
           fi
       - name: Set up Rust toolchain
-        if: matrix.PKGPATH == './plugins/bao' || matrix.PKGPATH == './plugins/devx-ext'
+        if: matrix.PKGPATH == './plugins/bao'
         uses: dtolnay/rust-toolchain@stable
       - name: Download libtrexsql and build native library
         if: matrix.PKGPATH == './plugins/bao'
