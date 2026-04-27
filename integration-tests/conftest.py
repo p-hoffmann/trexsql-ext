@@ -139,10 +139,10 @@ class Node:
             raise RuntimeError(f"Node init failed: {data}")
         self._db_file = data
 
-    def execute(self, sql):
+    def execute(self, sql, timeout=90):
         """Execute SQL and return fetchall() result (list of tuples)."""
         self._cmd_queue.put(sql)
-        status, data = self._result_queue.get(timeout=90)
+        status, data = self._result_queue.get(timeout=timeout)
         if status == "error":
             raise RuntimeError(data)
         return data
