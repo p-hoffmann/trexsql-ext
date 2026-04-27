@@ -36,6 +36,8 @@ services:
       - ./core/event:/usr/src/core/event
       - ./functions:/usr/src/functions
       - ./plugins/devx/functions:/usr/src/plugins-dev/devx/functions
+      - ./plugins/devx/fn-claude-code/server.js:/usr/src/plugins-dev/devx/fn-claude-code/server.js
+      - ./plugins/devx/fn-claude-code/kb_mcp.js:/usr/src/plugins-dev/devx/fn-claude-code/kb_mcp.js
       - ./plugins/devx/dist:/usr/src/plugins-dev/devx/dist
       - ./plugins/devx/migrations:/usr/src/plugins-dev/devx/migrations
       - ./plugins/devx/skills:/usr/src/plugins-dev/devx/skills

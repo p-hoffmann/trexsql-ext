@@ -42,7 +42,7 @@ export async function streamCopilotChat({
   skillContext, commandOverride, hasComponentSelection,
 }) {
   const mode = chatMode || "agent";
-  const maxSteps = settings.max_steps || 25;
+  const maxSteps = settings.max_steps || 100;
   const effectiveSettings = commandOverride?.model
     ? { ...settings, model: commandOverride.model }
     : settings;

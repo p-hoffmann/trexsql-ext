@@ -58,6 +58,7 @@ const SUPPORTED_REPOS: Record<string, string> = {
   "sql-render": "https://github.com/OHDSI/SqlRender.git",
   // Study Templates & Examples
   "strategus-study-template": "https://github.com/ohdsi-studies/StrategusStudyRepoTemplate.git",
+  "tutorial-strategus-study": "https://github.com/ohdsi-studies/TutorialStrategusStudy.git",
   "ehden-hmb": "https://github.com/ohdsi-studies/ehden-hmb.git",
   "legendt2dm": "https://github.com/ohdsi-studies/LegendT2dm.git",
   "reward": "https://github.com/ohdsi-studies/Reward.git",
@@ -153,6 +154,7 @@ const REPO_CATEGORIES: Record<string, { description: string; repos: Record<strin
     description: "Strategus study design templates and reference implementations",
     repos: {
       "strategus-study-template": "Official Strategus study repo template with standard file structure",
+      "tutorial-strategus-study": "Annotated Strategus tutorial study — canonical reference for network-study coordinator vs site workflow",
       "ehden-hmb": "EHDEN Heavy Menstrual Bleeding — CohortMethod estimation example",
       "legendt2dm": "LEGEND-T2DM — Large-scale multi-database estimation study",
       "reward": "REWARD — Characterization and incidence study example",

@@ -73,7 +73,7 @@ export default function SettingsPage() {
 
   // Agent fields
   const [autoApprove, setAutoApprove] = useState(false);
-  const [maxSteps, setMaxSteps] = useState(25);
+  const [maxSteps, setMaxSteps] = useState(100);
   const [maxToolSteps, setMaxToolSteps] = useState(10);
   const [autoFixProblems, setAutoFixProblems] = useState(false);
 
@@ -106,7 +106,7 @@ export default function SettingsPage() {
       setBaseUrl(settings.base_url || "");
       setAiRules(settings.ai_rules || "");
       setAutoApprove(settings.auto_approve ?? false);
-      setMaxSteps(settings.max_steps ?? 25);
+      setMaxSteps(settings.max_steps ?? 100);
       setMaxToolSteps(settings.max_tool_steps ?? 10);
       setAutoFixProblems(settings.auto_fix_problems ?? false);
 

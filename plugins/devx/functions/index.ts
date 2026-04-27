@@ -287,7 +287,7 @@ Deno.serve(async (req: Request) => {
           ...providerConfig,
           ai_rules: userPrefs.ai_rules || null,
           auto_approve: userPrefs.auto_approve ?? false,
-          max_steps: userPrefs.max_steps ?? 25,
+          max_steps: userPrefs.max_steps ?? 100,
           max_tool_steps: userPrefs.max_tool_steps ?? 10,
           auto_fix_problems: userPrefs.auto_fix_problems ?? false,
         };
@@ -304,7 +304,7 @@ Deno.serve(async (req: Request) => {
           base_url: null,
           ai_rules: null,
           auto_approve: false,
-          max_steps: 25,
+          max_steps: 100,
           max_tool_steps: 10,
           auto_fix_problems: false,
         };
@@ -872,7 +872,7 @@ Deno.serve(async (req: Request) => {
               chatMode: "agent",
               settings: {
                 ...agentSettings,
-                max_steps: matchedSkill?.allowed_tools ? 25 : 15,
+                max_steps: matchedSkill?.allowed_tools ? 100 : 100,
                 auto_approve: true,
               },
               history: [{ role: "user", content: run.task + ". Use your tools to thoroughly analyze the project." }],

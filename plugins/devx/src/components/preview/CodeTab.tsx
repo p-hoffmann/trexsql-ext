@@ -22,7 +22,7 @@ interface CodeTabProps {
 export function CodeTab({ appId, fileTree, problems, onFixPrompt }: CodeTabProps) {
   const {
     tree, loading, selectedFile, fileContent, expanded,
-    selectFile, toggleDir, saveFile,
+    selectFile, toggleDir, refresh, reloadSelectedFile, saveFile,
     createFile, deleteFile, renameFile, createDir,
   } = fileTree;
   const [searchQuery, setSearchQuery] = useState("");
@@ -169,6 +169,8 @@ export function CodeTab({ appId, fileTree, problems, onFixPrompt }: CodeTabProps
             <FileTreeActions
               onNewFile={() => createFile?.("untitled")}
               onNewFolder={() => createDir?.("new-folder")}
+              onRefresh={() => { refresh(); reloadSelectedFile(); }}
+              refreshing={loading}
             />
           )}
         </div>

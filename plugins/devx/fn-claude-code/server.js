@@ -2,6 +2,7 @@ import http from "node:http";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { kbMcpServer } from "./kb_mcp.js";
 
 const PORT = 4322;
 let lastSessionId = null;
@@ -34,10 +35,11 @@ const server = http.createServer(async (req, res) => {
     try {
       const opts = {
         systemPrompt: systemPrompt || undefined,
-        maxTurns: maxTurns || 25,
+        maxTurns: maxTurns || 100,
         model: model || "sonnet",
         permissionMode: "bypassPermissions",
         cwd: cwd || undefined,
+        mcpServers: { kb: kbMcpServer },
       };
 
       if (lastSessionId) opts.resume = lastSessionId;
@@ -89,7 +91,7 @@ const server = http.createServer(async (req, res) => {
           for (const [callId, info] of pendingTools) {
             sendSSE(res, "tool_call_end", { callId, name: info.name, result: "(completed)" });
             stepCount++;
-            sendSSE(res, "step", { step: stepCount, maxSteps: maxTurns || 25 });
+            sendSSE(res, "step", { step: stepCount, maxSteps: maxTurns || 100 });
           }
           pendingTools.clear();
 
@@ -118,7 +120,7 @@ const server = http.createServer(async (req, res) => {
           for (const [callId, info] of pendingTools) {
             sendSSE(res, "tool_call_end", { callId, name: info.name, result: "(completed)" });
             stepCount++;
-            sendSSE(res, "step", { step: stepCount, maxSteps: maxTurns || 25 });
+            sendSSE(res, "step", { step: stepCount, maxSteps: maxTurns || 100 });
           }
           pendingTools.clear();
 

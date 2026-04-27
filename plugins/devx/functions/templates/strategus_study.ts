@@ -47,7 +47,51 @@ propensity score methodology, and module configuration.
 
 Files use these markers to indicate what needs changing:
 - \\\`# CUSTOMIZE:\\\` — Lines that MUST be modified for your study
-- \\\`# DO NOT MODIFY\\\` — Boilerplate sections (change only if you know what you're doing)
+- \\\`# DO NOT MODIFY\\\` — Shared infrastructure; edit only with explicit, documented reason
+
+### DO NOT MODIFY bars — where they live
+
+Each generated R file has an approximate position past which the code is
+shared infrastructure rather than per-study config:
+
+| File | DO NOT MODIFY bar | What's below |
+|---|---|---|
+| \\\`CreateStrategusAnalysisSpecification.R\\\` | line ~133 (\\\`# DO NOT MODIFY below unless you need to change module parameters\\\`) | Covariate settings, PS args (incl. \\\`estimator\\\`), match args, strata, outcome model, module wiring |
+| \\\`CreateStrategusAnalysisSpecificationTcis.R\\\` | line ~109 (\\\`# Below the line - DO NOT MODIFY\\\`) | Same as above, TCIS edition — expanded for cross-product of target × comparator × indication |
+| \\\`StrategusCodeToRun.R\\\` | line ~45 (\\\`# DO NOT MODIFY below this point\\\`) | Pipeline execution, logging, error handling |
+| \\\`CreateResultsDataModel.R\\\` | line ~34 (\\\`# DO NOT MODIFY below\\\`) | Schema creation machinery |
+| \\\`UploadResults.R\\\` | line ~34 (\\\`# DO NOT MODIFY below\\\`) | Upload helper calls |
+| \\\`EvidenceSynthesis.R\\\` | line ~67 (\\\`# DO NOT MODIFY below\\\`) | Meta-analysis machinery |
+| \\\`ShareResults.R\\\` | line ~19 (\\\`# DO NOT MODIFY BELOW THIS POINT\\\`) | Zip + SFTP upload |
+
+### Crossing a DO NOT MODIFY bar
+
+Most study configuration lives ABOVE these bars. But a few design-level
+parameters — most importantly \\\`estimator = "att"\\\` in the PS config — live
+BELOW the bar in shared infrastructure. You ARE allowed to edit below the bar
+if and only if you're confident the default is wrong for this specific study.
+
+When you do cross the bar, you MUST leave an audit comment directly above the
+changed line (or block) in this format:
+
+\\\`\\\`\\\`r
+# OVERRIDE (DO-NOT-MODIFY zone): <date> — <short reason>
+# Reason: <one sentence tying the change to the study design, e.g.,
+#   "Research question targets population-average effect (policy), not ATT;
+#    LEGEND-style pairwise design per Phase 1.5 decision">
+# Alternative considered: <what would have happened without the override>
+estimator = "overlap"  # was "att" — see override note above
+\\\`\\\`\\\`
+
+Rules:
+- One audit block per crossing (a multi-line change below the bar = one block).
+- No hand-waving reasons. "Because ATE is better" is not acceptable. Tie the
+  change to a specific phase decision, study characteristic, or reference
+  implementation.
+- If you're editing multiple unrelated settings below the bar, write separate
+  audit blocks.
+- Never silently edit below the bar. A downstream reviewer must be able to
+  \\\`grep "OVERRIDE (DO-NOT-MODIFY zone)"\\\` and find every deliberate deviation.
 
 ## Customization Checklist
 
@@ -65,18 +109,73 @@ Files use these markers to indicate what needs changing:
 
 ## Key Rules
 - Always exclude target and comparator drugs from propensity score covariates
-- Use minimum 20 negative control outcomes for empirical calibration
+- Use **minimum 50** negative control outcomes for empirical calibration (≥100 preferred; Tian/Schuemie 2018 benchmark)
+- Configure synthetic positive controls at RR 1.5, 2, 4 via \\\`synthesizePositiveControls()\\\`
 - Run CohortDiagnostics before any estimation or prediction analysis
-- Verify covariate balance (SMD < 0.1) after propensity score adjustment
+- Verify **per-covariate** |SMD| < 0.1 after propensity score adjustment (not aggregate)
+- Hard-gate thresholds: preference-score equipoise < 50% in [0.3, 0.7] → abort. PS AUC ≥ 0.85 → abort (groups non-exchangeable).
+- TAR must start at \\\`riskWindowStart ≥ 1\\\` (day 0 is the index day, unexposed by definition — including it creates immortal time)
+- Strategus 1.5+ bundles all modules as R6 classes (\\\`CohortMethodModule$new()\\\`, etc.); external \\\`*Module\\\` repos are archived
 - Remove the \\\`inst/sampleStudy\\\` folder before distributing your study
+
+## Target Trial Protocol (fill in before generating the analysis spec)
+
+Every Strategus parameter maps to a cell in this 7-component table (Hernán,
+Wang, Leaf, *JAMA* 2022). Do not skip any cell; blanks mean the parameter is
+under-specified.
+
+| # | Component | Your answer |
+|---|-----------|-------------|
+| 1 | **Eligibility** (who qualifies?) | |
+| 2 | **Treatment strategies** (drug A vs B, grace period?) | |
+| 3 | **Assignment** (PS method + estimand — ATT or ATE?) | |
+| 4 | **Follow-up start / time zero** (identical across arms) | |
+| 5 | **Outcome** (phenotype + ascertainment + censoring) | |
+| 6 | **Causal contrast** (ITT or per-protocol?) | |
+| 7 | **Analysis plan** (pre-specified sensitivities) | |
+
+**Intercurrent events (ICH E9(R1))** — pick a strategy for each, document in
+the protocol:
+- Treatment discontinuation: treatment-policy (ITT) / while-on-treatment (per-protocol) / composite
+- Treatment switching: while-on-treatment (censor at switch) / composite
+- Death before outcome: composite / treatment-policy
+- Outcome before exposure: always excluded in eligibility
+
+## Required Pre-Specified Sensitivity Analyses
+Configure as separate \\\`createCmAnalysis()\\\` entries BEFORE running:
+1. **E-value** for unmeasured confounding on the primary effect
+2. **Alternative PS specification** (restricted covariate set)
+3. **Alternative TAR windows** (ITT + on-treatment + on-treatment+30/180)
+4. **Alternative prior-observation window** (365 vs 730 days)
+5. Negative-control calibrated p-values + CIs (always on, not optional)
+
+## Coordinator vs Site Ownership
+
+Know who runs what before distributing the study. For a network study:
+
+| File | Coordinator | Site |
+|------|:-----------:|:----:|
+| CreateStrategusAnalysisSpecification.R | ✓ | |
+| DownloadCohorts.R | ✓ | |
+| StrategusCodeToRun.R / ExecuteAnalyses.R | | ✓ |
+| ShareResults.R (with sensitive-output review gate) | | ✓ |
+| CreateResultsDataModel.R | ✓ | |
+| UploadResults.R | ✓ | |
+| EvidenceSynthesis.R (meta-analysis) | ✓ | |
+| app.R (central Shiny) | ✓ | |
+
+State this split explicitly in README.md so site contributors don't touch
+coordinator scripts. See \\\`tutorial-strategus-study\\\` KB repo for the canonical
+annotated example.
 
 ## Knowledge Base References
 Use these KB repos for reference:
 - \\\`strategus-study-template\\\` — Official OHDSI template structure
+- \\\`tutorial-strategus-study\\\` — Annotated network-study coordinator-vs-site reference
 - \\\`phenotype-library\\\` — 1100+ pre-defined cohort definitions
 - \\\`strategus\\\` — Strategus framework API documentation
-- \\\`cohort-method\\\` — CohortMethod module details
-- \\\`self-controlled-case-series\\\` — SCCS module details
+- \\\`cohort-method\\\` — CohortMethod module details (R6 API as of CM 6.0)
+- \\\`self-controlled-case-series\\\` — SCCS module details (4 assumption-check fns in 6.0)
 - \\\`book-of-ohdsi-2nd\\\` — Comprehensive methodology reference
 - \\\`ehden-hmb\\\`, \\\`legendt2dm\\\`, \\\`reward\\\` — Example studies
 `,

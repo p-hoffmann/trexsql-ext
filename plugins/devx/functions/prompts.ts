@@ -570,6 +570,27 @@ Use web research when:
 Do NOT ask the user for permission to search — just do it when it would help.
 </web_research>`;
 
+const KNOWLEDGE_BASE_BLOCK = `<knowledge_base>
+You have access to an OHDSI knowledge base — cloneable reference repositories covering the full OHDSI ecosystem (Strategus, HADES packages, Atlas/WebAPI, cohort libraries, the Book of OHDSI, and canonical study templates). Prefer it over web search for OHDSI/OMOP/Strategus questions: the code is authoritative, offline, and grep-able.
+
+Tools:
+- \`KBListRepos\` - Discover what's available (categories: orchestration, estimation, prediction, characterization, cohorts, quality, infrastructure, studies, reference)
+- \`KBInit\` - Clone a repo (e.g. \`strategus\`, \`book-of-ohdsi-2nd\`, \`phenotype-library\`, \`strategus-study-template\`, \`ehden-hmb\`, \`legendt2dm\`, \`reward\`)
+- \`KBSearch\` - Grep for a pattern inside a cloned repo
+- \`KBFindSymbols\` - Locate function/class/type definitions
+- \`KBRead\` - Read a specific file (optionally by line range)
+- \`KBListFiles\` / \`KBOverview\` - Browse repo structure
+
+When to consult the knowledge base:
+- Designing a Strategus study → clone \`strategus-study-template\` for the canonical file layout, and clone \`ehden-hmb\`, \`legendt2dm\`, and \`reward\` as reference implementations of real studies (optional but strongly recommended — real studies show correct module wiring, negative control sets, and parameter choices that are easy to get wrong).
+- Questions about OHDSI methodology, OMOP CDM concepts, propensity score methodology, empirical calibration → clone \`book-of-ohdsi-2nd\` and search it.
+- Module-specific settings (CohortMethod, SelfControlledCaseSeries, PatientLevelPrediction, Characterization, etc.) → clone the corresponding package repo and search it.
+- Cohort definitions → \`phenotype-library\` has 1100+ pre-defined cohorts; search there before writing one by hand.
+- Atlas/WebAPI integration questions → clone \`atlas\` or \`webapi\`.
+
+Do NOT ask for permission to call \`KBListRepos\`, \`KBRead\`, \`KBSearch\`, \`KBFindSymbols\`, \`KBListFiles\`, or \`KBOverview\` — they're read-only. \`KBInit\` will prompt for consent once per repo.
+</knowledge_base>`;
+
 const APP_COMMANDS_BLOCK = `<app_commands>
 Do *not* tell the user to run shell commands. Instead, use the available tools:
 - \`RestartApp\` - Restart the dev server (optionally with removeNodeModules=true for a full rebuild)
@@ -638,6 +659,8 @@ ${IMAGE_GENERATION_BLOCK}
 
 ${WEB_RESEARCH_BLOCK}
 
+${KNOWLEDGE_BASE_BLOCK}
+
 [[AI_RULES]]
 `;
 
@@ -657,6 +680,8 @@ ${BASIC_FILE_EDITING_TOOL_SELECTION_BLOCK}
 ${BASIC_DEVELOPMENT_WORKFLOW_BLOCK}
 
 ${WEB_RESEARCH_BLOCK}
+
+${KNOWLEDGE_BASE_BLOCK}
 
 [[AI_RULES]]
 `;
@@ -699,6 +724,8 @@ You have READ-ONLY tools at your disposal to understand the codebase. Follow the
 3. **Analyze:** Think through the code and how it relates to the user's question
 4. **Explain:** Provide a clear, accurate answer based on what you found
 </workflow>
+
+${KNOWLEDGE_BASE_BLOCK}
 
 [[AI_RULES]]
 `;
@@ -790,6 +817,13 @@ After presenting the plan:
 - \`AskUserQuestion\` - Present structured questions to the user (accepts only a \`questions\` array; waits for and returns user responses)
 - \`WritePlan\` - Present or update the implementation plan as a markdown document
 - \`ExitPlanMode\` - Transition to implementation mode after plan approval
+
+## Knowledge Base Tools (for OHDSI/Strategus reference material)
+- \`KBListRepos\` - Discover available reference repos
+- \`KBInit\` - Clone a repo (e.g. \`strategus\`, \`book-of-ohdsi-2nd\`, \`phenotype-library\`, \`strategus-study-template\`, \`ehden-hmb\`, \`legendt2dm\`, \`reward\`)
+- \`KBSearch\` / \`KBFindSymbols\` / \`KBRead\` / \`KBListFiles\` / \`KBOverview\` - Explore cloned repos
+
+For Strategus study planning, consult \`strategus-study-template\` for canonical structure and one of \`ehden-hmb\`, \`legendt2dm\`, or \`reward\` as a real-world reference implementation. For methodology questions, consult \`book-of-ohdsi-2nd\`. Prefer the KB over web search for OHDSI topics.
 
 # Important Constraints
 
