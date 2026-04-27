@@ -41,6 +41,8 @@ import { Subscriptions } from "@/pages/admin/Subscriptions";
 import { Analytics } from "@/pages/admin/Analytics";
 import { AnalyticsDetail } from "@/pages/admin/AnalyticsDetail";
 import { EmbedPage } from "@/pages/EmbedPage";
+import { SingleSpaMount } from "@/pages/SingleSpaMount";
+import { WebConfigContext, useFetchedWebConfig } from "@/lib/web-config";
 
 function HomeRedirect() {
   const { data: session, isPending } = useSession();
@@ -49,7 +51,16 @@ function HomeRedirect() {
 }
 
 export default function App() {
+  const { config, loaded } = useFetchedWebConfig();
+  if (!loaded) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
+      </div>
+    );
+  }
   return (
+    <WebConfigContext.Provider value={config}>
     <GraphQLProvider>
     <BrowserRouter basename={UI_BASE_PATH}>
       <Routes>
@@ -65,6 +76,18 @@ export default function App() {
         <Route element={<Layout />}>
           <Route path="/profile" element={<Profile />} />
           <Route path="/docs" element={<EmbedPage plugin="docs" />} />
+          {config.navExtra.map((item) => (
+            <Route
+              key={item.path}
+              path={`${item.path}/*`}
+              element={
+                <SingleSpaMount
+                  plugin={item.plugin}
+                  basePath={`${UI_BASE_PATH}${item.path}`}
+                />
+              }
+            />
+          ))}
 
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<Navigate to="users" replace />} />
@@ -103,5 +126,6 @@ export default function App() {
       <Toaster />
     </BrowserRouter>
     </GraphQLProvider>
+    </WebConfigContext.Provider>
   );
 }
