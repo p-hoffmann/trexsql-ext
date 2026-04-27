@@ -32,6 +32,7 @@ addEventListener("unhandledrejection", (ev) => {
 });
 
 const app = express();
+app.set("trust proxy", true);
 const server = createServer(app);
 
 const trustedOrigins = (Deno.env.get("BETTER_AUTH_TRUSTED_ORIGINS") || "").split(",").filter(Boolean);
@@ -449,7 +450,8 @@ try {
   const databaseUrl = Deno.env.get("DATABASE_URL");
   if (schemaDir && databaseUrl) {
     const { Pool } = await import("pg");
-    const migrationPool = new Pool({ connectionString: databaseUrl });
+    const sslRequired = databaseUrl.includes("sslmode=require") || databaseUrl.includes("sslmode=prefer");
+    const migrationPool = new Pool({ connectionString: databaseUrl, ...(sslRequired && { ssl: { rejectUnauthorized: false } }) });
     try {
       // Ensure trex schema exists
       await migrationPool.query("CREATE SCHEMA IF NOT EXISTS trex");

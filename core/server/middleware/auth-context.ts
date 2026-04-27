@@ -8,9 +8,11 @@ function getPool(): InstanceType<typeof Pool> {
   if (!pool) {
     const databaseUrl = Deno.env.get("DATABASE_URL");
     if (databaseUrl) {
+      const needsSsl = databaseUrl.includes("sslmode=require") || databaseUrl.includes("sslmode=prefer");
       pool = new Pool({
         connectionString: databaseUrl,
         options: "-c search_path=trex,public",
+        ...(needsSsl && { ssl: { rejectUnauthorized: false } }),
       });
     }
   }

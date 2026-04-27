@@ -717,10 +717,24 @@ Deno.serve(async (req: Request) => {
             clearInterval(heartbeat);
             console.error("Stream error:", err);
             const msg = err instanceof Error ? err.message : String(err);
-            // Strip sensitive details from error messages
-            const safeMsg = msg.includes("API error")
-              ? msg.replace(/:.+$/, "")
-              : "An error occurred while generating a response";
+            // Pass through actionable error messages from the agent, fall back to generic
+            const lower = msg.toLowerCase();
+            let safeMsg: string;
+            if (msg.startsWith("Invalid API key")
+              || msg.startsWith("API key does not")
+              || msg.startsWith("Model \"")
+              || msg.startsWith("Rate limit")
+              || msg.startsWith("API quota")) {
+              safeMsg = msg;
+            } else if (lower.includes("401") || lower.includes("authentication") || lower.includes("invalid") && lower.includes("key")) {
+              safeMsg = "Invalid API key. Please check your API key in Settings.";
+            } else if (lower.includes("404") || lower.includes("not_found") || lower.includes("not found")) {
+              safeMsg = "Model not found. Check the model name in Settings.";
+            } else if (lower.includes("429") || lower.includes("rate limit")) {
+              safeMsg = "Rate limit exceeded. Please wait and try again.";
+            } else {
+              safeMsg = "An error occurred while generating a response. Check the server logs for details.";
+            }
             send({ type: "error", error: safeMsg });
             controller.close();
           }
