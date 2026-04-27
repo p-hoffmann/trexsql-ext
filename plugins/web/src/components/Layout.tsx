@@ -23,7 +23,7 @@ export function Layout() {
   }
 
   const location = useLocation();
-  const isEmbed = location.pathname === "/docs" || location.pathname === "/devx";
+  const isEmbed = location.pathname === "/docs";
 
   const initials = session.user?.name
     ?.split(" ")
@@ -44,12 +44,6 @@ export function Layout() {
                  `text-sm transition-colors ${isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`
                }>
               Docs
-            </NavLink>
-            <NavLink to="/devx"
-               className={({ isActive }) =>
-                 `text-sm transition-colors ${isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`
-               }>
-              DevX
             </NavLink>
             {session.user.role === "admin" && (
               <NavLink to="/admin"
