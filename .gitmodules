@@ -17,3 +17,7 @@
 [submodule "plugins/pg-meta/postgres-meta"]
 	path = plugins/pg-meta/postgres-meta
 	url = https://github.com/p-hoffmann/postgres-meta.git
+[submodule "plugins/cli"]
+	path = plugins/cli
+	url = https://github.com/p-hoffmann/cli.git
+	branch = develop

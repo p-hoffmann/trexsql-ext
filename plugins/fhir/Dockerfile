@@ -3,12 +3,10 @@ FROM rust:1.82-bookworm AS builder
 
 WORKDIR /build
 
-# Copy workspace Cargo files
 COPY Cargo.toml Cargo.lock ./
 COPY plugins/fhir/ plugins/fhir/
 COPY src/ src/
 
-# Build the extension in release mode
 RUN cargo build --release -p fhir
 
 ## Stage 2: Runtime image
@@ -21,13 +19,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy the compiled extension
 COPY --from=builder /build/target/release/libfhir.so /app/fhir.trex
 
-# Copy FHIR R4 data files (embedded at compile time, but useful for reference)
+# FHIR R4 data files are embedded at compile time; copied here for reference.
 COPY plugins/fhir/data/ /app/data/
 
-# Startup script
 COPY plugins/fhir/docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 

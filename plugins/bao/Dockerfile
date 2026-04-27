@@ -61,7 +61,4 @@ ENV MAIN_PATH=/usr/src/main
 
 EXPOSE 33001 5432 33000
 
-#HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-#    CMD curl -f http://localhost:33001/_internal/health || exit 1
-
 CMD ["bun", "run", "start:docker"]

@@ -53,11 +53,8 @@ COPY --from=builder /app/build/release/duckdb /usr/local/bin/duckdb
 RUN mkdir -p /extensions
 COPY --from=builder /app/build/release/extension/circe/circe.duckdb_extension /extensions/circe.duckdb_extension
 
-# (Optional) Build metadata omitted (BUILD_INFO.txt not strictly required at runtime)
-# COPY --from=builder /app/circe-be/native-libs/BUILD_INFO.txt /extensions/BUILD_INFO.txt
-
-# Test script
 COPY scripts/test_extension_docker.sh /usr/local/bin/run_circe_test.sh
+
 RUN chmod +x /usr/local/bin/run_circe_test.sh
 
 WORKDIR /work
