@@ -207,7 +207,7 @@ jobs:
 
   build-arm:
     needs: [pick_runner]
-    if: (github.ref_name == 'develop' || github.ref_name == 'main' || contains('release', github.ref_name) || github.event_name == 'workflow_dispatch') || ( github.event_name == 'pull_request' && !github.event.pull_request.draft )
+    if: github.ref_name == 'develop' || github.ref_name == 'main' || contains('release', github.ref_name) || github.event_name == 'workflow_dispatch'
 
     strategy:
       fail-fast: false
@@ -328,6 +328,7 @@ jobs:
 
   build-docker:
     needs: [build, build-arm]
+    if: always() && needs.build.result == 'success' && (needs.build-arm.result == 'success' || needs.build-arm.result == 'skipped')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
