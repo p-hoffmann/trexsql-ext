@@ -14,6 +14,9 @@ MODEL_FILENAME = "tiny-test.gguf"
 MODEL_NAME = "tiny-test"
 MODEL_LOAD_CONFIG = '{"n_ctx": 512, "n_gpu_layers": 0, "num_threads": 1}'
 
+# Generous timeout for model download/load and inference on slow CI runners.
+AI_TIMEOUT = 300
+
 # Known locations where the model may already exist
 _KNOWN_MODEL_PATHS = [
     os.path.expanduser("~/.local/share/duckdb-llama/models/tiny-test.gguf"),
@@ -113,14 +116,16 @@ class TestAiWithModel:
         if model_path is None:
             # No cached model -- attempt download via the extension
             result = ai_node.execute(
-                f"SELECT trex_ai_download_model('{MODEL_URL}', '{MODEL_FILENAME}', '{{}}')"
+                f"SELECT trex_ai_download_model('{MODEL_URL}', '{MODEL_FILENAME}', '{{}}')",
+                timeout=AI_TIMEOUT,
             )
             download_status = result[0][0]
             assert "success" in download_status or "already_exists" in download_status
             model_path = f"./models/{MODEL_FILENAME}"
 
         result = ai_node.execute(
-            f"SELECT trex_ai_load_model('{model_path}', '{MODEL_LOAD_CONFIG}')"
+            f"SELECT trex_ai_load_model('{model_path}', '{MODEL_LOAD_CONFIG}')",
+            timeout=AI_TIMEOUT,
         )
         assert "success" in result[0][0]
 
@@ -131,7 +136,8 @@ class TestAiWithModel:
         """trex_ai_generate() produces non-empty output."""
         result = ai_node.execute(
             f"SELECT trex_ai_generate('{MODEL_NAME}', 'Once', "
-            f"'{{\"max_tokens\": 1, \"temperature\": 0.1}}')"
+            f"'{{\"max_tokens\": 1, \"temperature\": 0.1}}')",
+            timeout=AI_TIMEOUT,
         )
         assert len(result) == 1
         assert result[0][0] is not None
@@ -142,7 +148,8 @@ class TestAiWithModel:
         result = ai_node.execute(
             f"SELECT trex_ai_chat('{MODEL_NAME}', "
             f"'[{{\"role\": \"user\", \"content\": \"Hi\"}}]', "
-            f"'{{\"max_tokens\": 3}}')"
+            f"'{{\"max_tokens\": 3}}')",
+            timeout=AI_TIMEOUT,
         )
         assert len(result) == 1
         assert result[0][0] is not None
@@ -151,5 +158,6 @@ class TestAiWithModel:
     def test_ai_unload(self, ai_node):
         """trex_ai_unload_model() succeeds."""
         ai_node.execute(
-            f"SELECT trex_ai_unload_model('{MODEL_NAME}')"
+            f"SELECT trex_ai_unload_model('{MODEL_NAME}')",
+            timeout=AI_TIMEOUT,
         )
