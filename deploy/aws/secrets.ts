@@ -12,7 +12,6 @@ export interface SecretsResult {
 }
 
 export function createSecrets(env: string): SecretsResult {
-  // Generate random passwords
   const dbPasswordPlain = new pulumi.Config("deploy").getSecret("dbPassword") ??
     pulumi.output("change-me-in-production-32chars!!");
   const authSecretPlain = new pulumi.Config("deploy").getSecret("authSecret") ??

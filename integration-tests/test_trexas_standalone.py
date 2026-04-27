@@ -29,14 +29,12 @@ def test_trexas_server_lifecycle(node_factory):
     """Start server, verify it appears in list, stop it, verify it's gone."""
     node = node_factory(load_trexas=True, load_flight=False, load_swarm=False)
 
-    # Start server
     result = node.execute(
         f"SELECT trex_start_server('127.0.0.1', {node.trexas_port}, "
         f"'{MAIN_SERVICE_PATH}', '{EVENT_WORKER_PATH}')"
     )
     assert len(result) == 1
 
-    # Verify server appears in list
     servers = wait_for(
         node,
         "SELECT * FROM trex_list_servers()",
@@ -45,12 +43,10 @@ def test_trexas_server_lifecycle(node_factory):
     )
     assert len(servers) >= 1
 
-    # Stop server
     server_id = servers[0][0]
     result = node.execute(f"SELECT trex_stop_server('{server_id}')")
     assert len(result) == 1
 
-    # Verify server is gone
     time.sleep(1)
     servers_after = node.execute("SELECT * FROM trex_list_servers()")
     assert len(servers_after) == 0
@@ -60,13 +56,11 @@ def test_trexas_health_endpoint(node_factory):
     """Start server and verify HTTP health endpoint responds."""
     node = node_factory(load_trexas=True, load_flight=False, load_swarm=False)
 
-    # Start server
     node.execute(
         f"SELECT trex_start_server('127.0.0.1', {node.trexas_port}, "
         f"'{MAIN_SERVICE_PATH}', '{EVENT_WORKER_PATH}')"
     )
 
-    # Wait for server to be ready, then hit health endpoint
     deadline = time.time() + 10
     resp_data = None
     while time.time() < deadline:

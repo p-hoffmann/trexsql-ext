@@ -265,7 +265,6 @@ export function Apps() {
         }
       />
 
-      {/* Register Application Dialog */}
       <Dialog
         open={registerOpen}
         onOpenChange={(open) => {
@@ -372,7 +371,6 @@ export function Apps() {
         </DialogContent>
       </Dialog>
 
-      {/* Credentials One-Time View Dialog */}
       <Dialog
         open={credentialsDialog !== null}
         onOpenChange={(open) => {

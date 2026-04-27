@@ -28,16 +28,8 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 /// How often (in milliseconds) the main loop polls for pending request slots.
 const POLL_INTERVAL_MS: i64 = 100;
-
-// ---------------------------------------------------------------------------
-// Thread pool types
-// ---------------------------------------------------------------------------
 
 /// A request dispatched from the main loop to a worker thread.
 /// The SQL string has already been read from shm_mq by the main loop.
@@ -150,10 +142,6 @@ impl Drop for QueryPool {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Engine initialization
-// ---------------------------------------------------------------------------
-
 /// Validate that an extension file path does not contain characters that could
 /// allow SQL injection in a LOAD statement. LOAD does not support parameterized
 /// queries, so we must validate the path before interpolation.
@@ -257,10 +245,6 @@ fn init_trexsql_engine() -> Result<Connection, String> {
     pgrx::log!("pg_trex: trexsql engine initialized");
     Ok(conn)
 }
-
-// ---------------------------------------------------------------------------
-// Cluster startup
-// ---------------------------------------------------------------------------
 
 /// Start the cluster via trex_db_start() with GUC-configured addresses.
 fn start_cluster(conn: &Connection) -> Result<(), String> {
@@ -440,10 +424,6 @@ fn stop_cluster(conn: &Connection) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// SIGHUP handling
-// ---------------------------------------------------------------------------
-
 /// Cached GUC values for detecting changes on SIGHUP.
 struct CachedGucs {
     gossip_addr: String,
@@ -497,10 +477,6 @@ fn handle_sighup(conn: &Connection, cached: &mut CachedGucs) {
 
     *cached = new;
 }
-
-// ---------------------------------------------------------------------------
-// Worker thread function
-// ---------------------------------------------------------------------------
 
 /// Thread function for each worker in the query pool.
 ///
@@ -557,10 +533,6 @@ fn worker_thread_fn(
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Query execution and Arrow IPC serialization
-// ---------------------------------------------------------------------------
 
 /// Execute a SQL query on the trexsql connection and serialize the results
 /// as Arrow IPC bytes.
@@ -636,10 +608,6 @@ fn serialize_batches_to_ipc(schema: &Arc<Schema>, batches: &[RecordBatch]) -> Re
     Ok(buf)
 }
 
-// ---------------------------------------------------------------------------
-// Utility
-// ---------------------------------------------------------------------------
-
 fn extract_panic_message(err: Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = err.downcast_ref::<&str>() {
         s.to_string()
@@ -657,10 +625,6 @@ fn now_epoch_secs() -> i64 {
         .unwrap_or_default()
         .as_secs() as i64
 }
-
-// ---------------------------------------------------------------------------
-// Main loop: request polling and response collection
-// ---------------------------------------------------------------------------
 
 /// Scan request slots for pending queries, read SQL from shm_mq, and dispatch
 /// to the thread pool.
@@ -836,10 +800,6 @@ fn collect_responses(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Schema migration + pg_attach
-// ---------------------------------------------------------------------------
-
 /// Run core schema migrations via the migration extension and attach PostgreSQL
 /// tables via pg_attach. Migrations use postgres_scanner (ATTACH ... TYPE postgres)
 /// so they do not go through SPI. pg_attach uses spi_bridge and must run on a
@@ -912,10 +872,6 @@ fn run_migrations_and_attach(conn: &Connection) {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Worker main entry point
-// ---------------------------------------------------------------------------
 
 /// Background worker main function.
 ///
@@ -1074,12 +1030,8 @@ pub fn worker_main(shmem: &pgrx::PgLwLock<PgTrexShmem>) {
         cached_gucs.catalog_refresh_secs.max(1) as u64 + 1,
     );
 
-    // Track in-flight queries dispatched to worker threads
     let mut pending_queries: HashMap<usize, PendingQuery> = HashMap::new();
 
-    // -----------------------------------------------------------------------
-    // Main loop
-    // -----------------------------------------------------------------------
     loop {
         // Check for SIGTERM -- graceful shutdown
         if BackgroundWorker::sigterm_received() {
@@ -1118,10 +1070,6 @@ pub fn worker_main(shmem: &pgrx::PgLwLock<PgTrexShmem>) {
         BackgroundWorker::wait_latch(Some(Duration::from_millis(POLL_INTERVAL_MS as u64)));
         unsafe { pg_sys::ResetLatch(pg_sys::MyLatch) };
     }
-
-    // -----------------------------------------------------------------------
-    // Shutdown
-    // -----------------------------------------------------------------------
 
     // Clean up any in-flight queries
     for (slot_idx, pq) in pending_queries.drain() {
@@ -1168,10 +1116,6 @@ pub fn worker_main(shmem: &pgrx::PgLwLock<PgTrexShmem>) {
 
     pgrx::log!("pg_trex: background worker stopped");
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

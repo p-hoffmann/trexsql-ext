@@ -56,7 +56,6 @@ export function createPostgres(opts: {
     },
   });
 
-  // Create the trex database
   new azure.dbforpostgresql.Database(`trex-${opts.env}-db`, {
     resourceGroupName: opts.resourceGroupName,
     serverName: server.name,

@@ -41,7 +41,7 @@ def test_db_set_key_service_prefix(node_factory):
     )
     svc_rows = [r for r in services if r[1] == "test_svc"]
     assert len(svc_rows) >= 1
-    assert svc_rows[0][4] == "running"  # status column
+    assert svc_rows[0][4] == "running"
 
 
 def test_db_delete_key(node_factory):
@@ -51,7 +51,6 @@ def test_db_delete_key(node_factory):
         f"SELECT trex_db_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
 
-    # Set then delete
     node.execute("SELECT trex_db_set_key('service:temp', '{\"host\":\"\",\"port\":0,\"status\":\"running\",\"uptime\":0,\"config\":{}}')")
 
     services = wait_for(
@@ -64,7 +63,6 @@ def test_db_delete_key(node_factory):
 
     node.execute("SELECT trex_db_delete_key('service:temp')")
 
-    # After deletion, the key should no longer appear
     wait_for(
         node,
         "SELECT * FROM trex_db_services()",
@@ -103,11 +101,10 @@ def test_etl_start_service_sql(node_factory):
         f"SELECT trex_db_start('0.0.0.0', {node.gossip_port}, 'test-cluster')"
     )
 
-    # This will fail because there's no real PG server, but the error should
-    # indicate it tried to run trex_etl_start (not "Unknown service extension")
+    # Expect failure (no real PG server) but the error must show that trex_etl_start
+    # was reached, not "Unknown service extension".
     result = node.execute(
         """SELECT trex_db_start_service('etl', '{"pipeline_name":"test_pipe","connection_string":"host=localhost port=5432 dbname=test user=test password=secret publication=mypub"}')"""
     )
     msg = result[0][0]
-    # Should not be "Unknown service extension"
     assert "Unknown service extension" not in msg

@@ -6,8 +6,6 @@ use crate::engine::TrexDatabase;
 use crate::error;
 use crate::result::TrexResult;
 
-// === Error handling ===
-
 /// Returns the last error message for the current thread, or NULL if no error.
 /// The returned pointer is valid until the next C API call on the same thread.
 #[no_mangle]
@@ -22,8 +20,6 @@ pub unsafe extern "C" fn trexsql_free_string(s: *mut c_char) {
         drop(CString::from_raw(s));
     }
 }
-
-// === Database lifecycle ===
 
 /// Open a trexsql database.
 /// `path`: file path or ":memory:" (NULL means ":memory:")
@@ -64,8 +60,6 @@ pub unsafe extern "C" fn trexsql_close(db: *mut TrexDatabase) {
         drop(Box::from_raw(db));
     }
 }
-
-// === SQL execution ===
 
 /// Execute a non-query SQL statement (DDL, DML, LOAD, PRAGMA, etc.).
 /// Returns 0 on success, -1 on error (check trexsql_last_error).
@@ -131,8 +125,6 @@ pub unsafe extern "C" fn trexsql_query(
         }
     }
 }
-
-// === Result set iteration ===
 
 /// Get the number of columns in the result.
 #[no_mangle]
@@ -223,8 +215,6 @@ pub unsafe extern "C" fn trexsql_result_close(r: *mut TrexResult) {
         drop(Box::from_raw(r));
     }
 }
-
-// === Appender ===
 
 /// Create an appender for a table.
 /// `schema`: schema name (e.g. "main") or database alias for attached databases.

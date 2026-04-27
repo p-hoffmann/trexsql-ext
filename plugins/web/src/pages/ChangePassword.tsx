@@ -43,7 +43,6 @@ export function ChangePassword() {
         return;
       }
 
-      // Clear the mustChangePassword flag
       const apiUrl = import.meta.env.VITE_API_URL || window.location.origin;
       const token = authClient.getAccessToken();
       await fetch(`${apiUrl}${BASE_PATH}/auth/v1/password-changed`, {

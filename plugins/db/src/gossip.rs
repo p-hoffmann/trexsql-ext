@@ -459,5 +459,3 @@ impl GossipRegistry {
         Ok(nodes)
     }
 }
-
-// TODO: implement gossip encryption (derive key from CA cert, encrypt/decrypt values)

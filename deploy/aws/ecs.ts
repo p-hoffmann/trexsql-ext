@@ -84,13 +84,11 @@ export function createEcs(opts: {
     ),
   });
 
-  // CloudWatch log group
   const logGroup = new aws.cloudwatch.LogGroup(`trex-${opts.env}-logs`, {
     name: `/ecs/trex-${opts.env}-${pulumi.getStack()}`,
     retentionInDays: 30,
   });
 
-  // Build environment variables
   const region = aws.getRegionOutput().name;
   const trexEnv = pulumi
     .all([opts.databaseUrl, opts.authSecret, opts.endpointUrl, opts.s3BucketName, region])
@@ -111,7 +109,6 @@ export function createEcs(opts: {
       buildPostgrestEnvVars({ databaseUrl: dbUrl, jwtSecret: secret, endpointUrl: endpoint })
   );
 
-  // Task definition
   const logGroupName = logGroup.name;
   const containerDefinitions = pulumi
     .all([trexEnv, postgrestEnv, opts.s3BucketName, logGroupName, region])

@@ -158,8 +158,6 @@ unsafe extern "C-unwind" fn exec_custom_scan(
     let tts_values = std::slice::from_raw_parts_mut((*slot).tts_values, natts);
     let tts_isnull = std::slice::from_raw_parts_mut((*slot).tts_isnull, natts);
 
-    // TODO: native type conversion (DATE, INT, etc.) is planned; currently all
-    // columns are returned as TEXT datums.
     for i in 0..natts {
         if i < row.len() {
             match &row[i] {

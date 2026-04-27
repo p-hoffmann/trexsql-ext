@@ -119,13 +119,11 @@ class TestAiWithModel:
             assert "success" in download_status or "already_exists" in download_status
             model_path = f"./models/{MODEL_FILENAME}"
 
-        # Load model
         result = ai_node.execute(
             f"SELECT trex_ai_load_model('{model_path}', '{MODEL_LOAD_CONFIG}')"
         )
         assert "success" in result[0][0]
 
-        # Verify loaded
         result = ai_node.execute("SELECT trex_ai_list_loaded()")
         assert MODEL_NAME in result[0][0] or MODEL_FILENAME in result[0][0]
 

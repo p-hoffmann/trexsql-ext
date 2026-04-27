@@ -5,8 +5,6 @@ const API_URL = import.meta.env.VITE_API_URL || window.location.origin;
 const AUTH_URL = `${API_URL}${BASE_PATH}/auth/v1`;
 const STORAGE_KEY = "trex.auth.session";
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
 interface GoTrueUser {
   id: string;
   aud: string;
@@ -47,8 +45,6 @@ interface StoredSession {
   user: GoTrueUser;
 }
 
-// ── Mapped user type for UI compatibility ────────────────────────────────────
-
 export interface TrexUser {
   id: string;
   name: string;
@@ -75,8 +71,6 @@ function mapUser(u: GoTrueUser): TrexUser {
     emailVerified: !!u.email_confirmed_at,
   };
 }
-
-// ── Session store ────────────────────────────────────────────────────────────
 
 let _session: StoredSession | null = null;
 let _initialized = false;
@@ -126,8 +120,6 @@ function loadSession(): StoredSession | null {
   }
 }
 
-// ── HTTP helpers ─────────────────────────────────────────────────────────────
-
 function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (_session?.access_token) {
@@ -143,8 +135,6 @@ async function authFetch(
   const headers = { ...authHeaders(), ...(options.headers as Record<string, string> || {}) };
   return fetch(`${AUTH_URL}${path}`, { ...options, headers });
 }
-
-// ── Token refresh ────────────────────────────────────────────────────────────
 
 let _refreshPromise: Promise<boolean> | null = null;
 
@@ -181,7 +171,6 @@ async function refreshSession(): Promise<boolean> {
   return _refreshPromise;
 }
 
-// Auto-refresh timer
 let _refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleRefresh() {
@@ -198,8 +187,6 @@ function scheduleRefresh() {
   }, refreshIn);
 }
 
-// ── Initialize ───────────────────────────────────────────────────────────────
-
 async function initialize() {
   if (_initialized) return;
 
@@ -208,12 +195,10 @@ async function initialize() {
     _session = stored;
     notify();
 
-    // If token is expired, try to refresh immediately
     if (stored.expires_at < Math.floor(Date.now() / 1000) + 60) {
       await refreshSession();
     }
 
-    // Fetch fresh user data
     if (_session) {
       try {
         const res = await authFetch("/user");
@@ -240,10 +225,7 @@ async function initialize() {
   _initialized = true;
 }
 
-// Eagerly initialize
 initialize();
-
-// ── Auth client methods ──────────────────────────────────────────────────────
 
 export const authClient = {
   signIn: {
@@ -270,7 +252,6 @@ export const authClient = {
     },
 
     async social({ provider, callbackURL }: { provider: string; callbackURL: string }) {
-      // Redirect to OAuth authorize endpoint
       const params = new URLSearchParams({
         provider,
         redirect_to: callbackURL,
@@ -467,8 +448,6 @@ export const authClient = {
     return _session?.access_token || null;
   },
 };
-
-// ── React hooks ──────────────────────────────────────────────────────────────
 
 export function useSession(): { data: TrexSessionData | null; isPending: boolean } {
   const [pending, setPending] = useState(!_initialized);

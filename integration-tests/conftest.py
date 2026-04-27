@@ -9,7 +9,7 @@ import os
 try:
     mp.set_start_method("spawn")
 except RuntimeError:
-    pass  # already set
+    pass
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 POOL_EXT_TREX = f"{REPO_ROOT}/plugins/pool/build/debug/extension/pool/pool.trex"
@@ -76,9 +76,7 @@ def alloc_ports():
     return gp, fp, pp, tp
 
 
-# ---------------------------------------------------------------------------
-# Node: each node is a separate OS process (extensions use static globals)
-# ---------------------------------------------------------------------------
+# Each node runs in its own OS process because extensions use static globals.
 
 def _node_worker(ext_paths, cmd_queue, result_queue):
     """Child process: create trexsql connection, load extensions, run commands."""
@@ -97,14 +95,13 @@ def _node_worker(ext_paths, cmd_queue, result_queue):
         result_queue.put(("ready", db_file))
     except Exception as e:
         result_queue.put(("init_error", str(e)))
-        # Clean up db file on init failure
         import shutil
         shutil.rmtree(db_dir, ignore_errors=True)
         return
 
     while True:
         cmd = cmd_queue.get()
-        if cmd is None:  # shutdown
+        if cmd is None:
             break
         try:
             result = conn.execute(cmd)
@@ -117,7 +114,6 @@ def _node_worker(ext_paths, cmd_queue, result_queue):
             result_queue.put(("error", str(e)))
 
     conn.close()
-    # Clean up temp database directory
     import shutil
     shutil.rmtree(db_dir, ignore_errors=True)
 
@@ -141,7 +137,7 @@ class Node:
         if status != "ready":
             self._process.join(timeout=5)
             raise RuntimeError(f"Node init failed: {data}")
-        self._db_file = data  # path to temp database file
+        self._db_file = data
 
     def execute(self, sql):
         """Execute SQL and return fetchall() result (list of tuples)."""
@@ -257,11 +253,9 @@ def create_node_with_tables(node_factory_fn, tables_sql_list, node_name, cluster
     """
     node = node_factory_fn()
 
-    # Create tables
     for sql in tables_sql_list:
         node.execute(sql)
 
-    # Start gossip
     if gossip_seeds:
         node.execute(
             f"SELECT trex_db_start_seeds('127.0.0.1', {node.gossip_port}, "
@@ -272,7 +266,6 @@ def create_node_with_tables(node_factory_fn, tables_sql_list, node_name, cluster
             f"SELECT trex_db_start('127.0.0.1', {node.gossip_port}, '{cluster_id}')"
         )
 
-    # Start flight server
     node.execute(
         f"SELECT trex_db_flight_start('0.0.0.0', {node.flight_port})"
     )

@@ -25,13 +25,11 @@ export function CliLogin() {
 
   if (isPending) return null;
 
-  // Not logged in — redirect to login with a redirect back here
   if (!session) {
     const redirectPath = `/cli/login?${searchParams.toString()}`;
     return <Navigate to={`/login?redirect=${encodeURIComponent(redirectPath)}`} replace />;
   }
 
-  // Must be admin
   if (session.user.role !== "admin") {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
@@ -47,7 +45,6 @@ export function CliLogin() {
     );
   }
 
-  // Missing required params
   if (!sessionId || !publicKey) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
@@ -95,7 +92,6 @@ export function CliLogin() {
     }
   }
 
-  // After approval — show the verification code
   if (deviceCode) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">

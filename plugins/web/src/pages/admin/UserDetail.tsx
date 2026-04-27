@@ -364,7 +364,6 @@ export function UserDetail() {
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
-        {/* Profile Information */}
         <Card>
           <CardHeader>
             <CardTitle>Profile</CardTitle>
@@ -432,7 +431,6 @@ export function UserDetail() {
           </CardContent>
         </Card>
 
-        {/* Linked Providers */}
         <Card>
           <CardHeader>
             <CardTitle>Linked Providers</CardTitle>
@@ -473,7 +471,6 @@ export function UserDetail() {
         </Card>
       </div>
 
-      {/* Application Roles */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -510,7 +507,6 @@ export function UserDetail() {
         </CardContent>
       </Card>
 
-      {/* Add Role Dialog */}
       <Dialog open={addRoleOpen} onOpenChange={setAddRoleOpen}>
         <DialogContent>
           <DialogHeader>
@@ -545,7 +541,6 @@ export function UserDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Actions */}
       <Card>
         <CardHeader>
           <CardTitle>Actions</CardTitle>
@@ -553,7 +548,6 @@ export function UserDetail() {
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-3">
-            {/* Role Change */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline">Change Role</Button>
@@ -576,7 +570,6 @@ export function UserDetail() {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            {/* Ban / Unban */}
             <Button
               variant={user.banned ? "outline" : "destructive"}
               onClick={handleBanToggle}
@@ -584,7 +577,6 @@ export function UserDetail() {
               {user.banned ? "Unban User" : "Ban User"}
             </Button>
 
-            {/* Delete / Restore */}
             {user.deletedAt ? (
               <Button variant="outline" onClick={handleRestore}>
                 Restore User

@@ -70,14 +70,12 @@ export function Cell({
       )}
       onClick={handleFocus}
     >
-      {/* Cell type label — always visible */}
       <span className="absolute -top-2 right-2 z-20 rounded-md bg-background/95 px-2 py-0.5 text-xs font-medium text-primary shadow-sm ring-1 ring-border/50 select-none">
         {isCodeCell(cell)
           ? cell.language === 'r' ? 'R' : 'Python'
           : 'Markdown'}
       </span>
 
-      {/* Action buttons — visible on hover/select */}
       <div
         className={cn(
           'absolute -top-2 right-2 z-30 flex items-center gap-1 rounded-md bg-background/95 p-1 shadow-sm ring-1 ring-border/50 opacity-0 transition-opacity',

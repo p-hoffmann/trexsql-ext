@@ -267,7 +267,6 @@ fn start_pipeline(
         )
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
-    // Verify pool is available
     trex_pool_client::read_pool_size()
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 

@@ -269,9 +269,7 @@ def test_parallel_pgwire_writes_and_reads(env):
         try:
             conn.autocommit = True
             cur = conn.cursor()
-            # Write
             cur.execute(f"INSERT INTO pgtest VALUES ({idx}, 'client-{idx}')")
-            # Read back
             cur.execute(f"SELECT val FROM pgtest WHERE id = {idx}")
             rows = cur.fetchall()
             cur.close()

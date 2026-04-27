@@ -360,7 +360,6 @@ export function AppDetail() {
       <Separator />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Main Details */}
         <div className="lg:col-span-2 space-y-6">
           <Card>
             <CardHeader>
@@ -522,9 +521,7 @@ export function AppDetail() {
           </Card>
         </div>
 
-        {/* Sidebar */}
         <div className="space-y-6">
-          {/* Stats */}
           <Card>
             <CardHeader>
               <CardTitle>Statistics</CardTitle>
@@ -561,7 +558,6 @@ export function AppDetail() {
             </CardContent>
           </Card>
 
-          {/* Actions */}
           <Card>
             <CardHeader>
               <CardTitle>Actions</CardTitle>
@@ -599,7 +595,6 @@ export function AppDetail() {
         </div>
       </div>
 
-      {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -628,7 +623,6 @@ export function AppDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Rotate Secret Confirmation Dialog */}
       <Dialog open={rotateDialogOpen} onOpenChange={setRotateDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -653,7 +647,6 @@ export function AppDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* New Secret Display Dialog */}
       <Dialog
         open={newSecret !== null}
         onOpenChange={(open) => {

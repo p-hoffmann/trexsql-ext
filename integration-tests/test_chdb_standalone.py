@@ -19,12 +19,10 @@ def test_chdb_start_stop_database(node_factory):
     """trex_chdb_start() and trex_chdb_stop() lifecycle."""
     node = node_factory(load_chdb=True, load_db=False)
 
-    # Start database
     result = node.execute("SELECT trex_chdb_start('')")
     assert len(result) == 1
     assert result[0][0] == "Database started"
 
-    # Stop database
     result = node.execute("SELECT trex_chdb_stop()")
     assert len(result) == 1
     assert result[0][0] == "Database stopped"
@@ -36,7 +34,6 @@ def test_chdb_scan_query(node_factory):
 
     node.execute("SELECT trex_chdb_start('')")
 
-    # Simple query
     result = node.execute("SELECT * FROM trex_chdb_scan('SELECT 1 as a, 2 as b')")
     assert len(result) == 1
     assert result[0][0] == "1"

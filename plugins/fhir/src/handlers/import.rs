@@ -37,7 +37,6 @@ pub async fn import_ndjson(
 
         let line_num = line_idx + 1;
 
-        // Parse JSON
         let mut resource: Value = match serde_json::from_str(line) {
             Ok(v) => v,
             Err(e) => {
@@ -51,7 +50,6 @@ pub async fn import_ndjson(
             }
         };
 
-        // Extract resourceType
         let resource_type = match resource.get("resourceType").and_then(|v| v.as_str()) {
             Some(rt) => rt.to_string(),
             None => {
@@ -65,7 +63,6 @@ pub async fn import_ndjson(
             }
         };
 
-        // Check if known type
         if !state.registry.is_known_type(&resource_type) {
             total_errors += 1;
             *error_counts.entry(resource_type.clone()).or_default() += 1;
@@ -77,7 +74,6 @@ pub async fn import_ndjson(
             continue;
         }
 
-        // Determine id
         let id = match resource.get("id").and_then(|v| v.as_str()) {
             Some(id) => {
                 if let Err(e) = validate_fhir_id(id) {
@@ -95,7 +91,6 @@ pub async fn import_ndjson(
             None => uuid::Uuid::new_v4().to_string(),
         };
 
-        // Get transform spec and column names
         let transform_spec = match state.registry.get_json_transform(&resource_type) {
             Ok(s) => s,
             Err(e) => {

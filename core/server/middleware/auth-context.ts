@@ -39,11 +39,16 @@ export async function authContext(
     if (bearerToken) {
       const token = bearerToken;
       const claims = await verifyAccessToken(token);
-      if (claims) {
+      // Long-lived service_role / anon keys must only be sent via the `apikey`
+      // header. Accepting them in the user-bearer channels (Authorization
+      // Bearer, ?token, sb-access-token cookie) would let any holder of the
+      // service_role key impersonate admin from a browser context or via a
+      // leaked URL. Fall through to the apikey-header branch instead.
+      if (claims && claims.role !== "service_role" && claims.role !== "anon") {
         const trexRole = claims.app_metadata?.trex_role || "user";
         (req as any).pgSettings = {
           "app.user_id": claims.sub,
-          "app.user_role": claims.role === "service_role" ? "admin" : trexRole,
+          "app.user_role": trexRole,
           "request.jwt.claims": JSON.stringify(claims),
         };
 

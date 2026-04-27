@@ -12,7 +12,6 @@ use pgrx::pg_sys;
 
 use crate::spi_bridge;
 
-// ── PG OID → DuckDB type mapping ───────────────────────────────────────
 
 fn pg_oid_to_logical_type(oid: pg_sys::Oid) -> LogicalTypeId {
     match oid {
@@ -27,7 +26,6 @@ fn pg_oid_to_logical_type(oid: pg_sys::Oid) -> LogicalTypeId {
     }
 }
 
-// ── VTab data structures ────────────────────────────────────────────────
 
 const BATCH_SIZE: usize = 2048;
 
@@ -42,7 +40,6 @@ pub struct PgScanInitData {
     current_offset: AtomicUsize,
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────
 
 use duckdb::core::FlatVector;
 
@@ -74,7 +71,6 @@ fn fill_typed<T: Default + Copy + 'static>(
     }
 }
 
-// ── VTab implementation ─────────────────────────────────────────────────
 
 pub struct PgScanVTab;
 

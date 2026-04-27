@@ -58,7 +58,6 @@ def test_cql_with_filter(cql2elm_node):
     elm = json.loads(result[0][0])
     lib = elm.get("library", elm)
     assert lib["identifier"]["id"] == "FilterTest"
-    # Should have statements
     assert "statements" in lib
 
 

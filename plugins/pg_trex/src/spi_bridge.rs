@@ -9,7 +9,6 @@ use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use pgrx::pg_sys;
 use std::sync::OnceLock;
 
-// ── Types ───────────────────────────────────────────────────────────────
 
 pub struct SpiRequest {
     pub sql: String,
@@ -22,7 +21,6 @@ pub struct SpiResponse {
     pub error: Option<String>,
 }
 
-// ── Global channels ─────────────────────────────────────────────────────
 
 static SPI_REQUEST_TX: OnceLock<Sender<SpiRequest>> = OnceLock::new();
 static SPI_REQUEST_RX: OnceLock<Receiver<SpiRequest>> = OnceLock::new();
