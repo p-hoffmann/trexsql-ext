@@ -797,7 +797,7 @@ pub struct QueryStreamResource {
 }
 
 impl Resource for QueryStreamResource {
-  fn name(&self) -> std::borrow::Cow<str> {
+  fn name(&self) -> std::borrow::Cow<'_, str> {
     "QueryStreamResource".into()
   }
 }
@@ -807,12 +807,12 @@ pub struct RequestResource {
 }
 
 impl Resource for RequestResource {
-  fn name(&self) -> std::borrow::Cow<str> {
+  fn name(&self) -> std::borrow::Cow<'_, str> {
     "RequestResource".into()
   }
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 async fn op_req(#[serde] message: JsonValue) -> Result<JsonValue, TrexError> {
   send_request_inner(message).await
@@ -891,7 +891,7 @@ fn op_req_listen(state: &mut OpState) -> Result<ResourceId, TrexError> {
   Ok(state.resource_table.add(resource))
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 async fn op_req_next(
   state: Rc<RefCell<OpState>>,
@@ -1046,7 +1046,7 @@ fn op_execute_query_stream(
 }
 
 #[allow(clippy::await_holding_lock)]
-#[op2(async)]
+#[op2]
 #[string]
 async fn op_execute_query_stream_next(
   state: Rc<RefCell<OpState>>,
