@@ -9,6 +9,11 @@ export interface MigrationPluginInfo {
 
 const migrationRegistry: Map<string, MigrationPluginInfo> = new Map();
 
+// Postgres unquoted identifier rules: leading letter/underscore, then
+// letters/digits/underscores. We deliberately reject quoted identifiers (anything
+// non-matching) because we interpolate `info.schema` into DDL.
+const SCHEMA_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/;
+
 export function addMigrationPlugin(
   value: any,
   dir: string,
@@ -18,6 +23,12 @@ export function addMigrationPlugin(
   if (!schema || typeof schema !== "string") {
     console.warn(
       `Plugin ${shortName} has invalid migration config (missing schema) — skipping`
+    );
+    return;
+  }
+  if (!SCHEMA_NAME_RE.test(schema)) {
+    console.warn(
+      `Plugin ${shortName} has invalid schema name "${schema}" — must match ${SCHEMA_NAME_RE} — skipping`
     );
     return;
   }
@@ -41,6 +52,7 @@ export function getMigrationPlugins(): MigrationPluginInfo[] {
 }
 
 import { escapeSql } from "../lib/sql.ts";
+import { buildSslConfig } from "../lib/db-ssl.ts";
 
 export async function runAllPluginMigrations(): Promise<void> {
   if (migrationRegistry.size === 0) {
@@ -63,8 +75,8 @@ export async function runAllPluginMigrations(): Promise<void> {
 
   try {
     const { Pool } = await import("pg");
-    const sslRequired = databaseUrl.includes("sslmode=require") || databaseUrl.includes("sslmode=prefer");
-    const pool = new Pool({ connectionString: databaseUrl, ...(sslRequired && { ssl: { rejectUnauthorized: false } }) });
+    const ssl = buildSslConfig(databaseUrl);
+    const pool = new Pool({ connectionString: databaseUrl, ...(ssl && { ssl }) });
 
     for (const [name, info] of migrationRegistry) {
       try {
