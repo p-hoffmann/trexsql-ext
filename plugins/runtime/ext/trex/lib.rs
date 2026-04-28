@@ -797,7 +797,7 @@ pub struct QueryStreamResource {
 }
 
 impl Resource for QueryStreamResource {
-  fn name(&self) -> std::borrow::Cow<'_, str> {
+  fn name(&self) -> std::borrow::Cow<str> {
     "QueryStreamResource".into()
   }
 }
@@ -807,7 +807,7 @@ pub struct RequestResource {
 }
 
 impl Resource for RequestResource {
-  fn name(&self) -> std::borrow::Cow<'_, str> {
+  fn name(&self) -> std::borrow::Cow<str> {
     "RequestResource".into()
   }
 }
