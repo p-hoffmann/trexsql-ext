@@ -66,7 +66,12 @@ jobs:
 
   build:
     needs: [pick_runner]
-    if: (github.ref_name == 'develop' || github.ref_name == 'main' || contains('release', github.ref_name) || github.event_name == 'workflow_dispatch') || ( github.event_name == 'pull_request' && !github.event.pull_request.draft  ) # Should run if branch is develop/main/release/workflow_dispatch and doesnt have a PR
+    # PR builds run only for same-repo PRs. Fork PRs are excluded — they'd otherwise check out
+    # untrusted code (via the `repository:` input below), which runs prepack/prepublish lifecycle
+    # scripts during `npm pack` and compiles attacker-controlled Rust/TS during the build.
+    if: |
+      (github.ref_name == 'develop' || github.ref_name == 'main' || contains('release', github.ref_name) || github.event_name == 'workflow_dispatch')
+      || (github.event_name == 'pull_request' && !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
 
     strategy:
       fail-fast: false
