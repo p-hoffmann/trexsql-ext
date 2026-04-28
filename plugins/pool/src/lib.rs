@@ -41,11 +41,16 @@ pub enum WriteResult {
 
 
 struct ReadRequest {
+    /// SQL to run before `sql` on the worker's connection (e.g. `USE "db"`).
+    /// Runs via `execute_batch` on the same connection so subsequent
+    /// `current_database()` / catalog-scoped queries observe the change.
+    setup_sql: Option<String>,
     sql: String,
     response_tx: std::sync::mpsc::SyncSender<PoolResult>,
 }
 
 struct WriteRequest {
+    setup_sql: Option<String>,
     sql: String,
     params: Vec<String>,
     response_tx: std::sync::mpsc::SyncSender<WriteResult>,
@@ -138,7 +143,14 @@ impl SharedPool {
 
 fn read_worker_loop(conn: Connection, receiver: Receiver<ReadRequest>) {
     while let Ok(req) = receiver.recv() {
-        let result = panic::catch_unwind(AssertUnwindSafe(|| execute_read(&conn, &req.sql)));
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            if let Some(setup) = &req.setup_sql {
+                if let Err(e) = conn.execute_batch(setup) {
+                    return PoolResult::Error(format!("session setup: {e}"));
+                }
+            }
+            execute_read(&conn, &req.sql)
+        }));
         let pool_result = match result {
             Ok(r) => r,
             Err(panic_err) => {
@@ -154,6 +166,11 @@ fn read_worker_loop(conn: Connection, receiver: Receiver<ReadRequest>) {
 fn write_worker_loop(conn: Connection, receiver: Receiver<WriteRequest>) {
     while let Ok(req) = receiver.recv() {
         let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            if let Some(setup) = &req.setup_sql {
+                if let Err(e) = conn.execute_batch(setup) {
+                    return WriteResult::Error(format!("session setup: {e}"));
+                }
+            }
             if req.params.is_empty() {
                 execute_write(&conn, &req.sql)
             } else {
@@ -435,6 +452,13 @@ fn get_pool() -> Result<&'static Arc<SharedPool>, String> {
 
 /// Submit a read query and block, returning Arrow Schema + RecordBatches.
 pub fn read_arrow(sql: &str) -> Result<(Arc<Schema>, Vec<RecordBatch>), String> {
+    read_arrow_with_setup(sql, None)
+}
+
+fn read_arrow_with_setup(
+    sql: &str,
+    setup_sql: Option<String>,
+) -> Result<(Arc<Schema>, Vec<RecordBatch>), String> {
     let pool = get_pool()?;
     let idx = pool.next_read.fetch_add(1, Ordering::Relaxed) % pool.read_senders.len();
     let sender = &pool.read_senders[idx];
@@ -442,6 +466,7 @@ pub fn read_arrow(sql: &str) -> Result<(Arc<Schema>, Vec<RecordBatch>), String> 
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     sender
         .send(ReadRequest {
+            setup_sql,
             sql: sql.to_string(),
             response_tx: tx,
         })
@@ -470,6 +495,7 @@ pub fn read_on(worker_id: usize, sql: &str) -> Result<String, String> {
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     sender
         .send(ReadRequest {
+            setup_sql: None,
             sql: sql.to_string(),
             response_tx: tx,
         })
@@ -492,6 +518,7 @@ pub fn read_arrow_on(worker_id: usize, sql: &str) -> Result<(Arc<Schema>, Vec<Re
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     sender
         .send(ReadRequest {
+            setup_sql: None,
             sql: sql.to_string(),
             response_tx: tx,
         })
@@ -513,11 +540,20 @@ pub fn write(sql: &str) -> Result<(), String> {
 
 /// Submit a parameterized write query through the serialised write queue.
 pub fn write_params(sql: &str, params: &[String]) -> Result<(), String> {
+    write_params_with_setup(sql, params, None)
+}
+
+fn write_params_with_setup(
+    sql: &str,
+    params: &[String],
+    setup_sql: Option<String>,
+) -> Result<(), String> {
     let pool = get_pool()?;
 
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     pool.write_sender
         .send(WriteRequest {
+            setup_sql,
             sql: sql.to_string(),
             params: params.to_vec(),
             response_tx: tx,
@@ -687,6 +723,7 @@ pub fn sync_all() -> Result<(), String> {
     for sender in &pool.read_senders {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let _ = sender.send(ReadRequest {
+            setup_sql: None,
             sql: "SELECT 1".to_string(),
             response_tx: tx,
         });
@@ -726,6 +763,13 @@ fn extract_panic_message(err: Box<dyn std::any::Any + Send>) -> String {
 struct SessionState {
     /// Index into `SharedPool::direct_connections`. `Some` = in transaction.
     direct_conn_index: Option<usize>,
+    /// Last `USE ...` statement seen on this session, replayed on whichever
+    /// pool worker handles the next query so `current_database()` and
+    /// catalog-scoped lookups observe the session's database. Without this,
+    /// pgwire's per-query injected `USE "<db>"` lands on the write worker
+    /// while the subsequent SELECT runs on a read worker (independent
+    /// connection still at the default `memory.main`).
+    last_use: Option<String>,
 }
 
 static SESSIONS: OnceLock<Mutex<HashMap<u64, SessionState>>> = OnceLock::new();
@@ -741,7 +785,13 @@ pub fn create_session() -> u64 {
     sessions()
         .lock()
         .expect("sessions lock poisoned")
-        .insert(id, SessionState { direct_conn_index: None });
+        .insert(
+            id,
+            SessionState {
+                direct_conn_index: None,
+                last_use: None,
+            },
+        );
     id
 }
 
@@ -774,6 +824,20 @@ fn is_commit_or_rollback(sql: &str) -> bool {
     upper.starts_with("COMMIT") || upper.starts_with("ROLLBACK")
 }
 
+/// If `sql` is a `USE ...` statement, return the trimmed statement
+/// (without trailing semicolon) so it can be replayed on other workers.
+/// Per-worker connections in the pool have independent catalog state, so
+/// a USE issued on one connection is invisible to the next query unless
+/// we re-apply it.
+fn extract_use_statement(sql: &str) -> Option<String> {
+    let trimmed = sql.trim().trim_end_matches(';').trim();
+    if trimmed.len() >= 4 && trimmed[..4].eq_ignore_ascii_case("USE ") {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
+}
+
 /// Execute SQL within a session. See [`session_execute_params`] for details.
 pub fn session_execute(session_id: u64, sql: &str) -> PoolResult {
     session_execute_params(session_id, sql, &[])
@@ -791,8 +855,30 @@ pub fn session_execute_params(session_id: u64, sql: &str, params: &[String]) -> 
 
     let in_txn = map[&session_id].direct_conn_index;
 
+    // If this is a USE statement, remember it so subsequent queries replay
+    // it on whichever pool connection handles them. Pool workers each hold
+    // an independent DuckDB connection, so without replay a USE issued on
+    // one worker (e.g. write) is invisible to the next query (e.g. on a
+    // read worker), leaving `current_database()` stuck at `memory`.
+    if let Some(use_stmt) = extract_use_statement(sql) {
+        if let Some(state) = map.get_mut(&session_id) {
+            state.last_use = Some(use_stmt);
+        }
+    }
+    // Always replay a USE before each query: an explicit one if the session
+    // ever ran USE, otherwise `USE memory` (DuckDB's default catalog) to
+    // reset any leftover catalog state from a previous session that ran on
+    // the same shared worker connection.
+    let setup_sql = Some(
+        map[&session_id]
+            .last_use
+            .clone()
+            .unwrap_or_else(|| "USE memory".to_string()),
+    );
+
     if let Some(idx) = in_txn {
         // Session is in a transaction — execute on pinned direct connection.
+        // Connection state persists across queries so no setup replay needed.
         let is_end = is_commit_or_rollback(sql);
         if is_end {
             if let Some(state) = map.get_mut(&session_id) {
@@ -842,18 +928,25 @@ pub fn session_execute_params(session_id: u64, sql: &str, params: &[String]) -> 
             state.direct_conn_index = Some(idx);
         }
         drop(map);
+        // The newly acquired direct connection is at the default catalog.
+        // Apply the session's USE before BEGIN so the txn sees the right db.
+        if let Some(setup) = &setup_sql {
+            if let PoolResult::Error(e) = execute_on_direct(idx, setup) {
+                return PoolResult::Error(format!("session setup: {e}"));
+            }
+        }
         execute_on_direct(idx, sql)
     } else {
         // Not in a transaction — route normally.
         drop(map);
         if params.is_empty() {
             if is_result_returning_query(sql) {
-                match read_arrow(sql) {
+                match read_arrow_with_setup(sql, setup_sql) {
                     Ok((schema, batches)) => PoolResult::Rows { schema, batches },
                     Err(e) => PoolResult::Error(e),
                 }
             } else {
-                match write(sql) {
+                match write_params_with_setup(sql, params, setup_sql) {
                     Ok(()) => PoolResult::Executed,
                     Err(e) => PoolResult::Error(e),
                 }
@@ -867,6 +960,13 @@ pub fn session_execute_params(session_id: u64, sql: &str, params: &[String]) -> 
             };
             let idx = pool.next_direct.fetch_add(1, Ordering::Relaxed)
                 % pool.direct_connections.len();
+            // Direct connections are shared/round-robin and may have any
+            // catalog state from a prior caller — replay the session USE.
+            if let Some(setup) = &setup_sql {
+                if let PoolResult::Error(e) = execute_on_direct(idx, setup) {
+                    return PoolResult::Error(format!("session setup: {e}"));
+                }
+            }
             execute_on_direct_params(idx, sql, params)
         }
     }
