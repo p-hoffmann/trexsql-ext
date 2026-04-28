@@ -205,6 +205,44 @@ where
     }
 }
 
+/// Postgres-only session parameters that libpq, the JDBC driver, and other
+/// standard Postgres clients SET on connect. DuckDB doesn't recognize them,
+/// so without this intercept the very first statement of a JDBC handshake
+/// fails with "Catalog Error: unrecognized configuration parameter".
+fn is_postgres_only_set(sql: &str) -> bool {
+    let s = sql.trim_start();
+    if s.len() < 4 || !s[..4].eq_ignore_ascii_case("SET ") {
+        return false;
+    }
+    let mut rest = s[4..].trim_start();
+    // SET LOCAL <name> ... and SET SESSION <name> ... are also valid.
+    for prefix in ["LOCAL ", "SESSION "] {
+        if rest.len() >= prefix.len() && rest[..prefix.len()].eq_ignore_ascii_case(prefix) {
+            rest = rest[prefix.len()..].trim_start();
+            break;
+        }
+    }
+    let rest = rest.trim_start_matches('"');
+    let name: String = rest.chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    matches!(
+        name.to_ascii_uppercase().as_str(),
+        "EXTRA_FLOAT_DIGITS"
+            | "APPLICATION_NAME"
+            | "CLIENT_ENCODING"
+            | "DATESTYLE"
+            | "INTERVALSTYLE"
+            | "TIMEZONE"
+            | "STATEMENT_TIMEOUT"
+            | "STANDARD_CONFORMING_STRINGS"
+            | "SEARCH_PATH"
+            | "BYTEA_OUTPUT"
+            | "ROW_SECURITY"
+            | "SESSION_AUTHORIZATION"
+    )
+}
+
 pub fn random_salt() -> Vec<u8> {
     Vec::from(rand::random::<[u8; 10]>())
 }
@@ -356,6 +394,15 @@ impl SimpleQueryHandler for TrexQueryHandler {
                 .replace("SELECT c.oid,c.*,t.relname as tabrelname,rt.relnamespace as refnamespace,d.description, null as consrc_copy",
                 "SELECT c.oid,t.relname  as tabrelname,rt.relnamespace as refnamespace,d.description, null as consrc_copy");
 
+            // Intercept Postgres-only session parameters that libpq/JDBC drivers
+            // SET on connect. DuckDB rejects them; without this, every JDBC client
+            // fails on the first SET statement before user SQL even runs.
+            if is_postgres_only_set(&sql) {
+                log_debug(&format!("Intercepting pg-compat SET: {}", sql));
+                responses.push(Response::Execution(Tag::new("SET").with_rows(0)));
+                continue;
+            }
+
             log_debug(&format!("Submitting query: {}", sql));
             let sql_owned = sql.clone();
             let session_id = self.session_id;
@@ -422,6 +469,12 @@ impl ExtendedQueryHandler for TrexQueryHandler {
     {
         let query = portal.statement.statement.clone();
         log_debug(&format!("ExtendedQuery: {}", query));
+
+        // See SimpleQueryHandler::do_query for context.
+        if is_postgres_only_set(&query) {
+            log_debug(&format!("Intercepting pg-compat SET: {}", query));
+            return Ok(Response::Execution(Tag::new("SET").with_rows(0)));
+        }
 
         let login_info = LoginInfo::from_client_info(_client);
         if let Some(db) = login_info.database() {
@@ -798,4 +851,59 @@ pub fn start_pgwire_server_capi(
 
 pub fn stop_pgwire_server(host: &str, port: u16) -> Result<String, String> {
     ServerRegistry::instance().stop_server(host, port)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn intercepts_jdbc_handshake_sets() {
+        // The standard Postgres JDBC driver fires these on connect.
+        assert!(is_postgres_only_set("SET extra_float_digits = 3"));
+        assert!(is_postgres_only_set("SET application_name = 'd2e'"));
+        assert!(is_postgres_only_set("SET client_encoding = 'UTF8'"));
+        assert!(is_postgres_only_set("SET DateStyle = 'ISO'"));
+        assert!(is_postgres_only_set("SET TimeZone = 'UTC'"));
+        assert!(is_postgres_only_set("SET standard_conforming_strings = on"));
+    }
+
+    #[test]
+    fn case_and_whitespace_insensitive() {
+        assert!(is_postgres_only_set("set extra_float_digits = 3"));
+        assert!(is_postgres_only_set("SET   extra_float_digits=3"));
+        assert!(is_postgres_only_set("  SET extra_float_digits TO 3"));
+        assert!(is_postgres_only_set("Set Extra_Float_Digits = 3"));
+    }
+
+    #[test]
+    fn handles_quoted_identifier() {
+        assert!(is_postgres_only_set("SET \"extra_float_digits\" = 3"));
+    }
+
+    #[test]
+    fn handles_set_local_and_session() {
+        assert!(is_postgres_only_set("SET LOCAL extra_float_digits = 3"));
+        assert!(is_postgres_only_set("set local TimeZone = 'UTC'"));
+        assert!(is_postgres_only_set("SET SESSION application_name = 'd2e'"));
+    }
+
+    #[test]
+    fn does_not_intercept_duckdb_sets() {
+        // DuckDB's own settings must still reach the engine.
+        assert!(!is_postgres_only_set("SET threads = 4"));
+        assert!(!is_postgres_only_set("SET memory_limit = '4GB'"));
+        assert!(!is_postgres_only_set("SET schema = 'demo_cdm'"));
+    }
+
+    #[test]
+    fn does_not_intercept_non_set_statements() {
+        assert!(!is_postgres_only_set("SELECT 1"));
+        assert!(!is_postgres_only_set("INSERT INTO t VALUES (1)"));
+        assert!(!is_postgres_only_set(""));
+        assert!(!is_postgres_only_set("SET")); // bare SET, no name
+        assert!(!is_postgres_only_set("RESET extra_float_digits"));
+        // SETOF is not a SET statement (would be inside e.g. CREATE FUNCTION).
+        assert!(!is_postgres_only_set("SETOF integer"));
+    }
 }
