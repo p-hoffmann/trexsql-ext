@@ -84,6 +84,31 @@ struct SharedPool {
 
 static POOL: OnceLock<Arc<SharedPool>> = OnceLock::new();
 
+/// Name of the connection's default catalog at pool init. Used as the reset
+/// target in [`session_execute_params`] when the session has no explicit
+/// `USE`. We can't hardcode `"memory"` — file-backed connections (worker
+/// nodes opened against e.g. `fhir.db`) don't have a `memory` catalog at
+/// all, so `USE memory` would fail with "No catalog + schema named memory".
+static DEFAULT_DATABASE: OnceLock<String> = OnceLock::new();
+
+fn capture_default_database(conn: &Connection) {
+    if DEFAULT_DATABASE.get().is_some() {
+        return;
+    }
+    if let Ok(name) = conn.query_row("SELECT current_database()", [], |row| row.get::<_, String>(0))
+    {
+        let _ = DEFAULT_DATABASE.set(name);
+    }
+}
+
+fn default_use_statement() -> String {
+    let name = DEFAULT_DATABASE
+        .get()
+        .map(String::as_str)
+        .unwrap_or("memory");
+    format!("USE \"{}\"", name.replace('"', "\"\""))
+}
+
 impl SharedPool {
     fn new(base_conn: &Connection, read_pool_size: usize) -> Result<Self, String> {
         if read_pool_size == 0 {
@@ -427,6 +452,8 @@ pub fn init_from_connection(conn: &Connection, read_pool_size: usize) -> Result<
         .map_err(|e| format!("shared conn clone: {e}"))?;
     let _ = CONNECTION_PROVIDER.set(Arc::new(Mutex::new(shared_conn)));
 
+    capture_default_database(conn);
+
     Ok(())
 }
 
@@ -439,6 +466,7 @@ pub unsafe fn init(db_ptr: *mut c_void, read_pool_size: usize) -> Result<(), Str
     let base_conn = Connection::open_from_raw(db_ptr.cast())
         .map_err(|e| format!("open_from_raw: {e}"))?;
     let pool = SharedPool::new(&base_conn, read_pool_size)?;
+    capture_default_database(&base_conn);
     // Intentionally leak base_conn — it must outlive the pool (which is 'static).
     std::mem::forget(base_conn);
     POOL.set(Arc::new(pool))
@@ -866,14 +894,16 @@ pub fn session_execute_params(session_id: u64, sql: &str, params: &[String]) -> 
         }
     }
     // Always replay a USE before each query: an explicit one if the session
-    // ever ran USE, otherwise `USE memory` (DuckDB's default catalog) to
-    // reset any leftover catalog state from a previous session that ran on
-    // the same shared worker connection.
+    // ever ran USE, otherwise reset to the connection's default catalog to
+    // clear any leftover state from a previous session that ran on the same
+    // shared worker connection. The default isn't always `memory` —
+    // file-backed connections (e.g. workers opened against `fhir.db`) only
+    // have the file's catalog attached, so we capture it at pool init.
     let setup_sql = Some(
         map[&session_id]
             .last_use
             .clone()
-            .unwrap_or_else(|| "USE memory".to_string()),
+            .unwrap_or_else(default_use_statement),
     );
 
     if let Some(idx) = in_txn {
