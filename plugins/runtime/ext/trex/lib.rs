@@ -635,6 +635,15 @@ fn apply_database_to_session(session_id: u64, database: &str) {
   );
 }
 
+fn trex_type_to_string(t: &TrexType) -> String {
+  match t {
+    TrexType::Integer(v) => v.to_string(),
+    TrexType::String(v) => v.clone(),
+    TrexType::Number(v) => v.to_string(),
+    TrexType::DateTime(v) => v.to_string(),
+  }
+}
+
 fn execute_query(
   database: String,
   sql: String,
@@ -645,7 +654,13 @@ fn execute_query(
   // When a session is provided, route ALL queries through it (supports transactions).
   if session_id > 0 {
     apply_database_to_session(session_id, &database);
-    let result = trex_pool_client::session_execute(session_id, &sql);
+    let result = if params.is_empty() {
+      trex_pool_client::session_execute(session_id, &sql)
+    } else {
+      let str_params: Vec<String> =
+        params.iter().map(trex_type_to_string).collect();
+      trex_pool_client::session_execute_params(session_id, &sql, &str_params)
+    };
     return match result {
       Ok((_schema, batches)) => {
         if batches.is_empty() {
@@ -663,7 +678,13 @@ fn execute_query(
     let sid = trex_pool_client::create_session()
       .map_err(TrexError::Generic)?;
     apply_database_to_session(sid, &database);
-    let result = trex_pool_client::session_execute(sid, &sql);
+    let result = if params.is_empty() {
+      trex_pool_client::session_execute(sid, &sql)
+    } else {
+      let str_params: Vec<String> =
+        params.iter().map(trex_type_to_string).collect();
+      trex_pool_client::session_execute_params(sid, &sql, &str_params)
+    };
     let _ = trex_pool_client::destroy_session(sid);
     return match result {
       Ok(_) => Ok("[]".to_string()),
