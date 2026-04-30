@@ -624,6 +624,17 @@ fn extract_panic_message(panic_err: Box<dyn std::any::Any + Send>) -> String {
   }
 }
 
+fn apply_database_to_session(session_id: u64, database: &str) {
+  if database.is_empty() || database == "memory" {
+    return;
+  }
+  let escaped = database.replace('"', "\"\"");
+  let _ = trex_pool_client::session_execute(
+    session_id,
+    &format!("USE \"{escaped}\""),
+  );
+}
+
 fn execute_query(
   database: String,
   sql: String,
@@ -633,6 +644,7 @@ fn execute_query(
 ) -> Result<String, TrexError> {
   // When a session is provided, route ALL queries through it (supports transactions).
   if session_id > 0 {
+    apply_database_to_session(session_id, &database);
     let result = trex_pool_client::session_execute(session_id, &sql);
     return match result {
       Ok((_schema, batches)) => {
@@ -650,6 +662,7 @@ fn execute_query(
   if !trex_pool_client::is_result_returning_query(&sql) {
     let sid = trex_pool_client::create_session()
       .map_err(TrexError::Generic)?;
+    apply_database_to_session(sid, &database);
     let result = trex_pool_client::session_execute(sid, &sql);
     let _ = trex_pool_client::destroy_session(sid);
     return match result {
