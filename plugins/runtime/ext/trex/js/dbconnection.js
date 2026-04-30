@@ -180,7 +180,7 @@ export class TrexConnection  {
             callback(null, result);
         } catch (err) {
             console.error(err);
-            callback(new Error(console.error(err), err.message), null);
+            callback(err instanceof Error ? err : new Error(err?.message ?? String(err)), null);
         }
     }
 
@@ -204,7 +204,7 @@ export class TrexConnection  {
             callback(null, result);
         } catch (err) {
             console.error(err);
-            callback(new Error(console.error(err), err.message), null);
+            callback(err instanceof Error ? err : new Error(err?.message ?? String(err)), null);
         }
     }
 
@@ -240,7 +240,8 @@ export class TrexConnection  {
                 }
             });
         } catch (err) {
-            callback(new Error(console.error(err), err.message), null);
+            console.error(err);
+            callback(err instanceof Error ? err : new Error(err?.message ?? String(err)), null);
         }
     }
 
