@@ -84,6 +84,12 @@ struct SharedPool {
 
 static POOL: OnceLock<Arc<SharedPool>> = OnceLock::new();
 
+static LAZY_PIN: OnceLock<bool> = OnceLock::new();
+
+fn lazy_pin_enabled() -> bool {
+    LAZY_PIN.get().copied().unwrap_or(true)
+}
+
 /// Name of the connection's default catalog at pool init. Used as the reset
 /// target in [`session_execute_params`] when the session has no explicit
 /// `USE`. We can't hardcode `"memory"` — file-backed connections (worker
@@ -289,6 +295,39 @@ fn is_action_pragma(upper: &str) -> bool {
         || after.starts_with("DROP_FTS_INDEX")
         || after.starts_with("COPY_DATABASE")
         || after.starts_with("IMPORT_DATABASE")
+}
+
+pub fn creates_non_replayable_state(sql: &str) -> bool {
+    let upper = sql.trim().to_uppercase();
+
+    if let Some(rest) = upper.strip_prefix("CREATE") {
+        let rest = rest.trim_start();
+        let rest = rest
+            .strip_prefix("OR REPLACE")
+            .map(|s| s.trim_start())
+            .unwrap_or(rest);
+        if rest.starts_with("TEMP ")
+            || rest.starts_with("TEMP\t")
+            || rest.starts_with("TEMPORARY ")
+            || rest.starts_with("TEMPORARY\t")
+        {
+            return true;
+        }
+    }
+
+    if upper.starts_with("PREPARE ") || upper.starts_with("PREPARE\t") {
+        return true;
+    }
+
+    if upper.starts_with("DECLARE ") || upper.starts_with("DECLARE\t") {
+        return upper.contains(" CURSOR ") || upper.contains("\tCURSOR");
+    }
+
+    if upper.starts_with("SET ") || upper.starts_with("SET\t") {
+        return true;
+    }
+
+    false
 }
 
 
@@ -970,6 +1009,23 @@ pub fn session_execute_params(session_id: u64, sql: &str, params: &[String]) -> 
         return execute_on_direct(idx, sql);
     }
 
+    // Lazy-promote: pin only when SQL introduces non-replayable
+    // connection-local state (temp tables, prepared stmts, cursors, SET).
+    // Subsequent calls hit the `pinned_idx.is_some()` branch above.
+    if lazy_pin_enabled() && creates_non_replayable_state(sql) {
+        drop(map);
+        let idx = match acquire_pin(session_id, PinKind::Session) {
+            Ok(i) => i,
+            Err(e) => return PoolResult::Error(e),
+        };
+        if let Some(setup) = &setup_sql {
+            if let PoolResult::Error(e) = execute_on_direct(idx, setup) {
+                return PoolResult::Error(format!("session setup: {e}"));
+            }
+        }
+        return execute_on_direct_params(idx, sql, params);
+    }
+
     let is_stateful = !params.is_empty() || !is_result_returning_query(sql);
     if !is_stateful {
         drop(map);
@@ -979,7 +1035,9 @@ pub fn session_execute_params(session_id: u64, sql: &str, params: &[String]) -> 
         };
     }
 
-    if mode == SessionMode::Ephemeral {
+    // Lazy-pin treats all sessions as ephemeral here; declared SessionMode
+    // only matters when TREX_LAZY_PIN=false (legacy eager-pin path below).
+    if lazy_pin_enabled() || mode == SessionMode::Ephemeral {
         drop(map);
         if params.is_empty() {
             return match write_params_with_setup(sql, params, setup_sql) {
@@ -1077,6 +1135,12 @@ pub unsafe fn extension_entrypoint(con: Connection) -> std::result::Result<(), B
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_POOL_SIZE)
         .max(1);
+
+    let lazy_pin = std::env::var("TREX_LAZY_PIN")
+        .ok()
+        .map(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
+        .unwrap_or(true);
+    let _ = LAZY_PIN.set(lazy_pin);
 
     init_from_connection(&con, pool_size)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
@@ -1512,5 +1576,38 @@ mod tests {
         assert!(is_commit_or_rollback("  rollback;"));
         assert!(!is_commit_or_rollback("SELECT 1"));
         assert!(!is_commit_or_rollback("BEGIN"));
+    }
+
+    #[test]
+    fn test_creates_non_replayable_state() {
+        assert!(creates_non_replayable_state("CREATE TEMP TABLE t (x INT)"));
+        assert!(creates_non_replayable_state("CREATE TEMPORARY TABLE t (x INT)"));
+        assert!(creates_non_replayable_state("create temp table t (x int)"));
+        assert!(creates_non_replayable_state("  CREATE TEMP TABLE t AS SELECT 1"));
+        assert!(creates_non_replayable_state("CREATE OR REPLACE TEMP TABLE t (x INT)"));
+        assert!(creates_non_replayable_state("create or replace temporary table t (x int)"));
+
+        assert!(creates_non_replayable_state("PREPARE p AS SELECT $1"));
+        assert!(creates_non_replayable_state("prepare p as select 1"));
+
+        assert!(creates_non_replayable_state("DECLARE c CURSOR FOR SELECT 1"));
+        assert!(creates_non_replayable_state("declare c cursor for select 1"));
+
+        assert!(creates_non_replayable_state("SET threads = 4"));
+        assert!(creates_non_replayable_state("SET memory_limit = '4GB'"));
+        assert!(creates_non_replayable_state("set schema = 'public'"));
+
+        assert!(!creates_non_replayable_state("SELECT 1"));
+        assert!(!creates_non_replayable_state("INSERT INTO t VALUES (1)"));
+        assert!(!creates_non_replayable_state("UPDATE t SET x = 1"));
+        assert!(!creates_non_replayable_state("DELETE FROM t"));
+        assert!(!creates_non_replayable_state("CREATE TABLE t (x INT)"));
+        assert!(!creates_non_replayable_state("CREATE SCHEMA foo"));
+        assert!(!creates_non_replayable_state("DROP TABLE t"));
+        assert!(!creates_non_replayable_state("ALTER TABLE t ADD COLUMN y INT"));
+        assert!(!creates_non_replayable_state("BEGIN"));
+        assert!(!creates_non_replayable_state("COMMIT"));
+        assert!(!creates_non_replayable_state("USE \"foo\""));
+        assert!(!creates_non_replayable_state("DECLARE x INT"));
     }
 }

@@ -789,12 +789,13 @@ fn op_acquire_worker() -> u32 {
     .unwrap_or(0)
 }
 
-/// Persistent so temp tables created via the write side remain visible to
-/// the read side within one TrexConnection (analytics-svc relies on this).
+/// Lazy-promoted: stays unpinned until the session creates non-replayable
+/// connection-local state (temp tables, PREPARE, DECLARE CURSOR, SET), at
+/// which point the pool acquires a session pin and holds it until destroy.
 #[op2(fast)]
 #[number]
 fn op_create_session() -> Result<u64, TrexError> {
-  trex_pool_client::create_persistent_session().map_err(TrexError::Generic)
+  trex_pool_client::create_session().map_err(TrexError::Generic)
 }
 
 /// Destroy a pool session. Auto-rollback if a transaction is still active.
