@@ -26,14 +26,36 @@ pub async fn upsert_resource(
     column_names: &[String],
     worker_id: Option<usize>,
 ) -> Result<UpsertResult, String> {
-    let table_name = resource_type.to_lowercase();
-
     // When no worker_id is provided, pick one and manage our own transaction
     // to prevent read-modify-write races on concurrent upserts.
     let (wid, owns_transaction) = match worker_id {
         Some(w) => (w, false),
         None => (state.executor.next_worker_id(), true),
     };
+
+    let result = upsert_resource_inner(
+        state, schema, resource_type, id, resource, transform_spec, column_names, wid, owns_transaction,
+    )
+    .await;
+
+    if owns_transaction {
+        state.executor.destroy_session(wid);
+    }
+    result
+}
+
+async fn upsert_resource_inner(
+    state: &AppState,
+    schema: &str,
+    resource_type: &str,
+    id: &str,
+    resource: &mut Value,
+    transform_spec: &str,
+    column_names: &[String],
+    wid: usize,
+    owns_transaction: bool,
+) -> Result<UpsertResult, String> {
+    let table_name = resource_type.to_lowercase();
 
     if owns_transaction {
         if let QueryResult::Error(e) = state.executor.submit_on(wid, "BEGIN TRANSACTION".to_string()).await {

@@ -249,10 +249,15 @@ export class UserDatabaseManager {
 				console.error(`Error getting dialect for ${db_id}: ${e}`);
 			}
 		}
+		// Single TrexDB shared between read and write slots: same session,
+		// so a temp table CREATEd via the write path stays visible to a
+		// later JOIN via the read path.
 		if(dialect !== 'hana') {
-			return new TrexConnection(new TrexDB(db_id, worker_id), new TrexDB(`${db_id}`, worker_id), schema,vocab_schema,result_schema,'duckdb',translationMap);
+			const db = new TrexDB(db_id, worker_id);
+			return new TrexConnection(db, db, schema, vocab_schema, result_schema, 'duckdb', translationMap);
 		} else {
-			return new TrexConnection(new HanaDB(db_id, worker_id), new HanaDB(`${db_id}`, worker_id), schema,vocab_schema,result_schema,'hana',translationMap);
+			const db = new HanaDB(db_id, worker_id);
+			return new TrexConnection(db, db, schema, vocab_schema, result_schema, 'hana', translationMap);
 		}
 	}
 }

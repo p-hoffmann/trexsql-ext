@@ -269,8 +269,14 @@ pub async fn update_resource(
         );
     }
 
-    let raw_json = serde_json::to_string(&resource)
-        .map_err(|e| AppError::Internal(format!("JSON serialize: {}", e)))?;
+    let raw_json = match serde_json::to_string(&resource) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = state.executor.submit_on(worker_id, "ROLLBACK".to_string()).await;
+            state.executor.destroy_session(worker_id);
+            return Err(AppError::Internal(format!("JSON serialize: {}", e)));
+        }
+    };
 
     if !is_new {
         let history_sql = format!(
@@ -291,10 +297,22 @@ pub async fn update_resource(
         }
     }
 
-    let transform_spec = state.registry.get_json_transform(&resource_type)
-        .map_err(|e| AppError::Internal(format!("Transform spec: {}", e)))?;
-    let column_names = state.registry.get_column_names(&resource_type)
-        .map_err(|e| AppError::Internal(format!("Column names: {}", e)))?;
+    let transform_spec = match state.registry.get_json_transform(&resource_type) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = state.executor.submit_on(worker_id, "ROLLBACK".to_string()).await;
+            state.executor.destroy_session(worker_id);
+            return Err(AppError::Internal(format!("Transform spec: {}", e)));
+        }
+    };
+    let column_names = match state.registry.get_column_names(&resource_type) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = state.executor.submit_on(worker_id, "ROLLBACK".to_string()).await;
+            state.executor.destroy_session(worker_id);
+            return Err(AppError::Internal(format!("Column names: {}", e)));
+        }
+    };
     let sql = if is_new {
         sql_builder::build_insert_sql(&schema_name, &table_name, new_version, &transform_spec, &column_names)
     } else {
