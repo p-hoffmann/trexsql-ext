@@ -48,9 +48,22 @@ pub async fn create_dataset(
         (names, None)
     };
 
-    // Pin all DDL for this dataset to the same worker to avoid schema visibility races.
+    // Pin DDL for this dataset to one worker to avoid schema visibility races.
     let worker_id = state.executor.next_worker_id();
+    let result =
+        create_dataset_inner(&state, worker_id, body, resource_type_names, custom_definitions, qualified_schema).await;
+    state.executor.destroy_session(worker_id);
+    result
+}
 
+async fn create_dataset_inner(
+    state: &Arc<AppState>,
+    worker_id: usize,
+    body: CreateDatasetRequest,
+    resource_type_names: Vec<String>,
+    custom_definitions: Option<DefinitionRegistry>,
+    qualified_schema: String,
+) -> Result<(StatusCode, Json<Value>), AppError> {
     let create_schema_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", qualified_schema);
     if let QueryResult::Error(e) = state.executor.submit_on(worker_id, create_schema_sql).await {
         eprintln!("[fhir] Failed to create schema: {}", e);

@@ -789,12 +789,12 @@ fn op_acquire_worker() -> u32 {
     .unwrap_or(0)
 }
 
-/// Create a pool session for transaction-safe query execution.
-/// Returns a session_id (> 0) that should be passed to op_execute_query_session.
+/// Persistent so temp tables created via the write side remain visible to
+/// the read side within one TrexConnection (analytics-svc relies on this).
 #[op2(fast)]
 #[number]
 fn op_create_session() -> Result<u64, TrexError> {
-  trex_pool_client::create_session().map_err(TrexError::Generic)
+  trex_pool_client::create_persistent_session().map_err(TrexError::Generic)
 }
 
 /// Destroy a pool session. Auto-rollback if a transaction is still active.

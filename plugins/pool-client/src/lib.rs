@@ -58,6 +58,7 @@ struct PoolFns {
     exec_transaction: FnExecTransaction,
     // Sessions
     session_create: FnSessionCreate,
+    session_create_persistent: FnSessionCreate,
     session_execute_arrow: FnSessionExecuteArrow,
     session_execute_params_arrow: FnSessionExecuteParamsArrow,
     session_destroy: FnSessionDestroy,
@@ -155,6 +156,7 @@ unsafe fn discover_pool_fns() -> Option<PoolFns> {
         with_conn_exec: sym!("trex_pool_with_connection_execute"),
         exec_transaction: sym!("trex_pool_execute_transaction"),
         session_create: sym!("trex_pool_session_create"),
+        session_create_persistent: sym!("trex_pool_session_create_persistent"),
         session_execute_arrow: sym!("trex_pool_session_execute_arrow"),
         session_execute_params_arrow: sym!("trex_pool_session_execute_params_arrow"),
         session_destroy: sym!("trex_pool_session_destroy"),
@@ -397,13 +399,18 @@ pub fn execute_transaction(sqls: &[&str]) -> Result<(), String> {
 }
 
 
-/// Create a new session. Returns a unique session ID.
-/// Sessions auto-detect transactions: when `BEGIN` is executed via
-/// [`session_execute`], all subsequent queries are pinned to the same
-/// connection until `COMMIT` or `ROLLBACK`.
 pub fn create_session() -> Result<u64, String> {
     let fns = get_fns()?;
     let id = unsafe { (fns.session_create)() };
+    Ok(id)
+}
+
+/// Lazy-pins a direct conn on the first stateful query; held until
+/// [`destroy_session`]. Use only when later queries depend on
+/// connection-local state.
+pub fn create_persistent_session() -> Result<u64, String> {
+    let fns = get_fns()?;
+    let id = unsafe { (fns.session_create_persistent)() };
     Ok(id)
 }
 

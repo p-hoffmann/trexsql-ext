@@ -398,7 +398,9 @@ fn start_copy_only_pipeline(
             pipeline_registry::registry()
                 .update_state(&pipeline_name, PipelineState::Starting);
 
-            let session_id = trex_pool_client::create_session()
+            // ATTACH catalog state is per-connection; later SELECTs/CREATEs
+            // against the attached source need the same direct conn.
+            let session_id = trex_pool_client::create_persistent_session()
                 .map_err(|e| format!("Failed to create session: {}", e))?;
 
             // Use a closure so we can clean up the session on any exit path.

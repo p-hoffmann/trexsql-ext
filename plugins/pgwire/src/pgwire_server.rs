@@ -771,7 +771,7 @@ pub fn start_pgwire_server_capi(
                                 match result {
                                     Ok((socket, _addr)) => {
                                         let worker_id = worker_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % pool_size;
-                                        let session_id = match trex_pool_client::create_session() {
+                                        let session_id = match trex_pool_client::create_persistent_session() {
                                             Ok(id) => id,
                                             Err(e) => {
                                                 log_debug(&format!("Failed to create session: {}", e));
@@ -804,7 +804,7 @@ pub fn start_pgwire_server_capi(
                                     Ok((socket, addr)) => {
                                         log_debug(&format!("New connection from {:?}", addr));
                                         let worker_id = worker_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % pool_size;
-                                        let session_id = match trex_pool_client::create_session() {
+                                        let session_id = match trex_pool_client::create_persistent_session() {
                                             Ok(id) => id,
                                             Err(e) => {
                                                 log_debug(&format!("Failed to create session: {}", e));

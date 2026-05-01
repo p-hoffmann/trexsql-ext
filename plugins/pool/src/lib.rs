@@ -788,30 +788,24 @@ fn extract_panic_message(err: Box<dyn std::any::Any + Send>) -> String {
 }
 
 
-/// How the session acquired its pinned direct connection. Determines when
-/// the pin is released.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PinKind {
-    /// Pinned by an explicit `BEGIN`. Released on `COMMIT`/`ROLLBACK`.
     Transaction,
-    /// Pinned lazily on the first stateful query (write or parameterized).
-    /// Held until the session is destroyed so connection-local state
-    /// (temp tables, prepared statements, sequences) stays visible to
-    /// later queries in the same session.
     Session,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SessionMode {
+    Persistent,
+    Ephemeral,
+}
+
 struct SessionState {
-    /// Index into `SharedPool::direct_connections`. `Some` = pinned.
     direct_conn_index: Option<usize>,
-    /// What acquired the pin. `Some` iff `direct_conn_index` is `Some`.
     pin_kind: Option<PinKind>,
-    /// Last `USE ...` statement seen on this session, replayed on whichever
-    /// pool worker handles the next query so `current_database()` and
-    /// catalog-scoped lookups observe the session's database. Without this,
-    /// pgwire's per-query injected `USE "<db>"` lands on the write worker
-    /// while the subsequent SELECT runs on a read worker (independent
-    /// connection still at the default `memory.main`).
+    mode: SessionMode,
+    /// Replayed on each pool worker so a prior `USE` survives across
+    /// independent worker connections.
     last_use: Option<String>,
 }
 
@@ -822,8 +816,7 @@ fn sessions() -> &'static Mutex<HashMap<u64, SessionState>> {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Create a new session. Returns a unique session ID.
-pub fn create_session() -> u64 {
+fn create_session_inner(mode: SessionMode) -> u64 {
     let id = NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed);
     sessions()
         .lock()
@@ -833,16 +826,24 @@ pub fn create_session() -> u64 {
             SessionState {
                 direct_conn_index: None,
                 pin_kind: None,
+                mode,
                 last_use: None,
             },
         );
     id
 }
 
-/// Destroy a session. If a transaction is still active on the pinned
-/// connection, it is rolled back. Connection-local state (temp tables,
-/// prepared statements) is reset so the connection can be reused cleanly
-/// by another session.
+pub fn create_session() -> u64 {
+    create_session_inner(SessionMode::Ephemeral)
+}
+
+/// Lazy-pins a direct conn on the first stateful query; held until
+/// [`destroy_session`]. Use only when later queries depend on
+/// connection-local state (temp tables, prepared statements).
+pub fn create_persistent_session() -> u64 {
+    create_session_inner(SessionMode::Persistent)
+}
+
 pub fn destroy_session(session_id: u64) {
     let mut map = sessions().lock().expect("sessions lock poisoned");
     if let Some(state) = map.remove(&session_id) {
@@ -851,9 +852,7 @@ pub fn destroy_session(session_id: u64) {
                 if let Some(slot) = pool.direct_connections.get(idx) {
                     if let Ok(guard) = slot.lock() {
                         if let Some(conn) = guard.as_ref() {
-                            // ROLLBACK is safe even when no transaction is
-                            // active; for Session-pinned conns it's a no-op,
-                            // for Transaction-pinned it ends the dangling txn.
+                            // No-op outside a txn; ends a dangling one inside.
                             let _ = conn.execute_batch("ROLLBACK;");
                         }
                     }
@@ -873,11 +872,6 @@ fn is_commit_or_rollback(sql: &str) -> bool {
     upper.starts_with("COMMIT") || upper.starts_with("ROLLBACK")
 }
 
-/// If `sql` is a `USE ...` statement, return the trimmed statement
-/// (without trailing semicolon) so it can be replayed on other workers.
-/// Per-worker connections in the pool have independent catalog state, so
-/// a USE issued on one connection is invisible to the next query unless
-/// we re-apply it.
 fn extract_use_statement(sql: &str) -> Option<String> {
     let trimmed = sql.trim().trim_end_matches(';').trim();
     if trimmed.len() >= 4 && trimmed[..4].eq_ignore_ascii_case("USE ") {
@@ -887,14 +881,10 @@ fn extract_use_statement(sql: &str) -> Option<String> {
     }
 }
 
-/// Execute SQL within a session. See [`session_execute_params`] for details.
 pub fn session_execute(session_id: u64, sql: &str) -> PoolResult {
     session_execute_params(session_id, sql, &[])
 }
 
-/// Acquire an unused direct connection and pin it to `session_id` with the
-/// given `kind`. Retries with backoff if all direct connections are currently
-/// held by other sessions.
 fn acquire_pin(session_id: u64, kind: PinKind) -> Result<usize, String> {
     let pool = get_pool()?;
     let max_retries = 50; // 50 * 20ms = 1s max wait
@@ -926,20 +916,6 @@ fn acquire_pin(session_id: u64, kind: PinKind) -> Result<usize, String> {
     Ok(idx)
 }
 
-/// Execute parameterized SQL within a session.
-///
-/// Pinning rules:
-/// - `BEGIN` acquires a direct connection (`PinKind::Transaction`); released
-///   on `COMMIT`/`ROLLBACK`.
-/// - The first stateful query (write, or any parameterized query) lazily
-///   acquires a direct connection (`PinKind::Session`); held until the
-///   session is destroyed. This guarantees connection-local state — temp
-///   tables in particular — stays visible across the rest of the session.
-/// - Pure SELECTs without params on an unpinned session continue to route
-///   to the read worker pool (no pin), preserving read parallelism for
-///   read-only sessions.
-/// - Once pinned (by either kind), every subsequent query in the session
-///   runs on the pinned connection regardless of read/write or params.
 pub fn session_execute_params(session_id: u64, sql: &str, params: &[String]) -> PoolResult {
     let mut map = sessions().lock().expect("sessions lock poisoned");
     if !map.contains_key(&session_id) {
@@ -948,24 +924,17 @@ pub fn session_execute_params(session_id: u64, sql: &str, params: &[String]) -> 
 
     let pinned_idx = map[&session_id].direct_conn_index;
     let pinned_kind = map[&session_id].pin_kind;
+    let mode = map[&session_id].mode;
 
-    // If this is a USE statement, remember it so subsequent queries replay
-    // it on whichever pool connection handles them. Pool workers each hold
-    // an independent DuckDB connection, so without replay a USE issued on
-    // one worker (e.g. write) is invisible to the next query (e.g. on a
-    // read worker), leaving `current_database()` stuck at `memory`.
     if let Some(use_stmt) = extract_use_statement(sql) {
         if let Some(state) = map.get_mut(&session_id) {
             state.last_use = Some(use_stmt);
         }
     }
-    // Always replay a USE before each query that runs on a pool worker:
-    // an explicit one if the session ever ran USE, otherwise reset to the
-    // connection's default catalog to clear any leftover state from a
-    // previous session that ran on the same shared worker connection. The
-    // default isn't always `memory` — file-backed connections (e.g. workers
-    // opened against `fhir.db`) only have the file's catalog attached, so
-    // we capture it at pool init.
+    // Replay USE on the chosen worker; pool workers each hold an
+    // independent DuckDB connection. Falls back to the captured default
+    // catalog so leftover state from a prior session on the same worker
+    // doesn't leak through.
     let setup_sql = Some(
         map[&session_id]
             .last_use
@@ -974,11 +943,8 @@ pub fn session_execute_params(session_id: u64, sql: &str, params: &[String]) -> 
     );
 
     if let Some(idx) = pinned_idx {
-        // Session is already pinned — execute on the pinned direct connection.
-        // Connection state persists across queries so no setup replay needed.
-        // Release the pin only if it was acquired by an explicit BEGIN and
-        // we're now seeing the matching COMMIT/ROLLBACK; Session-kind pins
-        // are held until destroy_session.
+        // Transaction pin releases on COMMIT/ROLLBACK; Session pin holds
+        // until destroy_session. No setup replay — pinned conn keeps state.
         if pinned_kind == Some(PinKind::Transaction) && is_commit_or_rollback(sql) {
             if let Some(state) = map.get_mut(&session_id) {
                 state.direct_conn_index = None;
@@ -990,14 +956,12 @@ pub fn session_execute_params(session_id: u64, sql: &str, params: &[String]) -> 
     }
 
     if is_begin(sql) {
-        // Explicit transaction start on an unpinned session.
         drop(map);
         let idx = match acquire_pin(session_id, PinKind::Transaction) {
             Ok(i) => i,
             Err(e) => return PoolResult::Error(e),
         };
-        // The newly acquired direct connection is at the default catalog.
-        // Apply the session's USE before BEGIN so the txn sees the right db.
+        // Apply USE before BEGIN so the txn opens against the session's db.
         if let Some(setup) = &setup_sql {
             if let PoolResult::Error(e) = execute_on_direct(idx, setup) {
                 return PoolResult::Error(format!("session setup: {e}"));
@@ -1006,26 +970,42 @@ pub fn session_execute_params(session_id: u64, sql: &str, params: &[String]) -> 
         return execute_on_direct(idx, sql);
     }
 
-    // Unpinned, not BEGIN. Pure SELECTs without params are stateless and
-    // can be routed to the read worker pool. Anything else (writes, or any
-    // query with params) needs to run on a connection that future queries
-    // in this session can also see — pin lazily and stay pinned.
-    let needs_session_pin = !params.is_empty() || !is_result_returning_query(sql);
-    if !needs_session_pin {
+    let is_stateful = !params.is_empty() || !is_result_returning_query(sql);
+    if !is_stateful {
         drop(map);
         return match read_arrow_with_setup(sql, setup_sql) {
             Ok((schema, batches)) => PoolResult::Rows { schema, batches },
             Err(e) => PoolResult::Error(e),
         };
     }
-    drop(map);
 
+    if mode == SessionMode::Ephemeral {
+        drop(map);
+        if params.is_empty() {
+            return match write_params_with_setup(sql, params, setup_sql) {
+                Ok(()) => PoolResult::Executed,
+                Err(e) => PoolResult::Error(e),
+            };
+        }
+        let pool = match get_pool() {
+            Ok(p) => p,
+            Err(e) => return PoolResult::Error(e),
+        };
+        let idx = pool.next_direct.fetch_add(1, Ordering::Relaxed)
+            % pool.direct_connections.len();
+        if let Some(setup) = &setup_sql {
+            if let PoolResult::Error(e) = execute_on_direct(idx, setup) {
+                return PoolResult::Error(format!("session setup: {e}"));
+            }
+        }
+        return execute_on_direct_params(idx, sql, params);
+    }
+
+    drop(map);
     let idx = match acquire_pin(session_id, PinKind::Session) {
         Ok(i) => i,
         Err(e) => return PoolResult::Error(e),
     };
-    // Newly acquired direct conn may have any catalog state from a prior
-    // caller — replay the session USE before the first query.
     if let Some(setup) = &setup_sql {
         if let PoolResult::Error(e) = execute_on_direct(idx, setup) {
             return PoolResult::Error(format!("session setup: {e}"));
@@ -1088,7 +1068,7 @@ fn execute_on_direct_params(idx: usize, sql: &str, params: &[String]) -> PoolRes
 }
 
 
-const DEFAULT_POOL_SIZE: usize = 4;
+const DEFAULT_POOL_SIZE: usize = 16;
 
 #[duckdb_loadable_macros::duckdb_entrypoint_c_api(ext_name = "pool")]
 pub unsafe fn extension_entrypoint(con: Connection) -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -1427,10 +1407,14 @@ pub extern "C" fn trex_pool_execute_transaction(
 }
 
 
-/// Create a new session. Returns a unique session ID (always > 0).
 #[no_mangle]
 pub extern "C" fn trex_pool_session_create() -> u64 {
     create_session()
+}
+
+#[no_mangle]
+pub extern "C" fn trex_pool_session_create_persistent() -> u64 {
+    create_persistent_session()
 }
 
 /// Execute SQL within a session, returning Arrow IPC bytes.
