@@ -872,11 +872,6 @@ fn is_commit_or_rollback(sql: &str) -> bool {
     upper.starts_with("COMMIT") || upper.starts_with("ROLLBACK")
 }
 
-/// If `sql` is a `USE ...` statement, return the trimmed statement
-/// (without trailing semicolon) so it can be replayed on other workers.
-/// Per-worker connections in the pool have independent catalog state, so
-/// a USE issued on one connection is invisible to the next query unless
-/// we re-apply it.
 fn extract_use_statement(sql: &str) -> Option<String> {
     let trimmed = sql.trim().trim_end_matches(';').trim();
     if trimmed.len() >= 4 && trimmed[..4].eq_ignore_ascii_case("USE ") {
@@ -886,7 +881,6 @@ fn extract_use_statement(sql: &str) -> Option<String> {
     }
 }
 
-/// Execute SQL within a session. See [`session_execute_params`] for details.
 pub fn session_execute(session_id: u64, sql: &str) -> PoolResult {
     session_execute_params(session_id, sql, &[])
 }
@@ -938,7 +932,9 @@ pub fn session_execute_params(session_id: u64, sql: &str, params: &[String]) -> 
         }
     }
     // Replay USE on the chosen worker; pool workers each hold an
-    // independent DuckDB connection.
+    // independent DuckDB connection. Falls back to the captured default
+    // catalog so leftover state from a prior session on the same worker
+    // doesn't leak through.
     let setup_sql = Some(
         map[&session_id]
             .last_use
@@ -947,6 +943,8 @@ pub fn session_execute_params(session_id: u64, sql: &str, params: &[String]) -> 
     );
 
     if let Some(idx) = pinned_idx {
+        // Transaction pin releases on COMMIT/ROLLBACK; Session pin holds
+        // until destroy_session. No setup replay — pinned conn keeps state.
         if pinned_kind == Some(PinKind::Transaction) && is_commit_or_rollback(sql) {
             if let Some(state) = map.get_mut(&session_id) {
                 state.direct_conn_index = None;
@@ -963,6 +961,7 @@ pub fn session_execute_params(session_id: u64, sql: &str, params: &[String]) -> 
             Ok(i) => i,
             Err(e) => return PoolResult::Error(e),
         };
+        // Apply USE before BEGIN so the txn opens against the session's db.
         if let Some(setup) = &setup_sql {
             if let PoolResult::Error(e) = execute_on_direct(idx, setup) {
                 return PoolResult::Error(format!("session setup: {e}"));
