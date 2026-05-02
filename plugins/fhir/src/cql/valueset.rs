@@ -1,9 +1,9 @@
 use serde_json::Value;
 
-use crate::query_executor::{QueryExecutor, QueryResult};
+use crate::query_executor::{QueryResult, RequestConn};
 
 pub async fn expand_valueset(
-    executor: &QueryExecutor,
+    conn: &RequestConn,
     schema_name: &str,
     valueset: &Value,
 ) -> Result<usize, String> {
@@ -32,18 +32,18 @@ pub async fn expand_valueset(
         schema = schema_name,
         url = url.replace('\'', "''")
     );
-    let _ = executor.submit(delete_sql).await;
+    let _ = conn.execute(delete_sql).await;
 
     let mut count = 0;
     for entry in entries {
-        count += insert_expansion_entry(executor, schema_name, url, version, entry).await?;
+        count += insert_expansion_entry(conn, schema_name, url, version, entry).await?;
     }
 
     Ok(count)
 }
 
 fn insert_expansion_entry<'a>(
-    executor: &'a QueryExecutor,
+    conn: &'a RequestConn,
     schema_name: &'a str,
     valueset_url: &'a str,
     valueset_version: &'a str,
@@ -69,14 +69,14 @@ fn insert_expansion_entry<'a>(
         disp = display.replace('\'', "''")
     );
 
-    match executor.submit(sql).await {
+    match conn.execute(sql).await {
         QueryResult::Error(e) => Err(format!("Failed to insert expansion entry: {}", e)),
         _ => {
             let mut total = 1;
             if let Some(children) = entry.get("contains").and_then(|c| c.as_array()) {
                 for child in children {
                     total += insert_expansion_entry(
-                        executor,
+                        conn,
                         schema_name,
                         valueset_url,
                         valueset_version,
@@ -92,7 +92,7 @@ fn insert_expansion_entry<'a>(
 }
 
 pub async fn code_in_valueset(
-    executor: &QueryExecutor,
+    conn: &RequestConn,
     schema_name: &str,
     valueset_url: &str,
     system: &str,
@@ -107,7 +107,7 @@ pub async fn code_in_valueset(
         code = code.replace('\'', "''")
     );
 
-    match executor.submit(sql).await {
+    match conn.execute(sql).await {
         QueryResult::Select { rows, .. } => Ok(!rows.is_empty()),
         QueryResult::Error(e) => Err(format!("ValueSet lookup failed: {}", e)),
         _ => Ok(false),

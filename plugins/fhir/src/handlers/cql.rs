@@ -38,7 +38,9 @@ pub async fn evaluate_cql(
     let sql = compiler::compile_library(&elm_library, &schema_name)
         .map_err(|e| AppError::BadRequest(format!("CQL compilation error: {}", e)))?;
 
-    match state.executor.submit(sql).await {
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
+
+    match conn.execute(sql).await {
         QueryResult::Select { columns, rows } => {
             let parameters = build_parameters_response(&elm_library, &columns, &rows);
             Ok(Json(parameters))
@@ -57,7 +59,8 @@ pub async fn evaluate_cql(
 async fn translate_cql_to_elm(state: &AppState, cql_text: &str) -> Result<Value, AppError> {
     let escaped = cql_text.replace('\'', "''");
     let sql = format!("SELECT trex_fhir_cql_translate('{}')", escaped);
-    match state.executor.submit(sql).await {
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
+    match conn.execute(sql).await {
         QueryResult::Select { rows, .. } => {
             let elm_str = rows
                 .first()
@@ -105,7 +108,9 @@ async fn load_library_elm(
         library_url.replace('\'', "''")
     );
 
-    match state.executor.submit(sql).await {
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
+
+    match conn.execute(sql).await {
         QueryResult::Select { rows, .. } => {
             let raw = rows
                 .first()

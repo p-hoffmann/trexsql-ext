@@ -62,9 +62,9 @@ pub async fn search_resources(
         where_clause = where_clause
     );
 
-    let worker_id = state.executor.next_worker_id();
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
 
-    let total = match state.executor.submit_on(worker_id, count_sql).await {
+    let total = match conn.execute(count_sql).await {
         QueryResult::Select { rows, .. } => rows
             .first()
             .and_then(|r| r.first())
@@ -74,7 +74,7 @@ pub async fn search_resources(
         _ => 0,
     };
 
-    let result = match state.executor.submit_on(worker_id, sql).await {
+    let result = match conn.execute(sql).await {
         QueryResult::Select { rows, .. } => {
             let has_more = rows.len() > count;
             let entries: Vec<Value> = rows
@@ -159,6 +159,5 @@ pub async fn search_resources(
         }))),
     };
 
-    state.executor.destroy_session(worker_id);
     result
 }

@@ -37,7 +37,9 @@ pub async fn resource_history(
 
     let mut entries = Vec::new();
 
-    if let QueryResult::Select { rows, .. } = state.executor.submit(current_sql).await {
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
+
+    if let QueryResult::Select { rows, .. } = conn.execute(current_sql).await {
         for row in &rows {
             let raw = row.get(2).and_then(|v| v.as_str()).unwrap_or("{}");
             if let Ok(resource) = serde_json::from_str::<Value>(raw) {
@@ -60,7 +62,7 @@ pub async fn resource_history(
         }
     }
 
-    if let QueryResult::Select { rows, .. } = state.executor.submit(sql).await {
+    if let QueryResult::Select { rows, .. } = conn.execute(sql).await {
         for row in &rows {
             let raw = row.get(2).and_then(|v| v.as_str()).unwrap_or("{}");
             if let Ok(resource) = serde_json::from_str::<Value>(raw) {
@@ -109,7 +111,9 @@ pub async fn read_resource_version(
         version = version_id
     );
 
-    match state.executor.submit(sql).await {
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
+
+    match conn.execute(sql).await {
         QueryResult::Select { rows, .. } => {
             if rows.is_empty() {
                 let current_sql = format!(
@@ -119,7 +123,7 @@ pub async fn read_resource_version(
                     id = resource_id.replace('\'', "''"),
                     version = version_id
                 );
-                match state.executor.submit(current_sql).await {
+                match conn.execute(current_sql).await {
                     QueryResult::Select { rows, .. } if !rows.is_empty() => {
                         let raw = rows[0].first().and_then(|v| v.as_str()).unwrap_or("{}");
                         let resource: Value = serde_json::from_str(raw)

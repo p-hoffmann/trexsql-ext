@@ -89,21 +89,21 @@ impl VScalar for StartPgWireServerScalar {
         let port_vector = input.flat_vector(1);
         let password_vector = input.flat_vector(2);
         let db_credentials_vector = input.flat_vector(3);
-        
+
         let host_slice = host_vector.as_slice_with_len::<libduckdb_sys::duckdb_string_t>(input.len());
         let port_slice = port_vector.as_slice_with_len::<i32>(input.len());
         let password_slice = password_vector.as_slice_with_len::<libduckdb_sys::duckdb_string_t>(input.len());
         let db_credentials_slice = db_credentials_vector.as_slice_with_len::<libduckdb_sys::duckdb_string_t>(input.len());
-        
+
         if input.len() == 0 {
             return Err("No input provided".into());
         }
-        
+
         let host = duckdb::types::DuckString::new(&mut { host_slice[0] }).as_str().to_string();
         let port = port_slice[0] as u16;
         let password = duckdb::types::DuckString::new(&mut { password_slice[0] }).as_str().to_string();
         let db_credentials = duckdb::types::DuckString::new(&mut { db_credentials_slice[0] }).as_str().to_string();
-        
+
         let response = match pgwire_server::start_pgwire_server_capi(host, port, Some(&password), db_credentials) {
             Ok(msg) => msg,
             Err(err) => format!("Error: {}", err),
@@ -286,7 +286,7 @@ impl VTab for PgWireServerStatusTable {
 #[duckdb_entrypoint_c_api()]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
     store_shared_connection(&con)?;
-    
+
     con.register_scalar_function::<PgwireVersionScalar>("trex_pgwire_version")
         .expect("Failed to register trex_pgwire_version scalar function");
 

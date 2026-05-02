@@ -1363,8 +1363,10 @@ impl VTab for DbPartitionsTable {
 #[duckdb_entrypoint_c_api()]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
     // Pool is initialized by the pool.trex extension (loaded before db).
-    trex_pool_client::read_pool_size()
+    // Probe by leasing a session and immediately releasing it.
+    let probe_sid = trex_pool_client::create_session()
         .map_err(|e| -> Box<dyn Error> { format!("trex_pool not loaded: {e}").into() })?;
+    let _ = trex_pool_client::destroy_session(probe_sid);
 
     // Local connections for closure-based operations (ArrowVTab, appender)
     local_connections::init(&con, 4)

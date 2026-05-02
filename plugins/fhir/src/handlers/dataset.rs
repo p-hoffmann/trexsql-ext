@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::error::AppError;
 use crate::fhir::structure_definition::DefinitionRegistry;
-use crate::query_executor::QueryResult;
+use crate::query_executor::{QueryResult, RequestConn};
 use crate::sql_safety::validate_dataset_id;
 use crate::state::AppState;
 
@@ -48,24 +48,20 @@ pub async fn create_dataset(
         (names, None)
     };
 
-    // Pin DDL for this dataset to one worker to avoid schema visibility races.
-    let worker_id = state.executor.next_worker_id();
-    let result =
-        create_dataset_inner(&state, worker_id, body, resource_type_names, custom_definitions, qualified_schema).await;
-    state.executor.destroy_session(worker_id);
-    result
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
+    create_dataset_inner(&state, &conn, body, resource_type_names, custom_definitions, qualified_schema).await
 }
 
 async fn create_dataset_inner(
     state: &Arc<AppState>,
-    worker_id: usize,
+    conn: &RequestConn,
     body: CreateDatasetRequest,
     resource_type_names: Vec<String>,
     custom_definitions: Option<DefinitionRegistry>,
     qualified_schema: String,
 ) -> Result<(StatusCode, Json<Value>), AppError> {
     let create_schema_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", qualified_schema);
-    if let QueryResult::Error(e) = state.executor.submit_on(worker_id, create_schema_sql).await {
+    if let QueryResult::Error(e) = conn.execute(create_schema_sql).await {
         eprintln!("[fhir] Failed to create schema: {}", e);
         return Err(AppError::Internal("Failed to create schema".to_string()));
     }
@@ -82,7 +78,7 @@ async fn create_dataset_inner(
         )",
         schema = qualified_schema
     );
-    if let QueryResult::Error(e) = state.executor.submit_on(worker_id, history_ddl).await {
+    if let QueryResult::Error(e) = conn.execute(history_ddl).await {
         eprintln!("[fhir] Failed to create _history table: {}", e);
         return Err(AppError::Internal(
             "Failed to create _history table".to_string(),
@@ -99,7 +95,7 @@ async fn create_dataset_inner(
         )",
         qualified_schema
     );
-    if let QueryResult::Error(e) = state.executor.submit_on(worker_id, vs_ddl).await {
+    if let QueryResult::Error(e) = conn.execute(vs_ddl).await {
         eprintln!("[fhir] Failed to create _valueset_expansion table: {}", e);
         return Err(AppError::Internal(
             "Failed to create _valueset_expansion table".to_string(),
@@ -112,7 +108,7 @@ async fn create_dataset_inner(
     if let Some(ref custom_defs) = custom_definitions {
         for type_name in &resource_type_names {
             match crate::schema::generator::generate_ddl(custom_defs, type_name, &qualified_schema) {
-                Ok(ddl) => match state.executor.submit_on(worker_id, ddl).await {
+                Ok(ddl) => match conn.execute(ddl).await {
                     QueryResult::Error(e) => {
                         errors.push(format!("{}: {}", type_name, e));
                     }
@@ -128,7 +124,7 @@ async fn create_dataset_inner(
     } else {
         for type_name in &resource_type_names {
             match state.registry.get_ddl(type_name, &qualified_schema) {
-                Ok(ddl) => match state.executor.submit_on(worker_id, ddl).await {
+                Ok(ddl) => match conn.execute(ddl).await {
                     QueryResult::Error(e) => {
                         errors.push(format!("{}: {}", type_name, e));
                     }
@@ -144,18 +140,14 @@ async fn create_dataset_inner(
     }
 
     if created_types.is_empty() {
-        let _ = state
-            .executor
-            .submit_on(worker_id, format!("DROP SCHEMA IF EXISTS {} CASCADE", qualified_schema))
+        let _ = conn
+            .execute(format!("DROP SCHEMA IF EXISTS {} CASCADE", qualified_schema))
             .await;
         eprintln!("[fhir] Failed to create any resource tables: {}", errors.join("; "));
         return Err(AppError::Internal(
             "Failed to create any resource tables".to_string(),
         ));
     }
-
-    // Force all workers to refresh their catalog after DDL changes.
-    state.executor.sync_all().await;
 
     let resource_types_sql = created_types
         .iter()
@@ -169,7 +161,7 @@ async fn create_dataset_inner(
         resource_types_sql
     );
 
-    if let QueryResult::Error(e) = state.executor.submit_params(insert_sql, vec![body.id.clone(), body.name.clone()]).await {
+    if let QueryResult::Error(e) = conn.execute_params(insert_sql, vec![body.id.clone(), body.name.clone()]).await {
         if e.contains("Duplicate") || e.contains("duplicate") || e.contains("UNIQUE") {
             return Err(AppError::BadRequest(format!(
                 "Dataset '{}' already exists",
@@ -226,7 +218,6 @@ fn parse_custom_definitions(
         AppError::Internal("Failed to serialize custom definitions".to_string())
     })?;
 
-    // Default type definitions handle complex types.
     let empty_types = r#"{"resourceType":"Bundle","type":"collection","entry":[]}"#;
 
     let registry = DefinitionRegistry::load_from_json(&bundle_str, empty_types)
@@ -246,9 +237,9 @@ pub async fn list_datasets(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, AppError> {
     let meta = state.meta_schema();
-    let result = state
-        .executor
-        .submit(format!(
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
+    let result = conn
+        .execute(format!(
             "SELECT id, name, status, created_at, resource_types FROM {}._datasets",
             meta
         ))
@@ -291,7 +282,8 @@ pub async fn get_dataset(
         dataset_id.replace('\'', "''")
     );
 
-    let result = state.executor.submit(sql).await;
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
+    let result = conn.execute(sql).await;
 
     match result {
         QueryResult::Select { rows, columns } => {
@@ -334,7 +326,9 @@ pub async fn delete_dataset(
         dataset_id.replace('\'', "''")
     );
 
-    match state.executor.submit(check_sql).await {
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
+
+    match conn.execute(check_sql).await {
         QueryResult::Select { rows, columns } => {
             if rows.is_empty() {
                 return Err(AppError::NotFound(format!(
@@ -372,11 +366,11 @@ pub async fn delete_dataset(
         meta,
         dataset_id.replace('\'', "''")
     );
-    let _ = state.executor.submit(mark_sql).await;
+    let _ = conn.execute(mark_sql).await;
 
     let qualified_schema = state.qualified_schema(&dataset_id);
     let drop_sql = format!("DROP SCHEMA IF EXISTS {} CASCADE", qualified_schema);
-    if let QueryResult::Error(e) = state.executor.submit(drop_sql).await {
+    if let QueryResult::Error(e) = conn.execute(drop_sql).await {
         eprintln!("[fhir] Failed to drop schema: {}", e);
         return Err(AppError::Internal(
             "Failed to drop schema".to_string(),
@@ -388,14 +382,12 @@ pub async fn delete_dataset(
         meta,
         dataset_id.replace('\'', "''")
     );
-    if let QueryResult::Error(e) = state.executor.submit(delete_sql).await {
+    if let QueryResult::Error(e) = conn.execute(delete_sql).await {
         eprintln!("[fhir] Failed to delete dataset record: {}", e);
         return Err(AppError::Internal(
             "Failed to delete dataset record".to_string(),
         ));
     }
-
-    state.executor.sync_all().await;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -413,7 +405,10 @@ pub async fn update_dataset(
         meta,
         dataset_id.replace('\'', "''")
     );
-    match state.executor.submit(check_sql).await {
+
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
+
+    match conn.execute(check_sql).await {
         QueryResult::Select { rows, .. } if !rows.is_empty() => {}
         _ => {
             return Err(AppError::NotFound(format!(
@@ -436,10 +431,9 @@ pub async fn update_dataset(
     })?;
 
     for type_name in &new_types {
-        // generate_ddl uses CREATE TABLE IF NOT EXISTS, so concurrent calls are safe
         match crate::schema::generator::generate_ddl(registry, type_name, &qualified_schema) {
             Ok(ddl) => {
-                match state.executor.submit(ddl).await {
+                match conn.execute(ddl).await {
                     QueryResult::Error(e) => {
                         eprintln!("[fhir] Failed to create table for {}: {}", type_name, e);
                         return Err(AppError::Internal(format!(
@@ -472,11 +466,7 @@ pub async fn update_dataset(
             new_types_sql,
             dataset_id.replace('\'', "''")
         );
-        let _ = state.executor.submit(update_sql).await;
-    }
-
-    if !added.is_empty() {
-        state.executor.sync_all().await;
+        let _ = conn.execute(update_sql).await;
     }
 
     Ok(Json(json!({

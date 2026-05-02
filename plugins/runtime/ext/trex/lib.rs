@@ -624,6 +624,20 @@ fn extract_panic_message(panic_err: Box<dyn std::any::Any + Send>) -> String {
   }
 }
 
+fn is_result_returning_query(sql: &str) -> bool {
+  let trimmed = sql.trim_start();
+  let upper = trimmed.to_uppercase();
+  upper.starts_with("SELECT")
+    || upper.starts_with("WITH")
+    || upper.starts_with("SHOW")
+    || upper.starts_with("DESCRIBE")
+    || upper.starts_with("EXPLAIN")
+    || upper.starts_with("TABLE")
+    || upper.starts_with("VALUES")
+    || upper.starts_with("FROM")
+    || upper.starts_with("PRAGMA")
+}
+
 fn apply_database_to_session(session_id: u64, database: &str) {
   if database.is_empty() || database == "memory" {
     return;
@@ -674,7 +688,7 @@ fn execute_query(
   }
 
   // Route write operations through a short-lived session.
-  if !trex_pool_client::is_result_returning_query(&sql) {
+  if !is_result_returning_query(&sql) {
     let sid = trex_pool_client::create_session()
       .map_err(TrexError::Generic)?;
     apply_database_to_session(sid, &database);
@@ -789,9 +803,8 @@ fn op_acquire_worker() -> u32 {
     .unwrap_or(0)
 }
 
-/// Lazy-promoted: stays unpinned until the session creates non-replayable
-/// connection-local state (temp tables, PREPARE, DECLARE CURSOR, SET), at
-/// which point the pool acquires a session pin and holds it until destroy.
+/// Persistent so connection-local state (temp tables, prepared statements)
+/// survives across queries within one TrexConnection.
 #[op2(fast)]
 #[number]
 fn op_create_session() -> Result<u64, TrexError> {

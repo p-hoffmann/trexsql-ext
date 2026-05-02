@@ -2,6 +2,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::SystemTime;
 
+use duckdb::arrow::datatypes::Schema;
+use duckdb::arrow::record_batch::RecordBatch;
 use duckdb::params;
 use async_trait::async_trait;
 use futures::stream;
@@ -298,6 +300,14 @@ impl TrexQueryHandler {
 /// Convert trexsql statement columns to pgwire field info (for describe operations)
 fn row_desc_from_stmt(stmt: &duckdb::Statement, format: &Format) -> PgWireResult<Vec<FieldInfo>> {
     let columns = stmt.column_count();
+    if columns == 1 {
+        let name = stmt.column_name(0).cloned().unwrap_or_default();
+        let datatype = stmt.column_type(0);
+        let pg = into_pg_type(&datatype).unwrap_or(Type::TEXT);
+        if (name == "Success" && pg == Type::BOOL) || (name == "Count" && pg == Type::INT8) {
+            return Ok(Vec::new());
+        }
+    }
     (0..columns)
         .map(|idx| {
             let datatype = stmt.column_type(idx);
@@ -311,6 +321,25 @@ fn row_desc_from_stmt(stmt: &duckdb::Statement, format: &Format) -> PgWireResult
             ))
         })
         .collect()
+}
+
+/// Detects DuckDB's synthetic result schemas for statements that have no
+/// user-visible output. DuckDB returns `Success: bool` for control statements
+/// (BEGIN/COMMIT/ROLLBACK/USE/SET) and `Count: int64` for DDL/DML, while real
+/// queries name their columns from the projection. Treating these as
+/// CommandComplete is required for libpq-based clients (psycopg2) which
+/// otherwise see a RowDescription where they expect none.
+fn is_duckdb_non_query_schema(schema: &duckdb::arrow::datatypes::Schema) -> bool {
+    use duckdb::arrow::datatypes::DataType;
+    let fields = schema.fields();
+    if fields.len() != 1 {
+        return false;
+    }
+    let f = &fields[0];
+    matches!(
+        (f.name().as_str(), f.data_type()),
+        ("Success", DataType::Boolean) | ("Count", DataType::Int64)
+    )
 }
 
 /// Convert Arrow schema to pgwire field info
@@ -363,7 +392,12 @@ impl SimpleQueryHandler for TrexQueryHandler {
                 if matches!(check_database_action(db, &db_credentials), DatabaseAction::SetDatabase) {
                     let use_sql = format!("USE \"{}\"", db.replace('"', "\"\""));
                     let session_id = self.session_id;
-                    if let Err(err) = tokio::task::spawn_blocking(move || trex_pool_client::session_execute(session_id, &use_sql)).await.unwrap_or(Err("spawn error".into())) {
+                    let result = tokio::task::spawn_blocking(move || {
+                        trex_pool_client::session_execute(session_id, &use_sql).map(|_| ())
+                    })
+                    .await
+                    .unwrap_or_else(|e| Err(format!("spawn error: {e}")));
+                    if let Err(err) = result {
                         return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                             "ERROR".to_owned(),
                             "XX000".to_owned(),
@@ -406,7 +440,7 @@ impl SimpleQueryHandler for TrexQueryHandler {
             log_debug(&format!("Submitting query: {}", sql));
             let sql_owned = sql.clone();
             let session_id = self.session_id;
-            let (schema, batches) = tokio::task::spawn_blocking(move || {
+            let (schema, batches): (Arc<Schema>, Vec<RecordBatch>) = tokio::task::spawn_blocking(move || {
                 trex_pool_client::session_execute(session_id, &sql_owned)
             }).await.map_err(|e| {
                 PgWireError::UserError(Box::new(ErrorInfo::new(
@@ -422,7 +456,9 @@ impl SimpleQueryHandler for TrexQueryHandler {
                 )))
             })?;
 
-            if schema.fields().is_empty() && batches.is_empty() {
+            if (schema.fields().is_empty() && batches.is_empty())
+                || is_duckdb_non_query_schema(&schema)
+            {
                 log_debug("Got EXECUTE result");
                 responses.push(Response::Execution(Tag::new("OK").with_rows(0)));
             } else {
@@ -482,7 +518,12 @@ impl ExtendedQueryHandler for TrexQueryHandler {
                 if matches!(check_database_action(db, &db_credentials), DatabaseAction::SetDatabase) {
                     let use_sql = format!("USE \"{}\"", db.replace('"', "\"\""));
                     let session_id = self.session_id;
-                    if let Err(err) = tokio::task::spawn_blocking(move || trex_pool_client::session_execute(session_id, &use_sql)).await.unwrap_or(Err("spawn error".into())) {
+                    let result = tokio::task::spawn_blocking(move || {
+                        trex_pool_client::session_execute(session_id, &use_sql).map(|_| ())
+                    })
+                    .await
+                    .unwrap_or_else(|e| Err(format!("spawn error: {e}")));
+                    if let Err(err) = result {
                         return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                             "ERROR".to_owned(),
                             "XX000".to_owned(),
@@ -494,7 +535,7 @@ impl ExtendedQueryHandler for TrexQueryHandler {
         }
 
         let session_id = self.session_id;
-        let (schema, batches) = tokio::task::spawn_blocking(move || {
+        let (schema, batches): (Arc<Schema>, Vec<RecordBatch>) = tokio::task::spawn_blocking(move || {
             trex_pool_client::session_execute(session_id, &query)
         }).await.map_err(|e| {
             PgWireError::UserError(Box::new(ErrorInfo::new(
@@ -510,7 +551,9 @@ impl ExtendedQueryHandler for TrexQueryHandler {
             )))
         })?;
 
-        if schema.fields().is_empty() && batches.is_empty() {
+        if (schema.fields().is_empty() && batches.is_empty())
+            || is_duckdb_non_query_schema(&schema)
+        {
             Ok(Response::Execution(Tag::new("OK").with_rows(0)))
         } else {
             let header = Arc::new(schema_to_field_info(&schema, &Format::UnifiedText)?);
@@ -755,11 +798,6 @@ pub fn start_pgwire_server_capi(
                 let listener = TcpListener::bind(format!("{}:{}", server_host, server_port)).await?;
                 log_debug(&format!("Bound to {}:{}", server_host, server_port));
 
-                let pool_size = trex_pool_client::read_pool_size().map_err(|e| {
-                    log_debug(&format!("Pool not available: {}", e));
-                    std::io::Error::new(std::io::ErrorKind::Other, "Connection pool not available")
-                })?;
-                log_debug(&format!("Using shared trex_pool with {} read workers", pool_size));
                 let worker_counter = std::sync::atomic::AtomicUsize::new(0);
 
                 // Treat empty password as no authentication
@@ -770,11 +808,11 @@ pub fn start_pgwire_server_capi(
                             result = listener.accept() => {
                                 match result {
                                     Ok((socket, _addr)) => {
-                                        let worker_id = worker_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % pool_size;
+                                        let worker_id = worker_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         let session_id = match trex_pool_client::create_session() {
                                             Ok(id) => id,
                                             Err(e) => {
-                                                log_debug(&format!("Failed to create session: {}", e));
+                                                log_debug(&format!("create_session: {e}"));
                                                 continue;
                                             }
                                         };
@@ -803,11 +841,11 @@ pub fn start_pgwire_server_capi(
                                 match result {
                                     Ok((socket, addr)) => {
                                         log_debug(&format!("New connection from {:?}", addr));
-                                        let worker_id = worker_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % pool_size;
+                                        let worker_id = worker_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         let session_id = match trex_pool_client::create_session() {
                                             Ok(id) => id,
                                             Err(e) => {
-                                                log_debug(&format!("Failed to create session: {}", e));
+                                                log_debug(&format!("create_session: {e}"));
                                                 continue;
                                             }
                                         };
@@ -828,7 +866,7 @@ pub fn start_pgwire_server_capi(
                         }
                     }
                 }
-                
+
                 Ok(())
             });
             

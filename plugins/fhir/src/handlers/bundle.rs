@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::error::AppError;
 use crate::fhir::bundle_processor;
 use crate::handlers::upsert;
-use crate::query_executor::QueryResult;
+use crate::query_executor::{QueryResult, RequestConn};
 use crate::schema::sql_builder;
 use crate::sql_safety::validate_dataset_id;
 use crate::state::AppState;
@@ -68,13 +68,12 @@ async fn process_transaction(
 
     let schema_name = state.qualified_schema(dataset_id);
 
-    // Pin all transaction queries to a single worker so BEGIN/COMMIT/ROLLBACK
-    // all run on the same DuckDB connection.
-    let worker_id = state.executor.next_worker_id();
+    // All transaction queries share one connection so BEGIN/COMMIT/ROLLBACK
+    // and intermediate writes see consistent state.
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
 
-    if let QueryResult::Error(e) = state.executor.submit_on(worker_id, "BEGIN TRANSACTION".to_string()).await {
+    if let QueryResult::Error(e) = conn.execute("BEGIN TRANSACTION".to_string()).await {
         eprintln!("[fhir] Failed to begin transaction: {}", e);
-        state.executor.destroy_session(worker_id);
         return Err(AppError::Internal(
             "Failed to begin transaction".to_string(),
         ));
@@ -83,13 +82,12 @@ async fn process_transaction(
     let mut response_entries = Vec::new();
 
     for entry in &entries {
-        match process_single_entry(&state, &schema_name, dataset_id, entry, Some(worker_id)).await {
+        match process_single_entry(&state, &schema_name, dataset_id, entry, Some(&conn)).await {
             Ok(resp_entry) => {
                 response_entries.push(resp_entry);
             }
             Err(e) => {
-                let _ = state.executor.submit_on(worker_id, "ROLLBACK".to_string()).await;
-                state.executor.destroy_session(worker_id);
+                let _ = conn.execute("ROLLBACK".to_string()).await;
                 return Err(AppError::BadRequest(format!(
                     "Transaction failed on {}/{}: {}",
                     entry.resource_type, entry.server_id, e
@@ -98,15 +96,13 @@ async fn process_transaction(
         }
     }
 
-    if let QueryResult::Error(e) = state.executor.submit_on(worker_id, "COMMIT".to_string()).await {
+    if let QueryResult::Error(e) = conn.execute("COMMIT".to_string()).await {
         eprintln!("[fhir] Failed to commit transaction: {}", e);
-        state.executor.destroy_session(worker_id);
         return Err(AppError::Internal(
             "Failed to commit transaction".to_string(),
         ));
     }
 
-    state.executor.destroy_session(worker_id);
     Ok((
         StatusCode::OK,
         Json(json!({
@@ -177,7 +173,7 @@ async fn process_single_entry(
     schema_name: &str,
     dataset_id: &str,
     entry: &bundle_processor::ProcessedEntry,
-    worker_id: Option<usize>,
+    outer_conn: Option<&RequestConn>,
 ) -> Result<Value, String> {
     let table_name = entry.resource_type.to_lowercase();
 
@@ -208,10 +204,12 @@ async fn process_single_entry(
                 schema_name, &table_name, 1, &transform_spec, &column_names,
             );
 
-            let result = if let Some(wid) = worker_id {
-                state.executor.submit_params_on(wid, insert_sql, vec![entry.server_id.clone(), raw_json]).await
-            } else {
-                state.executor.submit_params(insert_sql, vec![entry.server_id.clone(), raw_json]).await
+            let result = match outer_conn {
+                Some(conn) => conn.execute_params(insert_sql, vec![entry.server_id.clone(), raw_json]).await,
+                None => {
+                    let conn = state.new_request_conn().map_err(|e| format!("conn: {e}"))?;
+                    conn.execute_params(insert_sql, vec![entry.server_id.clone(), raw_json]).await
+                }
             };
 
             match result {
@@ -240,7 +238,7 @@ async fn process_single_entry(
                 &mut resource,
                 &transform_spec,
                 &column_names,
-                worker_id,
+                outer_conn,
             )
             .await?;
 
@@ -258,18 +256,26 @@ async fn process_single_entry(
                 return Err("DELETE entry missing resource id".to_string());
             }
 
-            // Read current version and raw content for history
             let check_sql = format!(
                 "SELECT _version_id::VARCHAR, _raw FROM {schema}.\"{table}\" WHERE _id = $1 AND NOT _is_deleted",
                 schema = schema_name,
                 table = table_name,
             );
 
-            let check_result = if let Some(wid) = worker_id {
-                state.executor.submit_params_on(wid, check_sql, vec![entry.server_id.clone()]).await
-            } else {
-                state.executor.submit_params(check_sql, vec![entry.server_id.clone()]).await
+            // Reuse the outer transaction conn when present so all delete-related
+            // statements run on the same connection; otherwise use a fresh per-op conn.
+            let owned_conn;
+            let conn_ref: &RequestConn = match outer_conn {
+                Some(c) => c,
+                None => {
+                    owned_conn = state.new_request_conn().map_err(|e| format!("conn: {e}"))?;
+                    &owned_conn
+                }
             };
+
+            let check_result = conn_ref
+                .execute_params(check_sql, vec![entry.server_id.clone()])
+                .await;
 
             let (current_version, current_raw) = match check_result {
                 QueryResult::Select { rows, .. } => {
@@ -294,7 +300,6 @@ async fn process_single_entry(
 
             let new_version = current_version + 1;
 
-            // Write history row for the current version before deleting
             let history_sql = format!(
                 "INSERT INTO {schema}._history (_id, _resource_type, _version_id, _last_updated, _raw, _is_deleted) \
                  VALUES ($1, $2, {version}, CURRENT_TIMESTAMP, $3, false)",
@@ -302,12 +307,7 @@ async fn process_single_entry(
                 version = current_version,
             );
             let history_params = vec![entry.server_id.clone(), entry.resource_type.clone(), current_raw];
-            let history_result = if let Some(wid) = worker_id {
-                state.executor.submit_params_on(wid, history_sql, history_params).await
-            } else {
-                state.executor.submit_params(history_sql, history_params).await
-            };
-            if let QueryResult::Error(e) = history_result {
+            if let QueryResult::Error(e) = conn_ref.execute_params(history_sql, history_params).await {
                 eprintln!("[fhir] WARNING: history write failed for {}/{}: {}", entry.resource_type, entry.server_id, e);
             }
 
@@ -320,11 +320,9 @@ async fn process_single_entry(
                 version = new_version,
             );
 
-            let result = if let Some(wid) = worker_id {
-                state.executor.submit_params_on(wid, delete_sql, vec![entry.server_id.clone()]).await
-            } else {
-                state.executor.submit_params(delete_sql, vec![entry.server_id.clone()]).await
-            };
+            let result = conn_ref
+                .execute_params(delete_sql, vec![entry.server_id.clone()])
+                .await;
 
             match result {
                 QueryResult::Error(e) => Err(format!("Delete failed: {}", e)),

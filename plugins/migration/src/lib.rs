@@ -28,6 +28,26 @@ fn execute_sql(sql: &str) -> Result<(), Box<dyn Error>> {
     result.map_err(|e| -> Box<dyn Error> { e.into() })
 }
 
+/// Run a list of statements inside a single BEGIN/COMMIT on one session.
+/// Rolls back and propagates the first failure.
+fn execute_statements_in_transaction(statements: &[&str]) -> Result<(), String> {
+    let sid = trex_pool_client::create_session()?;
+    if let Err(e) = trex_pool_client::session_execute(sid, "BEGIN") {
+        let _ = trex_pool_client::destroy_session(sid);
+        return Err(e);
+    }
+    for stmt in statements {
+        if let Err(e) = trex_pool_client::session_execute(sid, stmt) {
+            let _ = trex_pool_client::session_execute(sid, "ROLLBACK");
+            let _ = trex_pool_client::destroy_session(sid);
+            return Err(e);
+        }
+    }
+    let commit = trex_pool_client::session_execute(sid, "COMMIT").map(|_| ());
+    let _ = trex_pool_client::destroy_session(sid);
+    commit
+}
+
 struct QueryRow {
     columns: Vec<String>,
 }
@@ -731,13 +751,14 @@ fn execute_migrations_in_schema(
             let migration = &discovered[idx];
 
             let insert_sql = build_insert_migration_sql(migration);
-            trex_pool_client::execute_transaction(&[
-                &migration.sql,
-                &insert_sql,
-            ])
-            .map_err(|e| -> Box<dyn Error> {
-                format!("Migration V{}__{} failed: {}", migration.version, migration.name, e).into()
-            })?;
+            execute_statements_in_transaction(&[&migration.sql, &insert_sql])
+                .map_err(|e| -> Box<dyn Error> {
+                    format!(
+                        "Migration V{}__{} failed: {}",
+                        migration.version, migration.name, e
+                    )
+                    .into()
+                })?;
 
             results.push(MigrationResult {
                 version: migration.version,

@@ -29,8 +29,10 @@ pub async fn system_export(
     };
 
     let meta = state.meta_schema();
+
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
     let job_id = ndjson::create_export_job(
-        &state.executor,
+        &conn,
         &dataset_id,
         Some(&resource_types),
         &meta,
@@ -41,13 +43,12 @@ pub async fn system_export(
         AppError::Internal("Failed to create export job".to_string())
     })?;
 
-    let executor = state.executor.clone();
     let ds_id = dataset_id.clone();
     let jid = job_id.clone();
     let types = resource_types.clone();
     let db_name = state.db_name.clone();
     tokio::spawn(async move {
-        if let Err(e) = ndjson::execute_export(executor, &ds_id, &jid, &types, &db_name).await {
+        if let Err(e) = ndjson::execute_export(&ds_id, &jid, &types, &db_name).await {
             eprintln!("[fhir] Export job {} failed: {}", jid, e);
         }
     });
@@ -72,8 +73,9 @@ pub async fn type_export(
     let resource_types = vec![resource_type.clone()];
     let meta = state.meta_schema();
 
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
     let job_id = ndjson::create_export_job(
-        &state.executor,
+        &conn,
         &dataset_id,
         Some(&resource_types),
         &meta,
@@ -84,13 +86,12 @@ pub async fn type_export(
         AppError::Internal("Failed to create export job".to_string())
     })?;
 
-    let executor = state.executor.clone();
     let ds_id = dataset_id.clone();
     let jid = job_id.clone();
     let types = resource_types.clone();
     let db_name = state.db_name.clone();
     tokio::spawn(async move {
-        if let Err(e) = ndjson::execute_export(executor, &ds_id, &jid, &types, &db_name).await {
+        if let Err(e) = ndjson::execute_export(&ds_id, &jid, &types, &db_name).await {
             eprintln!("[fhir] Export job {} failed: {}", jid, e);
         }
     });
@@ -112,7 +113,8 @@ pub async fn export_status(
     validate_uuid(&job_id)?;
 
     let meta = state.meta_schema();
-    let job = ndjson::get_export_job(&state.executor, &job_id, &meta)
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
+    let job = ndjson::get_export_job(&conn, &job_id, &meta)
         .await
         .map_err(|e| {
             eprintln!("[fhir] Failed to get export job: {}", e);
