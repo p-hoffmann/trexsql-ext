@@ -572,12 +572,13 @@ pub fn start_flight_server(
                 .build()?;
 
             rt.block_on(async move {
-                trex_pool_client::read_pool_size().map_err(|e| {
+                let probe_sid = trex_pool_client::create_session().map_err(|e| {
                     Box::new(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         format!("Connection pool not available: {}", e),
                     )) as Box<dyn std::error::Error + Send + Sync>
                 })?;
+                let _ = trex_pool_client::destroy_session(probe_sid);
 
                 let service = DuckDBFlightService::new(
                     server_host.clone(),
@@ -665,12 +666,13 @@ pub fn start_flight_server_with_tls(
                 .build()?;
 
             rt.block_on(async move {
-                trex_pool_client::read_pool_size().map_err(|e| {
+                let probe_sid = trex_pool_client::create_session().map_err(|e| {
                     Box::new(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         format!("Connection pool not available: {}", e),
                     )) as Box<dyn std::error::Error + Send + Sync>
                 })?;
+                let _ = trex_pool_client::destroy_session(probe_sid);
 
                 let service = DuckDBFlightService::new(
                     server_host.clone(),

@@ -267,8 +267,10 @@ fn start_pipeline(
         )
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
-    trex_pool_client::read_pool_size()
+    // Verify the pool extension is loaded by leasing and immediately releasing a session.
+    let probe_sid = trex_pool_client::create_session()
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let _ = trex_pool_client::destroy_session(probe_sid);
 
     let name = pipeline_name.to_string();
     let name_for_thread = pipeline_name.to_string();
@@ -400,7 +402,7 @@ fn start_copy_only_pipeline(
 
             // ATTACH catalog state is per-connection; later SELECTs/CREATEs
             // against the attached source need the same direct conn.
-            let session_id = trex_pool_client::create_persistent_session()
+            let session_id = trex_pool_client::create_session()
                 .map_err(|e| format!("Failed to create session: {}", e))?;
 
             // Use a closure so we can clean up the session on any exit path.

@@ -1,7 +1,6 @@
 use serde_json::{json, Value};
-use std::sync::Arc;
 
-use crate::query_executor::{QueryExecutor, QueryResult};
+use crate::query_executor::{QueryResult, RequestConn};
 use crate::sql_safety::to_qualified_schema;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -24,7 +23,7 @@ impl ExportStatus {
 }
 
 pub async fn create_export_job(
-    executor: &QueryExecutor,
+    conn: &RequestConn,
     dataset_id: &str,
     resource_types: Option<&[String]>,
     meta_schema: &str,
@@ -43,14 +42,14 @@ pub async fn create_export_job(
         types = types_str.replace('\'', "''")
     );
 
-    match executor.submit(sql).await {
+    match conn.execute(sql).await {
         QueryResult::Error(e) => Err(format!("Failed to create export job: {}", e)),
         _ => Ok(job_id),
     }
 }
 
 pub async fn get_export_job(
-    executor: &QueryExecutor,
+    conn: &RequestConn,
     job_id: &str,
     meta_schema: &str,
 ) -> Result<Option<Value>, String> {
@@ -61,7 +60,7 @@ pub async fn get_export_job(
         job_id.replace('\'', "''")
     );
 
-    match executor.submit(sql).await {
+    match conn.execute(sql).await {
         QueryResult::Select { columns, rows } => {
             if rows.is_empty() {
                 return Ok(None);
@@ -81,7 +80,7 @@ pub async fn get_export_job(
 }
 
 pub async fn update_export_job_status(
-    executor: &QueryExecutor,
+    conn: &RequestConn,
     job_id: &str,
     status: ExportStatus,
     output_files: Option<&str>,
@@ -115,14 +114,15 @@ pub async fn update_export_job_status(
         job_id.replace('\'', "''")
     );
 
-    match executor.submit(sql).await {
+    match conn.execute(sql).await {
         QueryResult::Error(e) => Err(format!("Failed to update export job: {}", e)),
         _ => Ok(()),
     }
 }
 
+/// Execute an export job. Owns its own RequestConn so the connection lives for
+/// the entire background job, independent of the originating HTTP request.
 pub async fn execute_export(
-    executor: Arc<QueryExecutor>,
     dataset_id: &str,
     job_id: &str,
     resource_types: &[String],
@@ -132,7 +132,9 @@ pub async fn execute_export(
     let meta_schema = crate::sql_safety::to_qualified_meta_schema(db_name);
     let mut results = Vec::new();
 
-    update_export_job_status(&executor, job_id, ExportStatus::InProgress, None, None, &meta_schema).await?;
+    let conn = RequestConn::new()?;
+
+    update_export_job_status(&conn, job_id, ExportStatus::InProgress, None, None, &meta_schema).await?;
 
     for rt in resource_types {
         let table_name = rt.to_lowercase();
@@ -141,7 +143,7 @@ pub async fn execute_export(
             schema_name, table_name
         );
 
-        match executor.submit(sql).await {
+        match conn.execute(sql).await {
             QueryResult::Select { rows, .. } => {
                 results.push((rt.clone(), rows.len()));
             }
@@ -168,7 +170,7 @@ pub async fn execute_export(
 
     let output_json = serde_json::to_string(&output).unwrap_or_default();
     update_export_job_status(
-        &executor,
+        &conn,
         job_id,
         ExportStatus::Complete,
         Some(&output_json),

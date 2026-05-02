@@ -20,10 +20,13 @@ pub fn increment_error_count() {
 }
 
 pub async fn health_check(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let db_ok = match state.executor.submit("SELECT 1".to_string()).await {
-        crate::query_executor::QueryResult::Select { .. } => true,
-        crate::query_executor::QueryResult::Execute { .. } => true,
-        _ => false,
+    let db_ok = match state.new_request_conn() {
+        Ok(conn) => match conn.execute("SELECT 1".to_string()).await {
+            crate::query_executor::QueryResult::Select { .. } => true,
+            crate::query_executor::QueryResult::Execute { .. } => true,
+            _ => false,
+        },
+        Err(_) => false,
     };
 
     if db_ok {

@@ -15,7 +15,7 @@ mod state;
 mod cql;
 mod export;
 
-pub use query_executor::{QueryExecutor, QueryResult};
+pub use query_executor::{QueryResult, RequestConn};
 
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
@@ -28,31 +28,18 @@ use libduckdb_sys as ffi;
 use std::{
     error::Error,
     ffi::CString,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex, OnceLock as OnceCell,
-    },
+    sync::atomic::{AtomicBool, Ordering},
 };
 
-const DEFAULT_POOL_SIZE: usize = 1;
-
-pub(crate) fn executor_pool_size() -> usize {
-    std::env::var("FHIR_POOL_SIZE")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_POOL_SIZE)
-        .max(1)
-}
-
-pub async fn init_fhir_meta(executor: &Arc<QueryExecutor>, db_name: &str) {
+pub async fn init_fhir_meta(conn: &RequestConn, db_name: &str) {
     let meta_schema = sql_safety::to_qualified_meta_schema(db_name);
 
-    let _ = executor
-        .submit(format!("CREATE SCHEMA IF NOT EXISTS {}", meta_schema))
+    let _ = conn
+        .execute(format!("CREATE SCHEMA IF NOT EXISTS {}", meta_schema))
         .await;
 
-    let _ = executor
-        .submit(format!(
+    let _ = conn
+        .execute(format!(
             "CREATE TABLE IF NOT EXISTS {}._datasets (
                 id VARCHAR PRIMARY KEY,
                 name VARCHAR NOT NULL,
@@ -66,8 +53,8 @@ pub async fn init_fhir_meta(executor: &Arc<QueryExecutor>, db_name: &str) {
         ))
         .await;
 
-    let _ = executor
-        .submit(format!(
+    let _ = conn
+        .execute(format!(
             "CREATE TABLE IF NOT EXISTS {}._export_jobs (
                 id VARCHAR PRIMARY KEY,
                 dataset_id VARCHAR NOT NULL,
@@ -81,8 +68,6 @@ pub async fn init_fhir_meta(executor: &Arc<QueryExecutor>, db_name: &str) {
             meta_schema
         ))
         .await;
-
-    executor.sync_all().await;
 }
 
 struct FhirStartScalar;
@@ -130,7 +115,6 @@ impl VScalar for FhirStartScalar {
                 .as_str()
                 .to_string()
         } else {
-            // Derive db_name from db_path filename stem (e.g. "./fhir.db" -> "fhir")
             std::path::Path::new(&db_path)
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -319,7 +303,8 @@ impl VScalar for FhirVersionScalar {
 
 #[duckdb_entrypoint_c_api()]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
-    // Pool already initialized by db plugin — no local connection management needed
+    con.execute_batch("INSTALL json; LOAD json; INSTALL icu; LOAD icu;")
+        .map_err(|e| format!("load extensions: {e}"))?;
 
     con.register_scalar_function::<FhirStartScalar>("trex_fhir_start")
         .expect("Failed to register trex_fhir_start function");

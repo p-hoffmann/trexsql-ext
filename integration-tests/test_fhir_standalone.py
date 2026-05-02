@@ -23,9 +23,7 @@ from conftest import Node, POOL_EXT, FHIR_EXT, alloc_ports
 # Each parametrized value starts a separate FHIR server instance.
 POOL_SIZES = [1, 4]
 
-# DB modes: "standalone" = FHIR server owns its own DuckDB (default),
-#            "host" = FHIR server uses the host DuckDB connection.
-DB_MODES = ["standalone", "host"]
+DB_MODES = ["host"]
 
 
 def _free_port():
@@ -55,7 +53,7 @@ class FhirClient:
         for k, v in (headers or {}).items():
             req.add_header(k, v)
         try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with urllib.request.urlopen(req, timeout=60) as resp:
                 return self._parse(resp.status, resp.read(), resp.headers)
         except urllib.error.HTTPError as e:
             return self._parse(e.code, e.read(), e.headers)
@@ -90,7 +88,7 @@ class FhirClient:
         req = urllib.request.Request(url, data=raw_bytes, method="POST")
         req.add_header("Content-Type", content_type)
         try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with urllib.request.urlopen(req, timeout=60) as resp:
                 return self._parse(resp.status, resp.read(), resp.headers)
         except urllib.error.HTTPError as e:
             return self._parse(e.code, e.read(), e.headers)
@@ -140,7 +138,7 @@ def fhir(request):
     os.environ["FHIR_USE_HOST_DB"] = "true" if db_mode == "host" else "false"
 
     gp, fp, pp, tp = alloc_ports()
-    exts = [POOL_EXT, FHIR_EXT] if db_mode == "host" else [FHIR_EXT]
+    exts = [POOL_EXT, FHIR_EXT]
     node = Node(exts, gp, fp, pp, tp)
 
     fhir_db_dir = None

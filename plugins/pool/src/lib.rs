@@ -1,14 +1,19 @@
-//! Shared DuckDB connection pool with serialized write queue.
+//! Shared DuckDB connection pool — leasing facility.
 //!
 //! This crate is a DuckDB extension (`pool.trex`) loaded before all other
 //! extensions. It initialises the shared pool in its `extension_entrypoint`
 //! and exports `#[no_mangle] extern "C"` functions that consumer extensions
 //! discover via `dlsym` at runtime.
 //!
+//! The pool is a bounded set of cloned DuckDB Connections served through a
+//! crossbeam channel. A session leases a Connection on creation, runs queries
+//! directly against it, and returns it on destroy after a fixed cleanup
+//! sequence. There is no SQL routing, classification, or state replay.
+//!
 //! Consumer extensions depend on the `trex-pool-client` rlib, which provides
 //! safe Rust wrappers around the C ABI.
 
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver, Sender};
 pub use duckdb;
 pub use duckdb::arrow;
 use duckdb::arrow::datatypes::Schema;
@@ -17,482 +22,56 @@ use duckdb::Connection;
 use std::collections::HashMap;
 use std::os::raw::c_void;
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::thread::{self, JoinHandle};
 use tracing::warn;
 
-
-/// Result of a read query — Arrow RecordBatches.
-pub enum PoolResult {
-    Rows {
-        schema: Arc<Schema>,
-        batches: Vec<RecordBatch>,
-    },
-    Executed,
-    Error(String),
-}
-
-/// Result of a write query.
-pub enum WriteResult {
-    Ok,
-    Error(String),
-}
-
-
-struct ReadRequest {
-    /// SQL to run before `sql` on the worker's connection (e.g. `USE "db"`).
-    /// Runs via `execute_batch` on the same connection so subsequent
-    /// `current_database()` / catalog-scoped queries observe the change.
-    setup_sql: Option<String>,
-    sql: String,
-    response_tx: std::sync::mpsc::SyncSender<PoolResult>,
-}
-
-struct WriteRequest {
-    setup_sql: Option<String>,
-    sql: String,
-    params: Vec<String>,
-    response_tx: std::sync::mpsc::SyncSender<WriteResult>,
-}
-
-
-/// Opaque handle returned by [`acquire_direct`]. Must be returned via
-/// [`release_direct`] when the caller is done.
-pub struct ConnectionHandle {
-    index: usize,
-}
-
-
-struct Worker {
-    _handle: JoinHandle<()>,
-}
-
 struct SharedPool {
-    read_senders: Vec<Sender<ReadRequest>>,
-    #[allow(dead_code)]
-    read_workers: Vec<Worker>,
-    next_read: AtomicUsize,
-
-    write_sender: Sender<WriteRequest>,
-    #[allow(dead_code)]
-    write_worker: Worker,
-
-    direct_connections: Vec<Mutex<Option<Connection>>>,
-    next_direct: AtomicUsize,
+    sender: Sender<Connection>,
+    receiver: Receiver<Connection>,
 }
 
 static POOL: OnceLock<Arc<SharedPool>> = OnceLock::new();
 
-static LAZY_PIN: OnceLock<bool> = OnceLock::new();
-
-fn lazy_pin_enabled() -> bool {
-    LAZY_PIN.get().copied().unwrap_or(true)
+struct SessionEntry {
+    /// Holds the Connection while the session is alive. `None` only between
+    /// `destroy_session` removing the entry from the map and the cleanup +
+    /// channel send returning the Connection to the pool.
+    conn: Option<Connection>,
+    /// Set when a query may have left non-replayable session state behind
+    /// (temp tables, prepared statements, SET, attached extensions, …).
+    /// Gates the expensive cleanup branch in `destroy_session`.
+    dirty: Arc<AtomicBool>,
 }
 
-/// Name of the connection's default catalog at pool init. Used as the reset
-/// target in [`session_execute_params`] when the session has no explicit
-/// `USE`. We can't hardcode `"memory"` — file-backed connections (worker
-/// nodes opened against e.g. `fhir.db`) don't have a `memory` catalog at
-/// all, so `USE memory` would fail with "No catalog + schema named memory".
-static DEFAULT_DATABASE: OnceLock<String> = OnceLock::new();
+static SESSIONS: OnceLock<Mutex<HashMap<u64, SessionEntry>>> = OnceLock::new();
+static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
-fn capture_default_database(conn: &Connection) {
-    if DEFAULT_DATABASE.get().is_some() {
-        return;
+fn sessions() -> &'static Mutex<HashMap<u64, SessionEntry>> {
+    SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn get_pool() -> Result<&'static Arc<SharedPool>, String> {
+    POOL.get().ok_or_else(|| "pool not initialised".to_string())
+}
+
+/// Initialise the shared pool from an existing Connection. Clones it
+/// `pool_size` times and seeds the channel.
+pub fn init_from_connection(conn: &Connection, pool_size: usize) -> Result<(), String> {
+    if pool_size == 0 {
+        return Err("pool_size must be > 0".to_string());
     }
-    if let Ok(name) = conn.query_row("SELECT current_database()", [], |row| row.get::<_, String>(0))
-    {
-        let _ = DEFAULT_DATABASE.set(name);
-    }
-}
-
-fn default_use_statement() -> String {
-    let name = DEFAULT_DATABASE
-        .get()
-        .map(String::as_str)
-        .unwrap_or("memory");
-    format!("USE \"{}\"", name.replace('"', "\"\""))
-}
-
-impl SharedPool {
-    fn new(base_conn: &Connection, read_pool_size: usize) -> Result<Self, String> {
-        if read_pool_size == 0 {
-            return Err("read_pool_size must be > 0".to_string());
-        }
-
-        let mut read_senders = Vec::with_capacity(read_pool_size);
-        let mut read_workers = Vec::with_capacity(read_pool_size);
-
-        for i in 0..read_pool_size {
-            let conn = base_conn
-                .try_clone()
-                .map_err(|e| format!("read worker clone {i}: {e}"))?;
-            let (tx, rx): (Sender<ReadRequest>, Receiver<ReadRequest>) = unbounded();
-            read_senders.push(tx);
-
-            let handle = thread::Builder::new()
-                .name(format!("trex-pool-read-{i}"))
-                .spawn(move || read_worker_loop(conn, rx))
-                .map_err(|e| format!("spawn read worker {i}: {e}"))?;
-            read_workers.push(Worker { _handle: handle });
-        }
-
-        let write_conn = base_conn
+    let (sender, receiver) = bounded::<Connection>(pool_size);
+    for i in 0..pool_size {
+        let c = conn
             .try_clone()
-            .map_err(|e| format!("write worker clone: {e}"))?;
-        let (write_tx, write_rx): (Sender<WriteRequest>, Receiver<WriteRequest>) = unbounded();
-
-        let write_handle = thread::Builder::new()
-            .name("trex-pool-write".into())
-            .spawn(move || write_worker_loop(write_conn, write_rx))
-            .map_err(|e| format!("spawn write worker: {e}"))?;
-
-        let direct_count = read_pool_size;
-        let mut direct_connections = Vec::with_capacity(direct_count);
-        for i in 0..direct_count {
-            let conn = base_conn
-                .try_clone()
-                .map_err(|e| format!("direct conn clone {i}: {e}"))?;
-            direct_connections.push(Mutex::new(Some(conn)));
-        }
-
-        Ok(Self {
-            read_senders,
-            read_workers,
-            next_read: AtomicUsize::new(0),
-            write_sender: write_tx,
-            write_worker: Worker {
-                _handle: write_handle,
-            },
-            direct_connections,
-            next_direct: AtomicUsize::new(0),
-        })
+            .map_err(|e| format!("pool clone {i}: {e}"))?;
+        sender
+            .send(c)
+            .map_err(|e| format!("pool seed {i}: {e}"))?;
     }
-}
-
-
-fn read_worker_loop(conn: Connection, receiver: Receiver<ReadRequest>) {
-    while let Ok(req) = receiver.recv() {
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            if let Some(setup) = &req.setup_sql {
-                if let Err(e) = conn.execute_batch(setup) {
-                    return PoolResult::Error(format!("session setup: {e}"));
-                }
-            }
-            execute_read(&conn, &req.sql)
-        }));
-        let pool_result = match result {
-            Ok(r) => r,
-            Err(panic_err) => {
-                let msg = extract_panic_message(panic_err);
-                warn!(error = %msg, "read query panicked");
-                PoolResult::Error(format!("query panicked: {msg}"))
-            }
-        };
-        let _ = req.response_tx.send(pool_result);
-    }
-}
-
-fn write_worker_loop(conn: Connection, receiver: Receiver<WriteRequest>) {
-    while let Ok(req) = receiver.recv() {
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            if let Some(setup) = &req.setup_sql {
-                if let Err(e) = conn.execute_batch(setup) {
-                    return WriteResult::Error(format!("session setup: {e}"));
-                }
-            }
-            if req.params.is_empty() {
-                execute_write(&conn, &req.sql)
-            } else {
-                execute_write_params(&conn, &req.sql, &req.params)
-            }
-        }));
-        let write_result = match result {
-            Ok(r) => r,
-            Err(panic_err) => {
-                let msg = extract_panic_message(panic_err);
-                warn!(error = %msg, "write query panicked");
-                WriteResult::Error(format!("query panicked: {msg}"))
-            }
-        };
-        let _ = req.response_tx.send(write_result);
-    }
-}
-
-
-fn execute_read(conn: &Connection, sql: &str) -> PoolResult {
-    match conn.prepare(sql) {
-        Ok(mut stmt) => match stmt.query_arrow(duckdb::params![]) {
-            Ok(arrow_result) => {
-                let schema = arrow_result.get_schema();
-                let batches: Vec<RecordBatch> = arrow_result.collect();
-                PoolResult::Rows { schema, batches }
-            }
-            Err(e) => PoolResult::Error(format!("query exec: {e}")),
-        },
-        Err(e) => PoolResult::Error(format!("prepare: {e}")),
-    }
-}
-
-fn execute_write(conn: &Connection, sql: &str) -> WriteResult {
-    match conn.execute_batch(sql) {
-        Ok(()) => WriteResult::Ok,
-        Err(e) => WriteResult::Error(format!("exec: {e}")),
-    }
-}
-
-fn execute_read_params(conn: &Connection, sql: &str, params: &[String]) -> PoolResult {
-    match conn.prepare(sql) {
-        Ok(mut stmt) => {
-            let param_refs: Vec<&dyn duckdb::types::ToSql> =
-                params.iter().map(|s| s as &dyn duckdb::types::ToSql).collect();
-            match stmt.query_arrow(param_refs.as_slice()) {
-                Ok(arrow_result) => {
-                    let schema = arrow_result.get_schema();
-                    let batches: Vec<RecordBatch> = arrow_result.collect();
-                    PoolResult::Rows { schema, batches }
-                }
-                Err(e) => PoolResult::Error(format!("query exec: {e}")),
-            }
-        }
-        Err(e) => PoolResult::Error(format!("prepare: {e}")),
-    }
-}
-
-fn execute_write_params(conn: &Connection, sql: &str, params: &[String]) -> WriteResult {
-    match conn.prepare(sql) {
-        Ok(mut stmt) => {
-            let param_refs: Vec<&dyn duckdb::types::ToSql> =
-                params.iter().map(|s| s as &dyn duckdb::types::ToSql).collect();
-            match stmt.execute(param_refs.as_slice()) {
-                Ok(_) => WriteResult::Ok,
-                Err(e) => WriteResult::Error(format!("exec: {e}")),
-            }
-        }
-        Err(e) => WriteResult::Error(format!("prepare: {e}")),
-    }
-}
-
-
-/// Returns `true` if the SQL statement is expected to return result rows.
-pub fn is_result_returning_query(sql: &str) -> bool {
-    let upper = sql.trim().to_uppercase();
-    upper.starts_with("SELECT")
-        || upper.starts_with("WITH")
-        || upper.starts_with("SHOW")
-        || upper.starts_with("DESCRIBE")
-        || upper.starts_with("EXPLAIN")
-        || upper.starts_with("TABLE")
-        || upper.starts_with("VALUES")
-        || upper.starts_with("FROM")
-        || (upper.starts_with("PRAGMA") && !is_action_pragma(&upper))
-}
-
-fn is_action_pragma(upper: &str) -> bool {
-    let after = upper["PRAGMA".len()..].trim_start();
-    after.starts_with("CREATE_FTS_INDEX")
-        || after.starts_with("DROP_FTS_INDEX")
-        || after.starts_with("COPY_DATABASE")
-        || after.starts_with("IMPORT_DATABASE")
-}
-
-pub fn creates_non_replayable_state(sql: &str) -> bool {
-    let upper = sql.trim().to_uppercase();
-
-    if let Some(rest) = upper.strip_prefix("CREATE") {
-        let rest = rest.trim_start();
-        let rest = rest
-            .strip_prefix("OR REPLACE")
-            .map(|s| s.trim_start())
-            .unwrap_or(rest);
-        if rest.starts_with("TEMP ")
-            || rest.starts_with("TEMP\t")
-            || rest.starts_with("TEMPORARY ")
-            || rest.starts_with("TEMPORARY\t")
-        {
-            return true;
-        }
-    }
-
-    if upper.starts_with("PREPARE ") || upper.starts_with("PREPARE\t") {
-        return true;
-    }
-
-    if upper.starts_with("DECLARE ") || upper.starts_with("DECLARE\t") {
-        return upper.contains(" CURSOR ") || upper.contains("\tCURSOR");
-    }
-
-    if upper.starts_with("SET ") || upper.starts_with("SET\t") {
-        return true;
-    }
-
-    false
-}
-
-
-/// Convert Arrow RecordBatches to a JSON array string.
-pub fn record_batches_to_json(batches: &[RecordBatch]) -> String {
-    let mut rows: Vec<serde_json::Value> = Vec::new();
-    for batch in batches {
-        let schema = batch.schema();
-        for r in 0..batch.num_rows() {
-            let mut obj = serde_json::Map::with_capacity(batch.num_columns());
-            for (i, field) in schema.fields().iter().enumerate() {
-                let col = batch.column(i);
-                let v = column_value_to_json(col.as_ref(), r, field.data_type());
-                obj.insert(field.name().clone(), v);
-            }
-            rows.push(serde_json::Value::Object(obj));
-        }
-    }
-    serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_string())
-}
-
-fn column_value_to_json(
-    array: &dyn duckdb::arrow::array::Array,
-    row: usize,
-    dt: &duckdb::arrow::datatypes::DataType,
-) -> serde_json::Value {
-    use duckdb::arrow::array::*;
-    use duckdb::arrow::datatypes::{DataType, TimeUnit};
-    use serde_json::Value as JV;
-
-    if array.is_null(row) {
-        return JV::Null;
-    }
-    match dt {
-        DataType::Utf8 => {
-            let a = array.as_any().downcast_ref::<StringArray>().unwrap();
-            JV::String(a.value(row).to_string())
-        }
-        DataType::LargeUtf8 => {
-            let a = array.as_any().downcast_ref::<LargeStringArray>().unwrap();
-            JV::String(a.value(row).to_string())
-        }
-        DataType::Boolean => {
-            let a = array.as_any().downcast_ref::<BooleanArray>().unwrap();
-            JV::from(a.value(row))
-        }
-        DataType::Int8 => {
-            let a = array.as_any().downcast_ref::<Int8Array>().unwrap();
-            JV::from(a.value(row) as i64)
-        }
-        DataType::Int16 => {
-            let a = array.as_any().downcast_ref::<Int16Array>().unwrap();
-            JV::from(a.value(row) as i64)
-        }
-        DataType::Int32 => {
-            let a = array.as_any().downcast_ref::<Int32Array>().unwrap();
-            JV::from(a.value(row) as i64)
-        }
-        DataType::Int64 => {
-            let a = array.as_any().downcast_ref::<Int64Array>().unwrap();
-            JV::from(a.value(row))
-        }
-        DataType::UInt8 => {
-            let a = array.as_any().downcast_ref::<UInt8Array>().unwrap();
-            JV::from(a.value(row) as u64)
-        }
-        DataType::UInt16 => {
-            let a = array.as_any().downcast_ref::<UInt16Array>().unwrap();
-            JV::from(a.value(row) as u64)
-        }
-        DataType::UInt32 => {
-            let a = array.as_any().downcast_ref::<UInt32Array>().unwrap();
-            JV::from(a.value(row) as u64)
-        }
-        DataType::UInt64 => {
-            let a = array.as_any().downcast_ref::<UInt64Array>().unwrap();
-            JV::from(a.value(row))
-        }
-        DataType::Float32 => {
-            let a = array.as_any().downcast_ref::<Float32Array>().unwrap();
-            JV::from(a.value(row) as f64)
-        }
-        DataType::Float64 => {
-            let a = array.as_any().downcast_ref::<Float64Array>().unwrap();
-            JV::from(a.value(row))
-        }
-        DataType::Decimal128(_, scale) => {
-            let a = array.as_any().downcast_ref::<Decimal128Array>().unwrap();
-            let value = a.value(row) as f64 / 10_f64.powi(*scale as i32);
-            JV::from(value)
-        }
-        DataType::Date32 => {
-            let a = array.as_any().downcast_ref::<Date32Array>().unwrap();
-            let days = a.value(row);
-            let ts = days as i64 * 86400;
-            let dt = chrono::DateTime::from_timestamp(ts, 0)
-                .unwrap_or(chrono::DateTime::UNIX_EPOCH);
-            JV::String(dt.format("%Y-%m-%d").to_string())
-        }
-        DataType::Timestamp(TimeUnit::Microsecond, _) => {
-            let a = array
-                .as_any()
-                .downcast_ref::<TimestampMicrosecondArray>()
-                .unwrap();
-            let micros = a.value(row);
-            let dt = chrono::DateTime::from_timestamp_micros(micros)
-                .unwrap_or(chrono::DateTime::UNIX_EPOCH);
-            JV::String(dt.to_rfc3339())
-        }
-        DataType::Timestamp(TimeUnit::Millisecond, _) => {
-            let a = array
-                .as_any()
-                .downcast_ref::<TimestampMillisecondArray>()
-                .unwrap();
-            let millis = a.value(row);
-            let dt = chrono::DateTime::from_timestamp_millis(millis)
-                .unwrap_or(chrono::DateTime::UNIX_EPOCH);
-            JV::String(dt.to_rfc3339())
-        }
-        DataType::Timestamp(TimeUnit::Second, _) => {
-            let a = array
-                .as_any()
-                .downcast_ref::<TimestampSecondArray>()
-                .unwrap();
-            let secs = a.value(row);
-            let dt = chrono::DateTime::from_timestamp(secs, 0)
-                .unwrap_or(chrono::DateTime::UNIX_EPOCH);
-            JV::String(dt.to_rfc3339())
-        }
-        DataType::Timestamp(TimeUnit::Nanosecond, _) => {
-            let a = array
-                .as_any()
-                .downcast_ref::<TimestampNanosecondArray>()
-                .unwrap();
-            let nanos = a.value(row);
-            let dt = chrono::DateTime::from_timestamp_nanos(nanos);
-            JV::String(dt.to_rfc3339())
-        }
-        // Fallback: convert to string representation
-        _ => JV::String(format!("{:?}", array.as_any())),
-    }
-}
-
-
-/// Initialise the shared pool from an existing Connection.
-/// Clones the connection for each worker thread.
-///
-/// `read_pool_size` controls the number of parallel read workers.
-/// There is always exactly one serialised write worker.
-/// Also initialises the streaming pool and connection provider.
-pub fn init_from_connection(conn: &Connection, read_pool_size: usize) -> Result<(), String> {
-    let pool = SharedPool::new(conn, read_pool_size)?;
-    POOL.set(Arc::new(pool))
+    POOL.set(Arc::new(SharedPool { sender, receiver }))
         .map_err(|_| "pool already initialised".to_string())?;
-
-    let streaming = StreamingPool::new(conn, read_pool_size)?;
-    let _ = STREAMING_POOL.set(streaming);
-
-    let shared_conn = conn
-        .try_clone()
-        .map_err(|e| format!("shared conn clone: {e}"))?;
-    let _ = CONNECTION_PROVIDER.set(Arc::new(Mutex::new(shared_conn)));
-
-    capture_default_database(conn);
-
     Ok(())
 }
 
@@ -501,320 +80,191 @@ pub fn init_from_connection(conn: &Connection, read_pool_size: usize) -> Result<
 /// # Safety
 ///
 /// `db_ptr` must be a valid `duckdb_database` handle that outlives the pool.
-pub unsafe fn init(db_ptr: *mut c_void, read_pool_size: usize) -> Result<(), String> {
+pub unsafe fn init(db_ptr: *mut c_void, pool_size: usize) -> Result<(), String> {
     let base_conn = Connection::open_from_raw(db_ptr.cast())
         .map_err(|e| format!("open_from_raw: {e}"))?;
-    let pool = SharedPool::new(&base_conn, read_pool_size)?;
-    capture_default_database(&base_conn);
-    // Intentionally leak base_conn — it must outlive the pool (which is 'static).
+    init_from_connection(&base_conn, pool_size)?;
+    // base_conn must outlive the pool (which is 'static).
     std::mem::forget(base_conn);
-    POOL.set(Arc::new(pool))
-        .map_err(|_| "pool already initialised".to_string())
+    Ok(())
 }
 
-fn get_pool() -> Result<&'static Arc<SharedPool>, String> {
-    POOL.get().ok_or_else(|| "pool not initialised".to_string())
+/// Lease a Connection from the pool and register a session for it. Blocks
+/// until a Connection is available (channel backpressure when exhausted).
+pub fn create_session() -> Result<u64, String> {
+    let pool = get_pool()?;
+    let conn = pool
+        .receiver
+        .recv()
+        .map_err(|e| format!("pool receiver closed: {e}"))?;
+    let id = NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed);
+    sessions()
+        .lock()
+        .expect("sessions lock poisoned")
+        .insert(
+            id,
+            SessionEntry {
+                conn: Some(conn),
+                dirty: Arc::new(AtomicBool::new(false)),
+            },
+        );
+    Ok(id)
 }
 
-
-/// Submit a read query and block, returning Arrow Schema + RecordBatches.
-pub fn read_arrow(sql: &str) -> Result<(Arc<Schema>, Vec<RecordBatch>), String> {
-    read_arrow_with_setup(sql, None)
-}
-
-fn read_arrow_with_setup(
+/// Execute SQL on the session's leased Connection.
+pub fn session_execute(
+    session_id: u64,
     sql: &str,
-    setup_sql: Option<String>,
 ) -> Result<(Arc<Schema>, Vec<RecordBatch>), String> {
-    let pool = get_pool()?;
-    let idx = pool.next_read.fetch_add(1, Ordering::Relaxed) % pool.read_senders.len();
-    let sender = &pool.read_senders[idx];
-
-    let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    sender
-        .send(ReadRequest {
-            setup_sql,
-            sql: sql.to_string(),
-            response_tx: tx,
-        })
-        .map_err(|e| format!("read channel closed: {e}"))?;
-
-    match rx.recv() {
-        Ok(PoolResult::Rows { schema, batches }) => Ok((schema, batches)),
-        Ok(PoolResult::Executed) => Ok((Arc::new(Schema::empty()), vec![])),
-        Ok(PoolResult::Error(e)) => Err(e),
-        Err(e) => Err(format!("read response channel closed: {e}")),
-    }
+    session_execute_params(session_id, sql, &[])
 }
 
-/// Submit a read query and block, returning a JSON string.
-pub fn read(sql: &str) -> Result<String, String> {
-    let (_, batches) = read_arrow(sql)?;
-    Ok(record_batches_to_json(&batches))
-}
-
-/// Submit a read query to a specific worker (pinned connection).
-pub fn read_on(worker_id: usize, sql: &str) -> Result<String, String> {
-    let pool = get_pool()?;
-    let idx = worker_id % pool.read_senders.len();
-    let sender = &pool.read_senders[idx];
-
-    let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    sender
-        .send(ReadRequest {
-            setup_sql: None,
-            sql: sql.to_string(),
-            response_tx: tx,
-        })
-        .map_err(|e| format!("read channel closed: {e}"))?;
-
-    match rx.recv() {
-        Ok(PoolResult::Rows { batches, .. }) => Ok(record_batches_to_json(&batches)),
-        Ok(PoolResult::Executed) => Ok("[]".to_string()),
-        Ok(PoolResult::Error(e)) => Err(e),
-        Err(e) => Err(format!("read response channel closed: {e}")),
-    }
-}
-
-/// Submit a read query to a specific worker, returning Arrow RecordBatches.
-pub fn read_arrow_on(worker_id: usize, sql: &str) -> Result<(Arc<Schema>, Vec<RecordBatch>), String> {
-    let pool = get_pool()?;
-    let idx = worker_id % pool.read_senders.len();
-    let sender = &pool.read_senders[idx];
-
-    let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    sender
-        .send(ReadRequest {
-            setup_sql: None,
-            sql: sql.to_string(),
-            response_tx: tx,
-        })
-        .map_err(|e| format!("read channel closed: {e}"))?;
-
-    match rx.recv() {
-        Ok(PoolResult::Rows { schema, batches }) => Ok((schema, batches)),
-        Ok(PoolResult::Executed) => Ok((Arc::new(Schema::empty()), vec![])),
-        Ok(PoolResult::Error(e)) => Err(e),
-        Err(e) => Err(format!("read response channel closed: {e}")),
-    }
-}
-
-
-/// Submit a write query through the serialised write queue. Blocks until done.
-pub fn write(sql: &str) -> Result<(), String> {
-    write_params(sql, &[])
-}
-
-/// Submit a parameterized write query through the serialised write queue.
-pub fn write_params(sql: &str, params: &[String]) -> Result<(), String> {
-    write_params_with_setup(sql, params, None)
-}
-
-fn write_params_with_setup(
+/// Execute parameterised SQL on the session's leased Connection. The
+/// SESSIONS mutex is released before the query runs so other sessions are
+/// unaffected by a long-running statement.
+pub fn session_execute_params(
+    session_id: u64,
     sql: &str,
     params: &[String],
-    setup_sql: Option<String>,
-) -> Result<(), String> {
-    let pool = get_pool()?;
-
-    let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    pool.write_sender
-        .send(WriteRequest {
-            setup_sql,
-            sql: sql.to_string(),
-            params: params.to_vec(),
-            response_tx: tx,
-        })
-        .map_err(|e| format!("write channel closed: {e}"))?;
-
-    match rx.recv() {
-        Ok(WriteResult::Ok) => Ok(()),
-        Ok(WriteResult::Error(e)) => Err(e),
-        Err(e) => Err(format!("write response channel closed: {e}")),
+) -> Result<(Arc<Schema>, Vec<RecordBatch>), String> {
+    let (conn, dirty) = take_conn(session_id)?;
+    if sql_may_dirty_session(sql) {
+        dirty.store(true, Ordering::Relaxed);
     }
-}
-
-
-/// Auto-classify the SQL as read or write, then route accordingly.
-/// Returns JSON for reads, "[]" for writes.
-pub fn execute(sql: &str) -> Result<String, String> {
-    if is_result_returning_query(sql) {
-        read(sql)
-    } else {
-        write(sql).map(|()| "[]".to_string())
-    }
-}
-
-/// Auto-classify the SQL as read or write, returning Arrow for reads.
-pub fn execute_arrow(sql: &str) -> PoolResult {
-    if is_result_returning_query(sql) {
-        match read_arrow(sql) {
-            Ok((schema, batches)) => PoolResult::Rows { schema, batches },
-            Err(e) => PoolResult::Error(e),
-        }
-    } else {
-        match write(sql) {
-            Ok(()) => PoolResult::Executed,
-            Err(e) => PoolResult::Error(e),
+    let result = panic::catch_unwind(AssertUnwindSafe(|| run_query(&conn, sql, params)));
+    return_conn(session_id, conn);
+    match result {
+        Ok(r) => r,
+        Err(panic_err) => {
+            let msg = extract_panic_message(panic_err);
+            warn!(error = %msg, "session query panicked");
+            Err(format!("query panicked: {msg}"))
         }
     }
 }
 
-
-/// Run a closure with direct access to a pooled connection (round-robin).
-/// The closure runs on the calling thread with a Mutex-locked connection.
-pub fn with_connection<F, R>(f: F) -> Result<R, String>
-where
-    F: FnOnce(&Connection) -> Result<R, String>,
-{
-    let pool = get_pool()?;
-    let idx = pool
-        .next_direct
-        .fetch_add(1, Ordering::Relaxed)
-        % pool.direct_connections.len();
-    let slot = &pool.direct_connections[idx];
-    let guard = slot
-        .lock()
-        .map_err(|e| format!("direct conn lock: {e}"))?;
-    let conn = guard.as_ref().ok_or("direct connection not available")?;
-    f(conn)
+/// Coarse substring check for SQL that may leave non-replayable session
+/// state behind. Exists because the catalog scan in `cleanup_connection`
+/// dominates per-request latency on the FHIR write hot path
+/// (BEGIN/INSERT/COMMIT, no temp tables, no PREPARE). False positives only
+/// re-run the existing cleanup; false negatives are acceptable.
+fn sql_may_dirty_session(sql: &str) -> bool {
+    let upper = sql.to_uppercase();
+    upper.contains("TEMP")
+        || upper.contains("PREPARE")
+        || upper.contains("DECLARE")
+        || upper.contains("ATTACH")
+        || upper.contains('#')
+        || upper.contains("PG_TEMP")
+        || upper.contains("SET ")
+        || upper.contains("USE ")
+        || upper.contains("INSTALL")
+        || upper.contains("LOAD")
 }
 
-/// Acquire a direct connection handle for exclusive use (e.g. streaming queries).
-/// Returns `None` if all direct connections are currently in use.
-/// The caller **must** return the handle via [`release_direct`].
-///
-/// While held, use [`execute_direct`] to run queries on this connection.
-pub fn acquire_direct() -> Result<Option<ConnectionHandle>, String> {
-    let pool = get_pool()?;
-    for (i, slot) in pool.direct_connections.iter().enumerate() {
-        if let Ok(guard) = slot.try_lock() {
-            if guard.is_some() {
-                return Ok(Some(ConnectionHandle { index: i }));
+/// Briefly take the Connection out of the SessionEntry so the SESSIONS lock
+/// is not held across query execution. The Connection is `try_clone`-derived,
+/// so cloning it again here would cost a DuckDB call per query — instead we
+/// move the option in/out under the lock.
+fn take_conn(session_id: u64) -> Result<(Connection, Arc<AtomicBool>), String> {
+    let mut map = sessions().lock().expect("sessions lock poisoned");
+    let entry = map
+        .get_mut(&session_id)
+        .ok_or_else(|| format!("session {session_id} not found"))?;
+    let conn = entry
+        .conn
+        .take()
+        .ok_or_else(|| format!("session {session_id} busy"))?;
+    Ok((conn, Arc::clone(&entry.dirty)))
+}
+
+fn return_conn(session_id: u64, conn: Connection) {
+    let mut map = sessions().lock().expect("sessions lock poisoned");
+    if let Some(entry) = map.get_mut(&session_id) {
+        entry.conn = Some(conn);
+    }
+}
+
+fn run_query(
+    conn: &Connection,
+    sql: &str,
+    params: &[String],
+) -> Result<(Arc<Schema>, Vec<RecordBatch>), String> {
+    let mut stmt = conn.prepare(sql).map_err(|e| format!("prepare: {e}"))?;
+    let param_refs: Vec<&dyn duckdb::types::ToSql> =
+        params.iter().map(|s| s as &dyn duckdb::types::ToSql).collect();
+    let arrow_result = stmt
+        .query_arrow(param_refs.as_slice())
+        .map_err(|e| format!("query exec: {e}"))?;
+    let schema = arrow_result.get_schema();
+    let batches: Vec<RecordBatch> = arrow_result.collect();
+    Ok((schema, batches))
+}
+
+/// Destroy a session: remove from the map, run the cleanup sequence on the
+/// leased Connection, then return it to the pool channel.
+pub fn destroy_session(session_id: u64) {
+    let (conn, dirty) = {
+        let mut map = sessions().lock().expect("sessions lock poisoned");
+        match map.remove(&session_id) {
+            Some(entry) => (entry.conn, entry.dirty),
+            None => return,
+        }
+    };
+    let Some(conn) = conn else { return };
+
+    if dirty.load(Ordering::Relaxed) {
+        cleanup_connection(&conn);
+    } else if let Err(e) = conn.execute_batch("ROLLBACK") {
+        warn!(error = %e, "cleanup ROLLBACK failed");
+    }
+
+    if let Ok(pool) = get_pool() {
+        if let Err(e) = pool.sender.send(conn) {
+            warn!(error = %e, session_id, "failed to return connection to pool");
+        }
+    }
+}
+
+fn cleanup_connection(conn: &Connection) {
+    if let Err(e) = conn.execute_batch("ROLLBACK") {
+        warn!(error = %e, "cleanup ROLLBACK failed");
+    }
+    if let Err(e) = conn.execute_batch("RESET ALL") {
+        warn!(error = %e, "cleanup RESET ALL failed");
+    }
+    if let Err(e) = conn.execute_batch("DEALLOCATE ALL") {
+        warn!(error = %e, "cleanup DEALLOCATE ALL failed");
+    }
+    drop_temp_tables(conn);
+}
+
+fn drop_temp_tables(conn: &Connection) {
+    let names: Vec<String> = match conn.prepare(
+        "SELECT table_name FROM information_schema.tables \
+         WHERE table_schema='main' AND table_catalog='temp'",
+    ) {
+        Ok(mut stmt) => match stmt.query_map(duckdb::params![], |row| row.get::<_, String>(0)) {
+            Ok(rows) => rows.filter_map(Result::ok).collect(),
+            Err(e) => {
+                warn!(error = %e, "cleanup enumerate temp tables failed");
+                return;
             }
+        },
+        Err(e) => {
+            warn!(error = %e, "cleanup prepare temp-table query failed");
+            return;
         }
-    }
-    Ok(None)
-}
+    };
 
-/// Execute SQL on a direct connection identified by handle.
-pub fn execute_direct(handle: &ConnectionHandle, sql: &str) -> Result<String, String> {
-    let pool = get_pool()?;
-    let slot = pool
-        .direct_connections
-        .get(handle.index)
-        .ok_or("invalid connection handle")?;
-    let guard = slot.lock().map_err(|e| format!("direct conn lock: {e}"))?;
-    let conn = guard.as_ref().ok_or("direct connection not available")?;
-
-    if is_result_returning_query(sql) {
-        match execute_read(conn, sql) {
-            PoolResult::Rows { batches, .. } => Ok(record_batches_to_json(&batches)),
-            PoolResult::Executed => Ok("[]".to_string()),
-            PoolResult::Error(e) => Err(e),
-        }
-    } else {
-        match execute_write(conn, sql) {
-            WriteResult::Ok => Ok("[]".to_string()),
-            WriteResult::Error(e) => Err(e),
+    for name in names {
+        let escaped = name.replace('"', "\"\"");
+        let sql = format!("DROP TABLE IF EXISTS temp.main.\"{escaped}\"");
+        if let Err(e) = conn.execute_batch(&sql) {
+            warn!(error = %e, table = %name, "cleanup drop temp table failed");
         }
     }
 }
-
-/// Release a previously acquired direct connection handle.
-pub fn release_direct(_handle: ConnectionHandle) -> Result<(), String> {
-    Ok(())
-}
-
-
-static STREAMING_POOL: OnceLock<StreamingPool> = OnceLock::new();
-
-/// Pool of connections for streaming/cursor use. Connections can be acquired
-/// and released individually, unlike the channel-based read workers.
-pub struct StreamingPool {
-    connections: Mutex<Vec<Connection>>,
-}
-
-impl StreamingPool {
-    fn new(base_conn: &Connection, pool_size: usize) -> Result<Self, String> {
-        let mut connections = Vec::with_capacity(pool_size);
-        for i in 0..pool_size {
-            connections.push(
-                base_conn
-                    .try_clone()
-                    .map_err(|e| format!("streaming pool clone {i}: {e}"))?,
-            );
-        }
-        Ok(Self {
-            connections: Mutex::new(connections),
-        })
-    }
-
-    /// Acquire a connection from the streaming pool. Returns `None` if all are in use.
-    pub fn acquire(&self) -> Option<Connection> {
-        match self.connections.lock() {
-            Ok(mut pool) => pool.pop(),
-            Err(poisoned) => poisoned.into_inner().pop(),
-        }
-    }
-
-    /// Return a connection to the streaming pool.
-    pub fn release(&self, conn: Connection) {
-        match self.connections.lock() {
-            Ok(mut pool) => pool.push(conn),
-            Err(poisoned) => poisoned.into_inner().push(conn),
-        }
-    }
-}
-
-/// Get the shared streaming pool (initialized alongside the main pool).
-pub fn get_streaming_pool() -> Option<&'static StreamingPool> {
-    STREAMING_POOL.get()
-}
-
-
-static CONNECTION_PROVIDER: OnceLock<Arc<Mutex<Connection>>> = OnceLock::new();
-
-/// Get a shared connection from the pool (for general purpose use).
-pub fn get_connection() -> Option<Arc<Mutex<Connection>>> {
-    CONNECTION_PROVIDER.get().cloned()
-}
-
-
-/// Force a trivial query on every read worker to refresh the DuckDB catalog
-/// after DDL changes. Call this after write operations that change schema.
-pub fn sync_all() -> Result<(), String> {
-    let pool = get_pool()?;
-    let mut receivers = Vec::with_capacity(pool.read_senders.len());
-
-    for sender in &pool.read_senders {
-        let (tx, rx) = std::sync::mpsc::sync_channel(1);
-        let _ = sender.send(ReadRequest {
-            setup_sql: None,
-            sql: "SELECT 1".to_string(),
-            response_tx: tx,
-        });
-        receivers.push(rx);
-    }
-
-    for rx in receivers {
-        let _ = rx.recv();
-    }
-    Ok(())
-}
-
-/// Return the number of read workers in the pool.
-pub fn read_pool_size() -> Result<usize, String> {
-    let pool = get_pool()?;
-    Ok(pool.read_senders.len())
-}
-
-/// Return the next read worker id (round-robin).
-pub fn next_read_worker_id() -> Result<usize, String> {
-    let pool = get_pool()?;
-    Ok(pool.next_read.fetch_add(1, Ordering::Relaxed) % pool.read_senders.len())
-}
-
 
 fn extract_panic_message(err: Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = err.downcast_ref::<&str>() {
@@ -826,307 +276,27 @@ fn extract_panic_message(err: Box<dyn std::any::Any + Send>) -> String {
     }
 }
 
+/// Serialize Arrow RecordBatches to IPC stream format.
+fn serialize_arrow_ipc(
+    schema: &Arc<Schema>,
+    batches: &[RecordBatch],
+) -> Result<Vec<u8>, String> {
+    use arrow_ipc::writer::StreamWriter;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum PinKind {
-    Transaction,
-    Session,
-}
+    let mut buf = Vec::new();
+    let mut writer = StreamWriter::try_new(&mut buf, schema)
+        .map_err(|e| format!("ipc writer init: {e}"))?;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SessionMode {
-    Persistent,
-    Ephemeral,
-}
-
-struct SessionState {
-    direct_conn_index: Option<usize>,
-    pin_kind: Option<PinKind>,
-    mode: SessionMode,
-    /// Replayed on each pool worker so a prior `USE` survives across
-    /// independent worker connections.
-    last_use: Option<String>,
-}
-
-static SESSIONS: OnceLock<Mutex<HashMap<u64, SessionState>>> = OnceLock::new();
-static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
-
-fn sessions() -> &'static Mutex<HashMap<u64, SessionState>> {
-    SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn create_session_inner(mode: SessionMode) -> u64 {
-    let id = NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed);
-    sessions()
-        .lock()
-        .expect("sessions lock poisoned")
-        .insert(
-            id,
-            SessionState {
-                direct_conn_index: None,
-                pin_kind: None,
-                mode,
-                last_use: None,
-            },
-        );
-    id
-}
-
-pub fn create_session() -> u64 {
-    create_session_inner(SessionMode::Ephemeral)
-}
-
-/// Lazy-pins a direct conn on the first stateful query; held until
-/// [`destroy_session`]. Use only when later queries depend on
-/// connection-local state (temp tables, prepared statements).
-pub fn create_persistent_session() -> u64 {
-    create_session_inner(SessionMode::Persistent)
-}
-
-pub fn destroy_session(session_id: u64) {
-    let mut map = sessions().lock().expect("sessions lock poisoned");
-    if let Some(state) = map.remove(&session_id) {
-        if let Some(idx) = state.direct_conn_index {
-            if let Ok(pool) = get_pool() {
-                if let Some(slot) = pool.direct_connections.get(idx) {
-                    if let Ok(guard) = slot.lock() {
-                        if let Some(conn) = guard.as_ref() {
-                            // No-op outside a txn; ends a dangling one inside.
-                            let _ = conn.execute_batch("ROLLBACK;");
-                        }
-                    }
-                }
-            }
-        }
+    for batch in batches {
+        writer.write(batch).map_err(|e| format!("ipc write batch: {e}"))?;
     }
-}
+    writer.finish().map_err(|e| format!("ipc finish: {e}"))?;
 
-fn is_begin(sql: &str) -> bool {
-    let upper = sql.trim().to_uppercase();
-    upper.starts_with("BEGIN")
-}
-
-fn is_commit_or_rollback(sql: &str) -> bool {
-    let upper = sql.trim().to_uppercase();
-    upper.starts_with("COMMIT") || upper.starts_with("ROLLBACK")
-}
-
-fn extract_use_statement(sql: &str) -> Option<String> {
-    let trimmed = sql.trim().trim_end_matches(';').trim();
-    if trimmed.len() >= 4 && trimmed[..4].eq_ignore_ascii_case("USE ") {
-        Some(trimmed.to_string())
-    } else {
-        None
-    }
-}
-
-pub fn session_execute(session_id: u64, sql: &str) -> PoolResult {
-    session_execute_params(session_id, sql, &[])
-}
-
-fn acquire_pin(session_id: u64, kind: PinKind) -> Result<usize, String> {
-    let pool = get_pool()?;
-    let max_retries = 50; // 50 * 20ms = 1s max wait
-    let mut found_idx = None;
-    for _ in 0..max_retries {
-        let m = sessions().lock().expect("sessions lock poisoned");
-        let held: std::collections::HashSet<usize> = m
-            .values()
-            .filter_map(|s| s.direct_conn_index)
-            .collect();
-        for i in 0..pool.direct_connections.len() {
-            if !held.contains(&i) {
-                found_idx = Some(i);
-                break;
-            }
-        }
-        drop(m);
-        if found_idx.is_some() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    let idx = found_idx.ok_or_else(|| "no connections available (timeout)".to_string())?;
-    let mut map = sessions().lock().expect("sessions lock poisoned");
-    if let Some(state) = map.get_mut(&session_id) {
-        state.direct_conn_index = Some(idx);
-        state.pin_kind = Some(kind);
-    }
-    Ok(idx)
-}
-
-pub fn session_execute_params(session_id: u64, sql: &str, params: &[String]) -> PoolResult {
-    let mut map = sessions().lock().expect("sessions lock poisoned");
-    if !map.contains_key(&session_id) {
-        return PoolResult::Error(format!("session {session_id} not found"));
-    }
-
-    let pinned_idx = map[&session_id].direct_conn_index;
-    let pinned_kind = map[&session_id].pin_kind;
-    let mode = map[&session_id].mode;
-
-    if let Some(use_stmt) = extract_use_statement(sql) {
-        if let Some(state) = map.get_mut(&session_id) {
-            state.last_use = Some(use_stmt);
-        }
-    }
-    // Replay USE on the chosen worker; pool workers each hold an
-    // independent DuckDB connection. Falls back to the captured default
-    // catalog so leftover state from a prior session on the same worker
-    // doesn't leak through.
-    let setup_sql = Some(
-        map[&session_id]
-            .last_use
-            .clone()
-            .unwrap_or_else(default_use_statement),
-    );
-
-    if let Some(idx) = pinned_idx {
-        // Transaction pin releases on COMMIT/ROLLBACK; Session pin holds
-        // until destroy_session. No setup replay — pinned conn keeps state.
-        if pinned_kind == Some(PinKind::Transaction) && is_commit_or_rollback(sql) {
-            if let Some(state) = map.get_mut(&session_id) {
-                state.direct_conn_index = None;
-                state.pin_kind = None;
-            }
-        }
-        drop(map);
-        return execute_on_direct_params(idx, sql, params);
-    }
-
-    if is_begin(sql) {
-        drop(map);
-        let idx = match acquire_pin(session_id, PinKind::Transaction) {
-            Ok(i) => i,
-            Err(e) => return PoolResult::Error(e),
-        };
-        // Apply USE before BEGIN so the txn opens against the session's db.
-        if let Some(setup) = &setup_sql {
-            if let PoolResult::Error(e) = execute_on_direct(idx, setup) {
-                return PoolResult::Error(format!("session setup: {e}"));
-            }
-        }
-        return execute_on_direct(idx, sql);
-    }
-
-    // Lazy-promote: pin only when SQL introduces non-replayable
-    // connection-local state (temp tables, prepared stmts, cursors, SET).
-    // Subsequent calls hit the `pinned_idx.is_some()` branch above.
-    if lazy_pin_enabled() && creates_non_replayable_state(sql) {
-        drop(map);
-        let idx = match acquire_pin(session_id, PinKind::Session) {
-            Ok(i) => i,
-            Err(e) => return PoolResult::Error(e),
-        };
-        if let Some(setup) = &setup_sql {
-            if let PoolResult::Error(e) = execute_on_direct(idx, setup) {
-                return PoolResult::Error(format!("session setup: {e}"));
-            }
-        }
-        return execute_on_direct_params(idx, sql, params);
-    }
-
-    let is_stateful = !params.is_empty() || !is_result_returning_query(sql);
-    if !is_stateful {
-        drop(map);
-        return match read_arrow_with_setup(sql, setup_sql) {
-            Ok((schema, batches)) => PoolResult::Rows { schema, batches },
-            Err(e) => PoolResult::Error(e),
-        };
-    }
-
-    // Lazy-pin treats all sessions as ephemeral here; declared SessionMode
-    // only matters when TREX_LAZY_PIN=false (legacy eager-pin path below).
-    if lazy_pin_enabled() || mode == SessionMode::Ephemeral {
-        drop(map);
-        if params.is_empty() {
-            return match write_params_with_setup(sql, params, setup_sql) {
-                Ok(()) => PoolResult::Executed,
-                Err(e) => PoolResult::Error(e),
-            };
-        }
-        let pool = match get_pool() {
-            Ok(p) => p,
-            Err(e) => return PoolResult::Error(e),
-        };
-        let idx = pool.next_direct.fetch_add(1, Ordering::Relaxed)
-            % pool.direct_connections.len();
-        if let Some(setup) = &setup_sql {
-            if let PoolResult::Error(e) = execute_on_direct(idx, setup) {
-                return PoolResult::Error(format!("session setup: {e}"));
-            }
-        }
-        return execute_on_direct_params(idx, sql, params);
-    }
-
-    drop(map);
-    let idx = match acquire_pin(session_id, PinKind::Session) {
-        Ok(i) => i,
-        Err(e) => return PoolResult::Error(e),
-    };
-    if let Some(setup) = &setup_sql {
-        if let PoolResult::Error(e) = execute_on_direct(idx, setup) {
-            return PoolResult::Error(format!("session setup: {e}"));
-        }
-    }
-    execute_on_direct_params(idx, sql, params)
-}
-
-/// Execute SQL on a direct connection by index, supporting both reads and writes.
-fn execute_on_direct(idx: usize, sql: &str) -> PoolResult {
-    execute_on_direct_params(idx, sql, &[])
-}
-
-/// Execute parameterized SQL on a direct connection by index.
-fn execute_on_direct_params(idx: usize, sql: &str, params: &[String]) -> PoolResult {
-    let pool = match get_pool() {
-        Ok(p) => p,
-        Err(e) => return PoolResult::Error(e),
-    };
-    let slot = match pool.direct_connections.get(idx) {
-        Some(s) => s,
-        None => return PoolResult::Error(format!("invalid direct connection index {idx}")),
-    };
-    let guard = match slot.lock() {
-        Ok(g) => g,
-        Err(e) => return PoolResult::Error(format!("direct conn lock: {e}")),
-    };
-    let conn = match guard.as_ref() {
-        Some(c) => c,
-        None => return PoolResult::Error("direct connection not available".to_string()),
-    };
-
-    let result = panic::catch_unwind(AssertUnwindSafe(|| {
-        if is_result_returning_query(sql) {
-            if params.is_empty() {
-                execute_read(conn, sql)
-            } else {
-                execute_read_params(conn, sql, params)
-            }
-        } else if params.is_empty() {
-            match execute_write(conn, sql) {
-                WriteResult::Ok => PoolResult::Executed,
-                WriteResult::Error(e) => PoolResult::Error(e),
-            }
-        } else {
-            match execute_write_params(conn, sql, params) {
-                WriteResult::Ok => PoolResult::Executed,
-                WriteResult::Error(e) => PoolResult::Error(e),
-            }
-        }
-    }));
-
-    match result {
-        Ok(r) => r,
-        Err(panic_err) => {
-            let msg = extract_panic_message(panic_err);
-            PoolResult::Error(format!("query panicked: {msg}"))
-        }
-    }
+    Ok(buf)
 }
 
 
-const DEFAULT_POOL_SIZE: usize = 16;
+const DEFAULT_POOL_SIZE: usize = 64;
 
 #[duckdb_loadable_macros::duckdb_entrypoint_c_api(ext_name = "pool")]
 pub unsafe fn extension_entrypoint(con: Connection) -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -1136,12 +306,6 @@ pub unsafe fn extension_entrypoint(con: Connection) -> std::result::Result<(), B
         .unwrap_or(DEFAULT_POOL_SIZE)
         .max(1);
 
-    let lazy_pin = std::env::var("TREX_LAZY_PIN")
-        .ok()
-        .map(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
-        .unwrap_or(true);
-    let _ = LAZY_PIN.set(lazy_pin);
-
     init_from_connection(&con, pool_size)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
@@ -1149,206 +313,14 @@ pub unsafe fn extension_entrypoint(con: Connection) -> std::result::Result<(), B
 }
 
 //
-// These are discovered by consumer extensions via dlsym(RTLD_DEFAULT, ...).
-// Each function uses simple C types at the boundary (pointers, lengths, ints).
-
-/// Opaque result handle returned by read functions. Must be freed with
-/// `trex_pool_result_free`.
-pub struct CPoolResult {
-    json: String,
-    error: Option<String>,
-}
-
-/// Execute a read query and return a result handle. Caller must free with
-/// `trex_pool_result_free`. Returns null on channel error.
-#[no_mangle]
-pub extern "C" fn trex_pool_read(
-    sql_ptr: *const u8,
-    sql_len: usize,
-) -> *mut CPoolResult {
-    let sql = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(sql_ptr, sql_len)) };
-    let result = match read(sql) {
-        Ok(json) => CPoolResult { json, error: None },
-        Err(e) => CPoolResult { json: String::new(), error: Some(e) },
-    };
-    Box::into_raw(Box::new(result))
-}
-
-/// Execute a write query. Returns 0 on success, 1 on error.
-/// On error, the error message is written to `err_ptr`/`err_len`.
-#[no_mangle]
-pub extern "C" fn trex_pool_write(
-    sql_ptr: *const u8,
-    sql_len: usize,
-    err_ptr: *mut *const u8,
-    err_len: *mut usize,
-) -> i32 {
-    let sql = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(sql_ptr, sql_len)) };
-    match write(sql) {
-        Ok(()) => 0,
-        Err(e) => {
-            if !err_ptr.is_null() {
-                let leaked = e.into_bytes().leak();
-                unsafe {
-                    *err_ptr = leaked.as_ptr();
-                    *err_len = leaked.len();
-                }
-            }
-            1
-        }
-    }
-}
-
-/// Execute SQL with auto-classification (read vs write). Returns result handle.
-#[no_mangle]
-pub extern "C" fn trex_pool_execute(
-    sql_ptr: *const u8,
-    sql_len: usize,
-) -> *mut CPoolResult {
-    let sql = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(sql_ptr, sql_len)) };
-    let result = match execute(sql) {
-        Ok(json) => CPoolResult { json, error: None },
-        Err(e) => CPoolResult { json: String::new(), error: Some(e) },
-    };
-    Box::into_raw(Box::new(result))
-}
-
-/// Check if the result is an error. Returns 1 if error, 0 if success.
-#[no_mangle]
-pub extern "C" fn trex_pool_result_is_error(result: *const CPoolResult) -> i32 {
-    if result.is_null() { return 1; }
-    let r = unsafe { &*result };
-    if r.error.is_some() { 1 } else { 0 }
-}
-
-/// Get the JSON data from a result. Sets `out_ptr` and `out_len`.
-#[no_mangle]
-pub extern "C" fn trex_pool_result_json(
-    result: *const CPoolResult,
-    out_ptr: *mut *const u8,
-    out_len: *mut usize,
-) {
-    if result.is_null() { return; }
-    let r = unsafe { &*result };
-    let bytes = r.json.as_bytes();
-    unsafe {
-        *out_ptr = bytes.as_ptr();
-        *out_len = bytes.len();
-    }
-}
-
-/// Get the error message from a result. Sets `out_ptr` and `out_len`.
-#[no_mangle]
-pub extern "C" fn trex_pool_result_error(
-    result: *const CPoolResult,
-    out_ptr: *mut *const u8,
-    out_len: *mut usize,
-) {
-    if result.is_null() { return; }
-    let r = unsafe { &*result };
-    if let Some(ref e) = r.error {
-        unsafe {
-            *out_ptr = e.as_ptr();
-            *out_len = e.len();
-        }
-    }
-}
-
-/// Free a result handle.
-#[no_mangle]
-pub extern "C" fn trex_pool_result_free(result: *mut CPoolResult) {
-    if !result.is_null() {
-        unsafe { drop(Box::from_raw(result)); }
-    }
-}
-
-/// Check if SQL is a result-returning query. Returns 1 if true, 0 if false.
-#[no_mangle]
-pub extern "C" fn trex_pool_is_read_query(
-    sql_ptr: *const u8,
-    sql_len: usize,
-) -> i32 {
-    let sql = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(sql_ptr, sql_len)) };
-    if is_result_returning_query(sql) { 1 } else { 0 }
-}
-
-/// Force catalog sync across all read workers. Returns 0 on success.
-#[no_mangle]
-pub extern "C" fn trex_pool_sync_all() -> i32 {
-    match sync_all() {
-        Ok(()) => 0,
-        Err(_) => 1,
-    }
-}
-
-/// Get the read pool size. Returns 0 if pool not initialized.
-#[no_mangle]
-pub extern "C" fn trex_pool_read_pool_size() -> usize {
-    read_pool_size().unwrap_or(0)
-}
-
-/// Run a closure on a direct connection. The C ABI exposes this as
-/// execute-on-direct-connection with SQL string.
-#[no_mangle]
-pub extern "C" fn trex_pool_with_connection_execute(
-    sql_ptr: *const u8,
-    sql_len: usize,
-) -> *mut CPoolResult {
-    let sql = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(sql_ptr, sql_len)) };
-    let result = with_connection(|conn| {
-        conn.execute_batch(sql).map_err(|e| format!("exec: {e}"))
-    });
-    let cresult = match result {
-        Ok(()) => CPoolResult { json: "[]".to_string(), error: None },
-        Err(e) => CPoolResult { json: String::new(), error: Some(e) },
-    };
-    Box::into_raw(Box::new(cresult))
-}
+// C ABI — discovered by consumer extensions via dlsym.
+//
 
 /// Opaque handle for Arrow IPC result. Contains serialized IPC stream bytes.
 /// Must be freed with `trex_pool_arrow_result_free`.
 pub struct CArrowResult {
     data: Vec<u8>,
     error: Option<String>,
-}
-
-/// Execute a read query and return Arrow IPC serialized bytes.
-/// Returns null on allocation failure. Caller must free with `trex_pool_arrow_result_free`.
-#[no_mangle]
-pub extern "C" fn trex_pool_read_arrow_ipc(
-    sql_ptr: *const u8,
-    sql_len: usize,
-) -> *mut CArrowResult {
-    let sql = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(sql_ptr, sql_len)) };
-    let result = read_arrow(sql);
-    let cresult = match result {
-        Ok((schema, batches)) => {
-            match serialize_arrow_ipc(&schema, &batches) {
-                Ok(data) => CArrowResult { data, error: None },
-                Err(e) => CArrowResult { data: Vec::new(), error: Some(e) },
-            }
-        }
-        Err(e) => CArrowResult { data: Vec::new(), error: Some(e) },
-    };
-    Box::into_raw(Box::new(cresult))
-}
-
-/// Execute SQL with auto-classification, returning Arrow IPC for reads.
-#[no_mangle]
-pub extern "C" fn trex_pool_execute_arrow_ipc(
-    sql_ptr: *const u8,
-    sql_len: usize,
-) -> *mut CArrowResult {
-    let sql = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(sql_ptr, sql_len)) };
-    if is_result_returning_query(sql) {
-        trex_pool_read_arrow_ipc(sql_ptr, sql_len)
-    } else {
-        let cresult = match write(sql) {
-            Ok(()) => CArrowResult { data: Vec::new(), error: None },
-            Err(e) => CArrowResult { data: Vec::new(), error: Some(e) },
-        };
-        Box::into_raw(Box::new(cresult))
-    }
 }
 
 /// Check if the Arrow result is an error.
@@ -1404,85 +376,14 @@ pub extern "C" fn trex_pool_arrow_result_free(result: *mut CArrowResult) {
     }
 }
 
-/// Serialize Arrow RecordBatches to IPC stream format.
-fn serialize_arrow_ipc(
-    schema: &Arc<Schema>,
-    batches: &[RecordBatch],
-) -> Result<Vec<u8>, String> {
-    use arrow_ipc::writer::StreamWriter;
-
-    let mut buf = Vec::new();
-    let mut writer = StreamWriter::try_new(&mut buf, schema)
-        .map_err(|e| format!("ipc writer init: {e}"))?;
-
-    for batch in batches {
-        writer.write(batch).map_err(|e| format!("ipc write batch: {e}"))?;
-    }
-    writer.finish().map_err(|e| format!("ipc finish: {e}"))?;
-
-    Ok(buf)
-}
-
-/// Execute multiple SQL statements in a single transaction on one connection.
-/// `sqls_ptr` points to a null-terminated array of (ptr, len) pairs.
-/// Returns 0 on success, result handle with error on failure.
-#[no_mangle]
-pub extern "C" fn trex_pool_execute_transaction(
-    sqls_ptr: *const *const u8,
-    sqls_lens: *const usize,
-    count: usize,
-) -> *mut CPoolResult {
-    let sqls: Vec<&str> = unsafe {
-        let ptrs = std::slice::from_raw_parts(sqls_ptr, count);
-        let lens = std::slice::from_raw_parts(sqls_lens, count);
-        ptrs.iter()
-            .zip(lens.iter())
-            .map(|(&p, &l)| std::str::from_utf8_unchecked(std::slice::from_raw_parts(p, l)))
-            .collect()
-    };
-
-    let result = with_connection(|conn| {
-        conn.execute_batch("BEGIN TRANSACTION;")
-            .map_err(|e| format!("begin: {e}"))?;
-
-        for sql in &sqls {
-            if let Err(e) = conn.execute_batch(sql) {
-                let _ = conn.execute_batch("ROLLBACK;");
-                return Err(format!("transaction failed: {e}"));
-            }
-        }
-
-        conn.execute_batch("COMMIT;")
-            .map_err(|e| format!("commit: {e}"))?;
-        Ok(())
-    });
-
-    let cresult = match result {
-        Ok(()) => CPoolResult {
-            json: "[]".to_string(),
-            error: None,
-        },
-        Err(e) => CPoolResult {
-            json: String::new(),
-            error: Some(e),
-        },
-    };
-    Box::into_raw(Box::new(cresult))
-}
-
-
+/// Lease a Connection and register a session for it. Returns 0 on failure
+/// (pool not initialised or sender closed).
 #[no_mangle]
 pub extern "C" fn trex_pool_session_create() -> u64 {
-    create_session()
-}
-
-#[no_mangle]
-pub extern "C" fn trex_pool_session_create_persistent() -> u64 {
-    create_persistent_session()
+    create_session().unwrap_or(0)
 }
 
 /// Execute SQL within a session, returning Arrow IPC bytes.
-/// Auto-detects transactions (BEGIN/COMMIT/ROLLBACK).
 #[no_mangle]
 pub extern "C" fn trex_pool_session_execute_arrow(
     session_id: u64,
@@ -1517,97 +418,18 @@ pub extern "C" fn trex_pool_session_execute_params_arrow(
     } else {
         Vec::new()
     };
-    let result = session_execute_params(session_id, sql, &params);
-    let cresult = match result {
-        PoolResult::Rows { schema, batches } => {
-            match serialize_arrow_ipc(&schema, &batches) {
-                Ok(data) => CArrowResult { data, error: None },
-                Err(e) => CArrowResult { data: Vec::new(), error: Some(e) },
-            }
-        }
-        PoolResult::Executed => CArrowResult { data: Vec::new(), error: None },
-        PoolResult::Error(e) => CArrowResult { data: Vec::new(), error: Some(e) },
+    let cresult = match session_execute_params(session_id, sql, &params) {
+        Ok((schema, batches)) => match serialize_arrow_ipc(&schema, &batches) {
+            Ok(data) => CArrowResult { data, error: None },
+            Err(e) => CArrowResult { data: Vec::new(), error: Some(e) },
+        },
+        Err(e) => CArrowResult { data: Vec::new(), error: Some(e) },
     };
     Box::into_raw(Box::new(cresult))
 }
 
-/// Destroy a session. Auto-rollback if a transaction is active.
+/// Destroy a session: clean up its Connection and return it to the pool.
 #[no_mangle]
 pub extern "C" fn trex_pool_session_destroy(session_id: u64) {
     destroy_session(session_id);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_query_classification() {
-        assert!(is_result_returning_query("SELECT 1"));
-        assert!(is_result_returning_query("  select * from t"));
-        assert!(is_result_returning_query("WITH cte AS (SELECT 1) SELECT * FROM cte"));
-        assert!(is_result_returning_query("SHOW TABLES"));
-        assert!(is_result_returning_query("DESCRIBE t"));
-        assert!(is_result_returning_query("EXPLAIN SELECT 1"));
-        assert!(is_result_returning_query("FROM t"));
-        assert!(is_result_returning_query("VALUES (1, 2)"));
-        assert!(is_result_returning_query("PRAGMA table_info('t')"));
-
-        assert!(!is_result_returning_query("INSERT INTO t VALUES (1)"));
-        assert!(!is_result_returning_query("UPDATE t SET x = 1"));
-        assert!(!is_result_returning_query("DELETE FROM t"));
-        assert!(!is_result_returning_query("CREATE TABLE t (x INT)"));
-        assert!(!is_result_returning_query("DROP TABLE t"));
-        assert!(!is_result_returning_query("ALTER TABLE t ADD COLUMN y INT"));
-        assert!(!is_result_returning_query("PRAGMA CREATE_FTS_INDEX('t', 'id', 'text')"));
-    }
-
-    #[test]
-    fn test_transaction_detection() {
-        assert!(is_begin("BEGIN"));
-        assert!(is_begin("BEGIN TRANSACTION"));
-        assert!(is_begin("  begin transaction"));
-        assert!(!is_begin("SELECT 1"));
-        assert!(!is_begin("INSERT INTO t VALUES (1)"));
-
-        assert!(is_commit_or_rollback("COMMIT"));
-        assert!(is_commit_or_rollback("ROLLBACK"));
-        assert!(is_commit_or_rollback("  commit"));
-        assert!(is_commit_or_rollback("  rollback;"));
-        assert!(!is_commit_or_rollback("SELECT 1"));
-        assert!(!is_commit_or_rollback("BEGIN"));
-    }
-
-    #[test]
-    fn test_creates_non_replayable_state() {
-        assert!(creates_non_replayable_state("CREATE TEMP TABLE t (x INT)"));
-        assert!(creates_non_replayable_state("CREATE TEMPORARY TABLE t (x INT)"));
-        assert!(creates_non_replayable_state("create temp table t (x int)"));
-        assert!(creates_non_replayable_state("  CREATE TEMP TABLE t AS SELECT 1"));
-        assert!(creates_non_replayable_state("CREATE OR REPLACE TEMP TABLE t (x INT)"));
-        assert!(creates_non_replayable_state("create or replace temporary table t (x int)"));
-
-        assert!(creates_non_replayable_state("PREPARE p AS SELECT $1"));
-        assert!(creates_non_replayable_state("prepare p as select 1"));
-
-        assert!(creates_non_replayable_state("DECLARE c CURSOR FOR SELECT 1"));
-        assert!(creates_non_replayable_state("declare c cursor for select 1"));
-
-        assert!(creates_non_replayable_state("SET threads = 4"));
-        assert!(creates_non_replayable_state("SET memory_limit = '4GB'"));
-        assert!(creates_non_replayable_state("set schema = 'public'"));
-
-        assert!(!creates_non_replayable_state("SELECT 1"));
-        assert!(!creates_non_replayable_state("INSERT INTO t VALUES (1)"));
-        assert!(!creates_non_replayable_state("UPDATE t SET x = 1"));
-        assert!(!creates_non_replayable_state("DELETE FROM t"));
-        assert!(!creates_non_replayable_state("CREATE TABLE t (x INT)"));
-        assert!(!creates_non_replayable_state("CREATE SCHEMA foo"));
-        assert!(!creates_non_replayable_state("DROP TABLE t"));
-        assert!(!creates_non_replayable_state("ALTER TABLE t ADD COLUMN y INT"));
-        assert!(!creates_non_replayable_state("BEGIN"));
-        assert!(!creates_non_replayable_state("COMMIT"));
-        assert!(!creates_non_replayable_state("USE \"foo\""));
-        assert!(!creates_non_replayable_state("DECLARE x INT"));
-    }
 }
