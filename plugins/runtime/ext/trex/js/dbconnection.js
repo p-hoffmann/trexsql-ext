@@ -311,7 +311,16 @@ export class TrexConnection  {
     }
 
     async close() {
-        console.log(`Duckdb database connection has been closed`);
+        try {
+            if (this.connection && typeof this.connection.close === 'function') {
+                this.connection.close();
+            }
+            if (this.writeConn && this.writeConn !== this.connection && typeof this.writeConn.close === 'function') {
+                this.writeConn.close();
+            }
+        } catch (e) {
+            console.error(`Error closing TrexConnection: ${e?.message ?? e}`);
+        }
     }
 
     executeBulkUpdate(
