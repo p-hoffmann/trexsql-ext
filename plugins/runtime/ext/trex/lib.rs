@@ -654,7 +654,10 @@ fn trex_type_to_string(t: &TrexType) -> String {
     TrexType::Integer(v) => v.to_string(),
     TrexType::String(v) => v.clone(),
     TrexType::Number(v) => v.to_string(),
-    TrexType::DateTime(v) => v.to_string(),
+    TrexType::DateTime(v) => chrono::DateTime::from_timestamp_millis(*v)
+      .unwrap_or(chrono::DateTime::UNIX_EPOCH)
+      .format("%Y-%m-%d %H:%M:%S%.3f")
+      .to_string(),
   }
 }
 
