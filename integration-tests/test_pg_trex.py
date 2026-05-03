@@ -142,3 +142,55 @@ def test_pg_trex_distributed_query_select(pg_conn):
     cur.close()
     assert row is not None
     assert "1" in row[0]
+
+
+def test_pg_trex_decimal_literal(pg_conn):
+    """SELECT 1.5 must round-trip as a decimal value, not a debug string."""
+    _wait_for_worker(pg_conn)
+    cur = pg_conn.cursor()
+    cur.execute("SELECT result FROM pg_trex_query('SELECT 1.5 AS x')")
+    row = cur.fetchone()
+    cur.close()
+    assert row is not None
+    assert "1.5" in row[0]
+
+
+def test_pg_trex_numeric_column_roundtrip(pg_conn):
+    """CREATE TABLE with NUMERIC col, INSERT, SELECT — values render correctly."""
+    _wait_for_worker(pg_conn)
+    cur = pg_conn.cursor()
+    cur.execute("SELECT result FROM pg_trex_query('CREATE TABLE pn (id BIGINT, n NUMERIC(10,2))')")
+    cur.fetchall()
+    cur.execute(
+        "SELECT result FROM pg_trex_query('INSERT INTO pn VALUES (1, 3.14), (2, 0.05), (3, 9999.99)')"
+    )
+    cur.fetchall()
+    cur.execute(
+        "SELECT result FROM pg_trex_query('SELECT id, n FROM pn ORDER BY id')"
+    )
+    rows = cur.fetchall()
+    cur.close()
+    assert len(rows) == 3
+    parts0 = rows[0][0].split("\t")
+    assert parts0[0].strip() == "1"
+    assert parts0[1].strip() == "3.14"
+    parts1 = rows[1][0].split("\t")
+    assert parts1[1].strip() == "0.05"
+    parts2 = rows[2][0].split("\t")
+    assert parts2[1].strip() == "9999.99"
+
+
+def test_pg_trex_aggregate_decimal_cast(pg_conn):
+    """ROUND(AVG(int)::numeric, 1) must render as a decimal, not a type debug string."""
+    _wait_for_worker(pg_conn)
+    cur = pg_conn.cursor()
+    cur.execute(
+        "SELECT result FROM pg_trex_query('SELECT ROUND(AVG(i)::numeric, 1) FROM range(100) t(i)')"
+    )
+    row = cur.fetchone()
+    cur.close()
+    assert row is not None
+    s = row[0].strip()
+    # Expect something like "49.5", definitely not a debug like "Decimal128(...)".
+    assert "Decimal" not in s, f"got debug print: {s!r}"
+    assert "." in s, f"expected decimal output, got {s!r}"

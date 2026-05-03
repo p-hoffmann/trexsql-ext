@@ -237,6 +237,13 @@ pub fn arrow_value_to_string(array: &dyn Array, row: usize) -> String {
                 (raw * multiplier).to_string()
             }
         }
+        DataType::Decimal256(_, scale) => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<Decimal256Array>()
+                .unwrap();
+            format_decimal256_string(&arr.value(row).to_string(), *scale as i32)
+        }
         DataType::Binary => {
             let arr = array.as_any().downcast_ref::<BinaryArray>().unwrap();
             let bytes = arr.value(row);
@@ -430,6 +437,36 @@ fn format_decimal128(raw: i128, scale: u32) -> String {
     }
 }
 
+/// Format a stringified Decimal256 raw value with the given scale.
+///
+/// Operates on the i256's `to_string()` output so it works for any width
+/// without going through f64 (which would lose precision past ~15 digits).
+fn format_decimal256_string(digits: &str, scale: i32) -> String {
+    let (neg, digits) = if let Some(rest) = digits.strip_prefix('-') {
+        (true, rest)
+    } else {
+        (false, digits)
+    };
+    let body = if scale <= 0 {
+        let mut out = digits.to_string();
+        for _ in 0..(-scale) {
+            out.push('0');
+        }
+        out
+    } else {
+        let scale = scale as usize;
+        if digits.len() <= scale {
+            let mut frac = "0".repeat(scale - digits.len());
+            frac.push_str(digits);
+            format!("0.{}", frac)
+        } else {
+            let split = digits.len() - scale;
+            format!("{}.{}", &digits[..split], &digits[split..])
+        }
+    };
+    if neg { format!("-{}", body) } else { body }
+}
+
 /// Format bytes as PostgreSQL-style hex string ("\\x" prefix + lowercase hex).
 fn format_hex(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(2 + bytes.len() * 2);
@@ -557,6 +594,30 @@ mod tests {
         assert_eq!(format_decimal128(100, 2), "1.00");
         assert_eq!(format_decimal128(5, 3), "0.005");
         assert_eq!(format_decimal128(42, 0), "42");
+    }
+
+    #[test]
+    fn test_decimal256_string() {
+        assert_eq!(format_decimal256_string("12345", 2), "123.45");
+        assert_eq!(format_decimal256_string("-12345", 2), "-123.45");
+        assert_eq!(format_decimal256_string("5", 3), "0.005");
+        assert_eq!(format_decimal256_string("-5", 3), "-0.005");
+        assert_eq!(format_decimal256_string("123", -2), "12300");
+        // Out-of-i128-range value to prove string path preserves precision.
+        let huge = "170141183460469231731687303715884105727000";
+        assert_eq!(
+            format_decimal256_string(huge, 6),
+            "170141183460469231731687303715884105727.000000"
+        );
+    }
+
+    #[test]
+    fn test_decimal256_via_array() {
+        use arrow::buffer::i256;
+        let arr = Decimal256Array::from(vec![i256::from_i128(12345)])
+            .with_precision_and_scale(10, 2)
+            .unwrap();
+        assert_eq!(arrow_value_to_string(&arr, 0), "123.45");
     }
 
     #[test]

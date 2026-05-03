@@ -206,6 +206,159 @@ fn column_value_to_json(
             let dt = chrono::DateTime::from_timestamp_nanos(nanos);
             JV::String(dt.to_rfc3339())
         }
+        DataType::Decimal256(_, scale) => {
+            let a = array.as_any().downcast_ref::<Decimal256Array>().unwrap();
+            JV::String(format_decimal_string(&a.value(row).to_string(), *scale as i32))
+        }
+        DataType::Date64 => {
+            let a = array.as_any().downcast_ref::<Date64Array>().unwrap();
+            let ms = a.value(row);
+            let dt = chrono::DateTime::from_timestamp_millis(ms)
+                .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+            JV::String(dt.format("%Y-%m-%d").to_string())
+        }
+        DataType::Time32(TimeUnit::Second) => {
+            let a = array.as_any().downcast_ref::<Time32SecondArray>().unwrap();
+            let s = a.value(row) as i64;
+            JV::String(format!("{:02}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60))
+        }
+        DataType::Time32(TimeUnit::Millisecond) => {
+            let a = array.as_any().downcast_ref::<Time32MillisecondArray>().unwrap();
+            let ms = a.value(row) as i64;
+            let s = ms / 1000;
+            JV::String(format!(
+                "{:02}:{:02}:{:02}.{:03}",
+                s / 3600, (s % 3600) / 60, s % 60, ms % 1000
+            ))
+        }
+        DataType::Time64(TimeUnit::Microsecond) => {
+            let a = array.as_any().downcast_ref::<Time64MicrosecondArray>().unwrap();
+            let us = a.value(row);
+            let s = us / 1_000_000;
+            JV::String(format!(
+                "{:02}:{:02}:{:02}.{:06}",
+                s / 3600, (s % 3600) / 60, s % 60, us % 1_000_000
+            ))
+        }
+        DataType::Time64(TimeUnit::Nanosecond) => {
+            let a = array.as_any().downcast_ref::<Time64NanosecondArray>().unwrap();
+            let ns = a.value(row);
+            let s = ns / 1_000_000_000;
+            JV::String(format!(
+                "{:02}:{:02}:{:02}.{:09}",
+                s / 3600, (s % 3600) / 60, s % 60, ns % 1_000_000_000
+            ))
+        }
+        DataType::Binary => {
+            let a = array.as_any().downcast_ref::<BinaryArray>().unwrap();
+            JV::String(format_hex_bytes(a.value(row)))
+        }
+        DataType::LargeBinary => {
+            let a = array.as_any().downcast_ref::<LargeBinaryArray>().unwrap();
+            JV::String(format_hex_bytes(a.value(row)))
+        }
         _ => JV::Null,
+    }
+}
+
+fn format_decimal_string(digits: &str, scale: i32) -> String {
+    let (neg, digits) = if let Some(rest) = digits.strip_prefix('-') {
+        (true, rest)
+    } else {
+        (false, digits)
+    };
+    let body = if scale <= 0 {
+        let mut out = digits.to_string();
+        for _ in 0..(-scale) {
+            out.push('0');
+        }
+        out
+    } else {
+        let scale = scale as usize;
+        if digits.len() <= scale {
+            let mut frac = "0".repeat(scale - digits.len());
+            frac.push_str(digits);
+            format!("0.{}", frac)
+        } else {
+            let split = digits.len() - scale;
+            format!("{}.{}", &digits[..split], &digits[split..])
+        }
+    };
+    if neg { format!("-{}", body) } else { body }
+}
+
+fn format_hex_bytes(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(2 + bytes.len() * 2);
+    s.push_str("\\x");
+    for b in bytes {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{column_value_to_json, format_decimal_string, format_hex_bytes};
+    use trex_pool_client::arrow_array::*;
+    use trex_pool_client::arrow_schema::{DataType, TimeUnit};
+
+    #[test]
+    fn format_decimal_basic() {
+        assert_eq!(format_decimal_string("12345", 2), "123.45");
+        assert_eq!(format_decimal_string("-12345", 2), "-123.45");
+        assert_eq!(format_decimal_string("5", 3), "0.005");
+    }
+
+    #[test]
+    fn format_decimal_high_precision() {
+        let huge = "12345678901234567890123456789012345678";
+        assert_eq!(
+            format_decimal_string(huge, 10),
+            "12345678901234567890123456789.0123456789"
+        );
+    }
+
+    #[test]
+    fn format_hex_basic() {
+        assert_eq!(format_hex_bytes(&[0xDE, 0xAD, 0xBE, 0xEF]), "\\xdeadbeef");
+    }
+
+    #[test]
+    fn arrow_to_json_decimal128() {
+        let arr = Decimal128Array::from(vec![12345i128])
+            .with_precision_and_scale(10, 2)
+            .unwrap();
+        let v = column_value_to_json(&arr, 0, &DataType::Decimal128(10, 2));
+        assert_eq!(v, serde_json::Value::String("123.45".into()));
+    }
+
+    #[test]
+    fn arrow_to_json_date64() {
+        // 2024-01-01 = 1704067200 sec = 1704067200000 ms
+        let arr = Date64Array::from(vec![1704067200000i64]);
+        let v = column_value_to_json(&arr, 0, &DataType::Date64);
+        assert_eq!(v, serde_json::Value::String("2024-01-01".into()));
+    }
+
+    #[test]
+    fn arrow_to_json_time32_second() {
+        // 12:34:56 = 12*3600 + 34*60 + 56 = 45296
+        let arr = Time32SecondArray::from(vec![45296]);
+        let v = column_value_to_json(&arr, 0, &DataType::Time32(TimeUnit::Second));
+        assert_eq!(v, serde_json::Value::String("12:34:56".into()));
+    }
+
+    #[test]
+    fn arrow_to_json_binary() {
+        let arr = BinaryArray::from(vec![Some(&[0x01, 0xFE][..])]);
+        let v = column_value_to_json(&arr, 0, &DataType::Binary);
+        assert_eq!(v, serde_json::Value::String("\\x01fe".into()));
+    }
+
+    #[test]
+    fn arrow_to_json_null_passthrough() {
+        let arr = Int32Array::from(vec![None]);
+        let v = column_value_to_json(&arr, 0, &DataType::Int32);
+        assert_eq!(v, serde_json::Value::Null);
     }
 }
