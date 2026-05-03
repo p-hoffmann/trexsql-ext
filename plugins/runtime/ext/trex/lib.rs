@@ -403,6 +403,7 @@ fn field_value_to_json(
     return JsonValue::Null;
   }
   match dt {
+    DataType::Null => JsonValue::Null,
     DataType::Utf8 => {
       let arr = array.as_any().downcast_ref::<StringArray>().unwrap();
       JsonValue::String(arr.value(row).to_string())
@@ -541,7 +542,9 @@ fn field_value_to_json(
       let s = format_decimal_string(&arr.value(row).to_string(), *scale as i32);
       serde_json::from_str(&s).unwrap_or(JsonValue::String(s))
     }
-    _ => JsonValue::Null,
+    _ => arrow_cast::display::array_value_to_string(array, row)
+      .map(JsonValue::String)
+      .unwrap_or(JsonValue::Null),
   }
 }
 
@@ -599,7 +602,7 @@ fn record_batches_to_json(batches: &[RecordBatch]) -> String {
 /// Convert pool-client Arrow RecordBatches (arrow v57) to JSON string.
 fn pool_batches_to_json(batches: &[trex_pool_client::arrow_array::RecordBatch]) -> String {
   use trex_pool_client::arrow_array::*;
-  use trex_pool_client::arrow_schema::DataType;
+  use trex_pool_client::arrow_schema::{DataType, TimeUnit};
 
   let mut rows: Vec<serde_json::Value> = Vec::new();
   for batch in batches {
@@ -612,6 +615,7 @@ fn pool_batches_to_json(batches: &[trex_pool_client::arrow_array::RecordBatch]) 
           serde_json::Value::Null
         } else {
           match col.data_type() {
+            DataType::Null => serde_json::Value::Null,
             DataType::Utf8 => {
               let a = col.as_any().downcast_ref::<StringArray>().unwrap();
               serde_json::Value::String(a.value(r).to_string())
@@ -619,6 +623,22 @@ fn pool_batches_to_json(batches: &[trex_pool_client::arrow_array::RecordBatch]) 
             DataType::LargeUtf8 => {
               let a = col.as_any().downcast_ref::<LargeStringArray>().unwrap();
               serde_json::Value::String(a.value(r).to_string())
+            }
+            DataType::Binary => {
+              let a = col.as_any().downcast_ref::<BinaryArray>().unwrap();
+              serde_json::Value::String(general_purpose::STANDARD.encode(a.value(r)))
+            }
+            DataType::LargeBinary => {
+              let a = col.as_any().downcast_ref::<LargeBinaryArray>().unwrap();
+              serde_json::Value::String(general_purpose::STANDARD.encode(a.value(r)))
+            }
+            DataType::Int8 => {
+              let a = col.as_any().downcast_ref::<Int8Array>().unwrap();
+              serde_json::Value::from(a.value(r) as i64)
+            }
+            DataType::Int16 => {
+              let a = col.as_any().downcast_ref::<Int16Array>().unwrap();
+              serde_json::Value::from(a.value(r) as i64)
             }
             DataType::Int32 => {
               let a = col.as_any().downcast_ref::<Int32Array>().unwrap();
@@ -628,9 +648,25 @@ fn pool_batches_to_json(batches: &[trex_pool_client::arrow_array::RecordBatch]) 
               let a = col.as_any().downcast_ref::<Int64Array>().unwrap();
               serde_json::Value::from(a.value(r))
             }
+            DataType::UInt8 => {
+              let a = col.as_any().downcast_ref::<UInt8Array>().unwrap();
+              serde_json::Value::from(a.value(r) as u64)
+            }
+            DataType::UInt16 => {
+              let a = col.as_any().downcast_ref::<UInt16Array>().unwrap();
+              serde_json::Value::from(a.value(r) as u64)
+            }
+            DataType::UInt32 => {
+              let a = col.as_any().downcast_ref::<UInt32Array>().unwrap();
+              serde_json::Value::from(a.value(r) as u64)
+            }
             DataType::UInt64 => {
               let a = col.as_any().downcast_ref::<UInt64Array>().unwrap();
               serde_json::Value::from(a.value(r))
+            }
+            DataType::Float32 => {
+              let a = col.as_any().downcast_ref::<Float32Array>().unwrap();
+              serde_json::Value::from(a.value(r) as f64)
             }
             DataType::Float64 => {
               let a = col.as_any().downcast_ref::<Float64Array>().unwrap();
@@ -639,6 +675,52 @@ fn pool_batches_to_json(batches: &[trex_pool_client::arrow_array::RecordBatch]) 
             DataType::Boolean => {
               let a = col.as_any().downcast_ref::<BooleanArray>().unwrap();
               serde_json::Value::from(a.value(r))
+            }
+            DataType::Date32 => {
+              let a = col.as_any().downcast_ref::<Date32Array>().unwrap();
+              let days = a.value(r);
+              let timestamp = days as i64 * 86400;
+              let datetime = chrono::DateTime::from_timestamp(timestamp, 0)
+                .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+              serde_json::Value::String(datetime.format("%Y-%m-%d").to_string())
+            }
+            DataType::Date64 => {
+              let a = col.as_any().downcast_ref::<Date64Array>().unwrap();
+              let millis = a.value(r);
+              let datetime = chrono::DateTime::from_timestamp_millis(millis)
+                .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+              serde_json::Value::String(datetime.format("%Y-%m-%d").to_string())
+            }
+            DataType::Time32(_) => {
+              let a = col.as_any().downcast_ref::<Time32SecondArray>().unwrap();
+              serde_json::Value::from(a.value(r) as i64)
+            }
+            DataType::Time64(_) => {
+              let a = col.as_any().downcast_ref::<Time64MicrosecondArray>().unwrap();
+              serde_json::Value::from(a.value(r))
+            }
+            DataType::Timestamp(TimeUnit::Second, _) => {
+              let a = col.as_any().downcast_ref::<TimestampSecondArray>().unwrap();
+              let datetime = chrono::DateTime::from_timestamp(a.value(r), 0)
+                .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+              serde_json::Value::String(datetime.to_rfc3339())
+            }
+            DataType::Timestamp(TimeUnit::Millisecond, _) => {
+              let a = col.as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
+              let datetime = chrono::DateTime::from_timestamp_millis(a.value(r))
+                .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+              serde_json::Value::String(datetime.to_rfc3339())
+            }
+            DataType::Timestamp(TimeUnit::Microsecond, _) => {
+              let a = col.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
+              let datetime = chrono::DateTime::from_timestamp_micros(a.value(r))
+                .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+              serde_json::Value::String(datetime.to_rfc3339())
+            }
+            DataType::Timestamp(TimeUnit::Nanosecond, _) => {
+              let a = col.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
+              let datetime = chrono::DateTime::from_timestamp_nanos(a.value(r));
+              serde_json::Value::String(datetime.to_rfc3339())
             }
             DataType::Decimal128(_, scale) => {
               let a = col.as_any().downcast_ref::<Decimal128Array>().unwrap();
@@ -650,7 +732,9 @@ fn pool_batches_to_json(batches: &[trex_pool_client::arrow_array::RecordBatch]) 
               let s = format_decimal_string(&a.value(r).to_string(), *scale as i32);
               serde_json::from_str(&s).unwrap_or(serde_json::Value::String(s))
             }
-            _ => serde_json::Value::Null,
+            _ => arrow_cast::display::array_value_to_string(col.as_ref(), r)
+              .map(serde_json::Value::String)
+              .unwrap_or(serde_json::Value::Null),
           }
         };
         obj.insert(field.name().clone(), v);
@@ -1488,10 +1572,53 @@ mod tests {
   }
 
   #[test]
-  fn test_field_value_unsupported_type() {
-    let arr = Int32Array::from(vec![1]);
+  fn test_field_value_null_type() {
+    let arr = duckdb::arrow::array::NullArray::new(1);
     let result = field_value_to_json(&arr, 0, &DataType::Null);
     assert_eq!(result, JsonValue::Null);
+  }
+
+  #[test]
+  fn test_field_value_list_fallback() {
+    use duckdb::arrow::array::{Int32Builder, ListBuilder};
+    let mut builder = ListBuilder::new(Int32Builder::new());
+    builder.values().append_value(1);
+    builder.values().append_value(2);
+    builder.values().append_value(3);
+    builder.append(true);
+    let arr = builder.finish();
+    let result = field_value_to_json(&arr, 0, arr.data_type());
+    let s = result.as_str().expect("list should fall back to string");
+    assert!(s.contains('1') && s.contains('2') && s.contains('3'));
+  }
+
+  #[test]
+  fn test_field_value_struct_fallback() {
+    use duckdb::arrow::array::StructArray;
+    let arr = StructArray::from(vec![
+      (
+        Arc::new(Field::new("x", DataType::Int32, false)),
+        Arc::new(Int32Array::from(vec![1])) as duckdb::arrow::array::ArrayRef,
+      ),
+      (
+        Arc::new(Field::new("y", DataType::Utf8, false)),
+        Arc::new(StringArray::from(vec!["foo"]))
+          as duckdb::arrow::array::ArrayRef,
+      ),
+    ]);
+    let result = field_value_to_json(&arr, 0, arr.data_type());
+    let s = result.as_str().expect("struct should fall back to string");
+    assert!(s.contains("foo"));
+  }
+
+  #[test]
+  fn test_field_value_fixed_size_binary_fallback() {
+    use duckdb::arrow::array::FixedSizeBinaryArray;
+    let arr =
+      FixedSizeBinaryArray::try_from_iter(vec![vec![0xDE, 0xAD]].into_iter())
+        .unwrap();
+    let result = field_value_to_json(&arr, 0, arr.data_type());
+    assert!(result.is_string());
   }
 
   #[test]
@@ -1555,6 +1682,113 @@ mod tests {
     assert_eq!(parsed.len(), 2);
     assert_eq!(parsed[0]["v"], 10);
     assert_eq!(parsed[1]["v"], 20);
+  }
+
+  // -------- pool_batches_to_json (session-execute path) --------
+
+  fn pool_rb_one_col(
+    name: &str,
+    dt: DataType,
+    nullable: bool,
+    arr: duckdb::arrow::array::ArrayRef,
+  ) -> RecordBatch {
+    let schema = Arc::new(Schema::new(vec![Field::new(name, dt, nullable)]));
+    RecordBatch::try_new(schema, vec![arr]).unwrap()
+  }
+
+  #[test]
+  fn test_pool_batches_to_json_date32() {
+    // Regression: previously the session-execute path silently emitted null
+    // for every Date32 column.
+    let arr = Arc::new(Date32Array::from(vec![19723]));
+    let rb = pool_rb_one_col("d", DataType::Date32, false, arr);
+    let json = pool_batches_to_json(std::slice::from_ref(&rb));
+    let parsed: Vec<JsonValue> = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed[0]["d"], JsonValue::String("2024-01-01".into()));
+  }
+
+  #[test]
+  fn test_pool_batches_to_json_timestamp_microsecond() {
+    let arr = Arc::new(TimestampMicrosecondArray::from(vec![
+      1_704_067_200_000_000i64,
+    ]));
+    let rb = pool_rb_one_col(
+      "t",
+      DataType::Timestamp(TimeUnit::Microsecond, None),
+      false,
+      arr,
+    );
+    let json = pool_batches_to_json(std::slice::from_ref(&rb));
+    let parsed: Vec<JsonValue> = serde_json::from_str(&json).unwrap();
+    let s = parsed[0]["t"].as_str().unwrap();
+    assert!(s.starts_with("2024-01-01T00:00:00"));
+  }
+
+  #[test]
+  fn test_pool_batches_to_json_int_widths() {
+    let schema = Arc::new(Schema::new(vec![
+      Field::new("i8", DataType::Int8, false),
+      Field::new("i16", DataType::Int16, false),
+      Field::new("u32", DataType::UInt32, false),
+      Field::new("f32", DataType::Float32, false),
+    ]));
+    let rb = RecordBatch::try_new(
+      schema,
+      vec![
+        Arc::new(Int8Array::from(vec![-1])),
+        Arc::new(Int16Array::from(vec![300])),
+        Arc::new(UInt32Array::from(vec![100_000u32])),
+        Arc::new(Float32Array::from(vec![1.5f32])),
+      ],
+    )
+    .unwrap();
+    let json = pool_batches_to_json(std::slice::from_ref(&rb));
+    let parsed: Vec<JsonValue> = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed[0]["i8"], -1);
+    assert_eq!(parsed[0]["i16"], 300);
+    assert_eq!(parsed[0]["u32"], 100_000);
+    assert_eq!(parsed[0]["f32"], 1.5);
+  }
+
+  #[test]
+  fn test_pool_batches_to_json_binary() {
+    let arr = Arc::new(BinaryArray::from_vec(vec![b"\xDE\xAD".as_ref()]));
+    let rb = pool_rb_one_col("b", DataType::Binary, false, arr);
+    let json = pool_batches_to_json(std::slice::from_ref(&rb));
+    let parsed: Vec<JsonValue> = serde_json::from_str(&json).unwrap();
+    // base64("\xDE\xAD") = "3q0="
+    assert_eq!(parsed[0]["b"], JsonValue::String("3q0=".into()));
+  }
+
+  #[test]
+  fn test_pool_batches_to_json_null_value() {
+    let schema =
+      Arc::new(Schema::new(vec![Field::new("d", DataType::Date32, true)]));
+    let rb = RecordBatch::try_new(
+      schema,
+      vec![Arc::new(Date32Array::from(vec![None, Some(19723)]))],
+    )
+    .unwrap();
+    let json = pool_batches_to_json(std::slice::from_ref(&rb));
+    let parsed: Vec<JsonValue> = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed[0]["d"], JsonValue::Null);
+    assert_eq!(parsed[1]["d"], JsonValue::String("2024-01-01".into()));
+  }
+
+  #[test]
+  fn test_pool_batches_to_json_list_fallback() {
+    use duckdb::arrow::array::{Int32Builder, ListBuilder};
+    let mut builder = ListBuilder::new(Int32Builder::new());
+    builder.values().append_value(7);
+    builder.values().append_value(8);
+    builder.append(true);
+    let arr = builder.finish();
+    let dt = arr.data_type().clone();
+    let rb = pool_rb_one_col("l", dt, false, Arc::new(arr));
+    let json = pool_batches_to_json(std::slice::from_ref(&rb));
+    let parsed: Vec<JsonValue> = serde_json::from_str(&json).unwrap();
+    let s = parsed[0]["l"].as_str().expect("list -> string fallback");
+    assert!(s.contains('7') && s.contains('8'));
   }
 
   #[test]
