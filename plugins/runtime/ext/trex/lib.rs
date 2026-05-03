@@ -18,11 +18,11 @@ pub enum TrexError {
 }
 use duckdb::arrow::array::{
   Array, BinaryArray, BooleanArray, Date32Array, Date64Array, Decimal128Array,
-  Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
-  LargeBinaryArray, LargeStringArray, StringArray, Time32SecondArray,
-  Time64MicrosecondArray, TimestampMicrosecondArray, TimestampMillisecondArray,
-  TimestampNanosecondArray, TimestampSecondArray, UInt16Array, UInt32Array,
-  UInt64Array, UInt8Array,
+  Decimal256Array, Float32Array, Float64Array, Int16Array, Int32Array,
+  Int64Array, Int8Array, LargeBinaryArray, LargeStringArray, StringArray,
+  Time32SecondArray, Time64MicrosecondArray, TimestampMicrosecondArray,
+  TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray,
+  UInt16Array, UInt32Array, UInt64Array, UInt8Array,
 };
 use duckdb::arrow::datatypes::{DataType, TimeUnit};
 use duckdb::arrow::record_batch::RecordBatch;
@@ -536,7 +536,45 @@ fn field_value_to_json(
       let decimal_value = value as f64 / 10_f64.powi(*scale as i32);
       JsonValue::from(decimal_value)
     }
+    DataType::Decimal256(_, scale) => {
+      let arr = array.as_any().downcast_ref::<Decimal256Array>().unwrap();
+      let s = format_decimal_string(&arr.value(row).to_string(), *scale as i32);
+      serde_json::from_str(&s).unwrap_or(JsonValue::String(s))
+    }
     _ => JsonValue::Null,
+  }
+}
+
+/// Format a stringified integer (raw decimal value) with a given scale into
+/// the conventional decimal text form. Pure string manipulation — preserves
+/// full precision regardless of integer width (i128, i256).
+fn format_decimal_string(digits: &str, scale: i32) -> String {
+  let (neg, digits) = if let Some(rest) = digits.strip_prefix('-') {
+    (true, rest)
+  } else {
+    (false, digits)
+  };
+  let body = if scale <= 0 {
+    let mut out = digits.to_string();
+    for _ in 0..(-scale) {
+      out.push('0');
+    }
+    out
+  } else {
+    let scale = scale as usize;
+    if digits.len() <= scale {
+      let mut frac = "0".repeat(scale - digits.len());
+      frac.push_str(digits);
+      format!("0.{}", frac)
+    } else {
+      let split = digits.len() - scale;
+      format!("{}.{}", &digits[..split], &digits[split..])
+    }
+  };
+  if neg {
+    format!("-{}", body)
+  } else {
+    body
   }
 }
 
@@ -601,6 +639,16 @@ fn pool_batches_to_json(batches: &[trex_pool_client::arrow_array::RecordBatch]) 
             DataType::Boolean => {
               let a = col.as_any().downcast_ref::<BooleanArray>().unwrap();
               serde_json::Value::from(a.value(r))
+            }
+            DataType::Decimal128(_, scale) => {
+              let a = col.as_any().downcast_ref::<Decimal128Array>().unwrap();
+              let v = a.value(r) as f64 / 10_f64.powi(*scale as i32);
+              serde_json::Value::from(v)
+            }
+            DataType::Decimal256(_, scale) => {
+              let a = col.as_any().downcast_ref::<Decimal256Array>().unwrap();
+              let s = format_decimal_string(&a.value(r).to_string(), *scale as i32);
+              serde_json::from_str(&s).unwrap_or(serde_json::Value::String(s))
             }
             _ => serde_json::Value::Null,
           }
@@ -1405,6 +1453,38 @@ mod tests {
       .unwrap();
     let result = field_value_to_json(&arr, 0, &DataType::Decimal128(10, 2));
     assert_eq!(result, JsonValue::from(123.45));
+  }
+
+  #[test]
+  fn test_format_decimal_string_basic() {
+    assert_eq!(format_decimal_string("12345", 2), "123.45");
+    assert_eq!(format_decimal_string("12345", 0), "12345");
+    assert_eq!(format_decimal_string("-12345", 2), "-123.45");
+    assert_eq!(format_decimal_string("5", 3), "0.005");
+    assert_eq!(format_decimal_string("-5", 3), "-0.005");
+  }
+
+  #[test]
+  fn test_format_decimal_string_negative_scale() {
+    // Negative scale = multiply by 10^|scale|
+    assert_eq!(format_decimal_string("123", -2), "12300");
+    assert_eq!(format_decimal_string("-7", -1), "-70");
+  }
+
+  #[test]
+  fn test_format_decimal_string_zero_padding() {
+    assert_eq!(format_decimal_string("1", 4), "0.0001");
+    assert_eq!(format_decimal_string("100", 5), "0.00100");
+  }
+
+  #[test]
+  fn test_format_decimal_string_high_precision() {
+    // i256-range: would lose precision via f64. String path preserves it.
+    let huge = "12345678901234567890123456789012345678";
+    assert_eq!(
+      format_decimal_string(huge, 10),
+      "12345678901234567890123456789.0123456789"
+    );
   }
 
   #[test]

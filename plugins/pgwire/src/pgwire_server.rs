@@ -1,3 +1,4 @@
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 use std::thread;
 use std::time::SystemTime;
@@ -369,12 +370,45 @@ fn arrow_type_to_pg_type(arrow_type: &duckdb::arrow::datatypes::DataType) -> Typ
         DataType::UInt64 => Type::INT8,
         DataType::Float16 | DataType::Float32 => Type::FLOAT4,
         DataType::Float64 => Type::FLOAT8,
+        DataType::Decimal128(_, _) | DataType::Decimal256(_, _) => Type::NUMERIC,
         DataType::Utf8 | DataType::LargeUtf8 => Type::TEXT,
         DataType::Date32 | DataType::Date64 => Type::DATE,
         DataType::Timestamp(_, _) => Type::TIMESTAMP,
         DataType::Time32(_) | DataType::Time64(_) => Type::TIME,
         DataType::Binary | DataType::LargeBinary => Type::BYTEA,
         _ => Type::TEXT,
+    }
+}
+
+fn extract_panic_message(err: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = err.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = err.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    }
+}
+
+fn encode_batches_safely(
+    header: Arc<Vec<FieldInfo>>,
+    batches: Vec<RecordBatch>,
+) -> Vec<PgWireResult<pgwire::messages::data::DataRow>> {
+    match panic::catch_unwind(AssertUnwindSafe(|| {
+        batches
+            .into_iter()
+            .flat_map(|rb| encode_recordbatch(header.clone(), rb))
+            .collect::<Vec<_>>()
+    })) {
+        Ok(rows) => rows,
+        Err(p) => {
+            let msg = extract_panic_message(p);
+            vec![Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                "ERROR".to_owned(),
+                "XX000".to_owned(),
+                format!("Row encoding panicked: {}", msg),
+            ))))]
+        }
     }
 }
 
@@ -464,11 +498,7 @@ impl SimpleQueryHandler for TrexQueryHandler {
             } else {
                 log_debug(&format!("Got SELECT result: {} batches", batches.len()));
                 let header = Arc::new(schema_to_field_info(&schema, &Format::UnifiedText)?);
-                let header_ref = header.clone();
-
-                let data: Vec<_> = batches.into_iter()
-                    .flat_map(|rb| encode_recordbatch(header_ref.clone(), rb))
-                    .collect();
+                let data = encode_batches_safely(header.clone(), batches);
 
                 responses.push(Response::Query(QueryResponse::new(
                     header,
@@ -557,11 +587,7 @@ impl ExtendedQueryHandler for TrexQueryHandler {
             Ok(Response::Execution(Tag::new("OK").with_rows(0)))
         } else {
             let header = Arc::new(schema_to_field_info(&schema, &Format::UnifiedText)?);
-            let header_ref = header.clone();
-
-            let data: Vec<_> = batches.into_iter()
-                .flat_map(|rb| encode_recordbatch(header_ref.clone(), rb))
-                .collect();
+            let data = encode_batches_safely(header.clone(), batches);
 
             Ok(Response::Query(QueryResponse::new(
                 header,
