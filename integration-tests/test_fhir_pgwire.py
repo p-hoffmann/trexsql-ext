@@ -84,7 +84,7 @@ def env(request):
     """
     os.environ["FHIR_POOL_SIZE"] = "8"
     os.environ["FHIR_USE_HOST_DB"] = "true"
-    os.environ["TREX_POOL_SIZE"] = "16"
+    os.environ["TREX_POOL_SIZE"] = "64"
 
     gp, fp, pp, tp = alloc_ports()
     node = Node([POOL_EXT, FHIR_EXT, PGWIRE_EXT], gp, fp, pp, tp)

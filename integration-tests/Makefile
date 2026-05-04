@@ -13,7 +13,7 @@ TREXAS_EXT=$(REPO_ROOT)/plugins/runtime/build/debug/extension/trexas/trexas.trex
 PYTHON_BIN?=python3
 VENV=./venv
 
-.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-db test-atlas test-ai test-chdb test-chdb-db test-hana test-tpm test-etl test-etl-db test-fhir test-trexas test-trexas-swarm test-pg-trex check-extensions check-pgwire check-atlas check-ai check-chdb check-hana check-tpm check-etl check-fhir check-migration check-trexas check-db hana-up hana-down hana-clean pg-trex-up pg-trex-down clean
+.PHONY: configure test test-tier1 test-tier2 test-tier3 test-pgwire test-pgwire-db test-pgwire-decimal test-pgwire-datatypes test-atlas test-ai test-chdb test-chdb-db test-hana test-tpm test-etl test-etl-db test-fhir test-trexas test-trexas-swarm test-pg-trex check-extensions check-pgwire check-atlas check-ai check-chdb check-hana check-tpm check-etl check-fhir check-migration check-trexas check-db hana-up hana-down hana-clean pg-trex-up pg-trex-down clean
 
 configure:
 	$(PYTHON_BIN) -m venv $(VENV)
@@ -72,6 +72,12 @@ test-pgwire: check-pgwire
 
 test-pgwire-db: check-extensions check-pgwire
 	$(VENV)/bin/pytest -v test_pgwire_db.py
+
+test-pgwire-decimal: check-pgwire
+	$(VENV)/bin/pytest -v test_pgwire_decimal.py
+
+test-pgwire-datatypes: check-pgwire
+	$(VENV)/bin/pytest -v test_pgwire_datatypes.py
 
 test-atlas: check-atlas
 	$(VENV)/bin/pytest -v test_atlas_standalone.py

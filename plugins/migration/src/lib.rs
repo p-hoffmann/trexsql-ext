@@ -28,6 +28,26 @@ fn execute_sql(sql: &str) -> Result<(), Box<dyn Error>> {
     result.map_err(|e| -> Box<dyn Error> { e.into() })
 }
 
+/// Run a list of statements inside a single BEGIN/COMMIT on one session.
+/// Rolls back and propagates the first failure.
+fn execute_statements_in_transaction(statements: &[&str]) -> Result<(), String> {
+    let sid = trex_pool_client::create_session()?;
+    if let Err(e) = trex_pool_client::session_execute(sid, "BEGIN") {
+        let _ = trex_pool_client::destroy_session(sid);
+        return Err(e);
+    }
+    for stmt in statements {
+        if let Err(e) = trex_pool_client::session_execute(sid, stmt) {
+            let _ = trex_pool_client::session_execute(sid, "ROLLBACK");
+            let _ = trex_pool_client::destroy_session(sid);
+            return Err(e);
+        }
+    }
+    let commit = trex_pool_client::session_execute(sid, "COMMIT").map(|_| ());
+    let _ = trex_pool_client::destroy_session(sid);
+    commit
+}
+
 struct QueryRow {
     columns: Vec<String>,
 }
@@ -70,20 +90,82 @@ fn arrow_value_to_string(array: &dyn trex_pool_client::arrow_array::Array, row: 
         DataType::LargeUtf8 => {
             array.as_any().downcast_ref::<LargeStringArray>().unwrap().value(row).to_string()
         }
+        DataType::Int8 => array.as_any().downcast_ref::<Int8Array>().unwrap().value(row).to_string(),
+        DataType::Int16 => array.as_any().downcast_ref::<Int16Array>().unwrap().value(row).to_string(),
         DataType::Int32 => {
             array.as_any().downcast_ref::<Int32Array>().unwrap().value(row).to_string()
         }
         DataType::Int64 => {
             array.as_any().downcast_ref::<Int64Array>().unwrap().value(row).to_string()
         }
+        DataType::UInt8 => array.as_any().downcast_ref::<UInt8Array>().unwrap().value(row).to_string(),
+        DataType::UInt16 => array.as_any().downcast_ref::<UInt16Array>().unwrap().value(row).to_string(),
+        DataType::UInt32 => array.as_any().downcast_ref::<UInt32Array>().unwrap().value(row).to_string(),
         DataType::UInt64 => {
             array.as_any().downcast_ref::<UInt64Array>().unwrap().value(row).to_string()
         }
+        DataType::Float32 => array.as_any().downcast_ref::<Float32Array>().unwrap().value(row).to_string(),
+        DataType::Float64 => array.as_any().downcast_ref::<Float64Array>().unwrap().value(row).to_string(),
         DataType::Boolean => {
             array.as_any().downcast_ref::<BooleanArray>().unwrap().value(row).to_string()
         }
-        _ => format!("{:?}", array.data_type()),
+        DataType::Decimal128(_, scale) => {
+            let raw = array.as_any().downcast_ref::<Decimal128Array>().unwrap().value(row);
+            format_decimal_string(&raw.to_string(), *scale as i32)
+        }
+        DataType::Decimal256(_, scale) => {
+            let raw = array.as_any().downcast_ref::<Decimal256Array>().unwrap().value(row);
+            format_decimal_string(&raw.to_string(), *scale as i32)
+        }
+        DataType::Date32 => {
+            let days = array.as_any().downcast_ref::<Date32Array>().unwrap().value(row);
+            chrono::DateTime::from_timestamp(days as i64 * 86400, 0)
+                .map(|dt| dt.format("%Y-%m-%d").to_string())
+                .unwrap_or_default()
+        }
+        DataType::Timestamp(_, _) => array.as_any().downcast_ref::<TimestampMicrosecondArray>()
+            .map(|a| chrono::DateTime::from_timestamp_micros(a.value(row))
+                .map(|dt| dt.to_rfc3339()).unwrap_or_default())
+            .unwrap_or_default(),
+        DataType::Binary => format_hex(array.as_any().downcast_ref::<BinaryArray>().unwrap().value(row)),
+        DataType::LargeBinary => format_hex(array.as_any().downcast_ref::<LargeBinaryArray>().unwrap().value(row)),
+        _ => String::new(),
     }
+}
+
+fn format_decimal_string(digits: &str, scale: i32) -> String {
+    let (neg, digits) = if let Some(rest) = digits.strip_prefix('-') {
+        (true, rest)
+    } else {
+        (false, digits)
+    };
+    let body = if scale <= 0 {
+        let mut out = digits.to_string();
+        for _ in 0..(-scale) {
+            out.push('0');
+        }
+        out
+    } else {
+        let scale = scale as usize;
+        if digits.len() <= scale {
+            let mut frac = "0".repeat(scale - digits.len());
+            frac.push_str(digits);
+            format!("0.{}", frac)
+        } else {
+            let split = digits.len() - scale;
+            format!("{}.{}", &digits[..split], &digits[split..])
+        }
+    };
+    if neg { format!("-{}", body) } else { body }
+}
+
+fn format_hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(2 + bytes.len() * 2);
+    s.push_str("\\x");
+    for b in bytes {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
 }
 
 struct MigrationFile {
@@ -731,13 +813,14 @@ fn execute_migrations_in_schema(
             let migration = &discovered[idx];
 
             let insert_sql = build_insert_migration_sql(migration);
-            trex_pool_client::execute_transaction(&[
-                &migration.sql,
-                &insert_sql,
-            ])
-            .map_err(|e| -> Box<dyn Error> {
-                format!("Migration V{}__{} failed: {}", migration.version, migration.name, e).into()
-            })?;
+            execute_statements_in_transaction(&[&migration.sql, &insert_sql])
+                .map_err(|e| -> Box<dyn Error> {
+                    format!(
+                        "Migration V{}__{} failed: {}",
+                        migration.version, migration.name, e
+                    )
+                    .into()
+                })?;
 
             results.push(MigrationResult {
                 version: migration.version,
@@ -1080,5 +1163,55 @@ pub unsafe extern "C" fn migration_init_c_api(
             }
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod arrow_value_tests {
+    use super::*;
+    use trex_pool_client::arrow_array::*;
+
+    #[test]
+    fn format_decimal_basic() {
+        assert_eq!(format_decimal_string("12345", 2), "123.45");
+        assert_eq!(format_decimal_string("-12345", 2), "-123.45");
+        assert_eq!(format_decimal_string("5", 3), "0.005");
+        assert_eq!(format_decimal_string("-5", 3), "-0.005");
+        assert_eq!(format_decimal_string("0", 0), "0");
+    }
+
+    #[test]
+    fn format_decimal_negative_scale() {
+        assert_eq!(format_decimal_string("123", -2), "12300");
+    }
+
+    #[test]
+    fn format_decimal_high_precision() {
+        let huge = "12345678901234567890123456789012345678";
+        assert_eq!(
+            format_decimal_string(huge, 10),
+            "12345678901234567890123456789.0123456789"
+        );
+    }
+
+    #[test]
+    fn format_hex_bytes() {
+        assert_eq!(format_hex(&[0xDE, 0xAD, 0xBE, 0xEF]), "\\xdeadbeef");
+    }
+
+    #[test]
+    fn arrow_value_decimal128() {
+        let arr = Decimal128Array::from(vec![12345i128])
+            .with_precision_and_scale(10, 2)
+            .unwrap();
+        assert_eq!(arrow_value_to_string(&arr, 0), "123.45");
+    }
+
+    #[test]
+    fn arrow_value_int_and_float() {
+        let i = Int32Array::from(vec![42]);
+        assert_eq!(arrow_value_to_string(&i, 0), "42");
+        let f = Float64Array::from(vec![1.5]);
+        assert_eq!(arrow_value_to_string(&f, 0), "1.5");
     }
 }

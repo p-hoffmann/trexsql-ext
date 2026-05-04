@@ -1,7 +1,10 @@
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 use std::thread;
 use std::time::SystemTime;
 
+use duckdb::arrow::datatypes::Schema;
+use duckdb::arrow::record_batch::RecordBatch;
 use duckdb::params;
 use async_trait::async_trait;
 use futures::stream;
@@ -298,6 +301,14 @@ impl TrexQueryHandler {
 /// Convert trexsql statement columns to pgwire field info (for describe operations)
 fn row_desc_from_stmt(stmt: &duckdb::Statement, format: &Format) -> PgWireResult<Vec<FieldInfo>> {
     let columns = stmt.column_count();
+    if columns == 1 {
+        let name = stmt.column_name(0).cloned().unwrap_or_default();
+        let datatype = stmt.column_type(0);
+        let pg = into_pg_type(&datatype).unwrap_or(Type::TEXT);
+        if (name == "Success" && pg == Type::BOOL) || (name == "Count" && pg == Type::INT8) {
+            return Ok(Vec::new());
+        }
+    }
     (0..columns)
         .map(|idx| {
             let datatype = stmt.column_type(idx);
@@ -313,9 +324,29 @@ fn row_desc_from_stmt(stmt: &duckdb::Statement, format: &Format) -> PgWireResult
         .collect()
 }
 
+/// Detects DuckDB's synthetic result schemas for statements that have no
+/// user-visible output. DuckDB returns `Success: bool` for control statements
+/// (BEGIN/COMMIT/ROLLBACK/USE/SET) and `Count: int64` for DDL/DML, while real
+/// queries name their columns from the projection. Treating these as
+/// CommandComplete is required for libpq-based clients (psycopg2) which
+/// otherwise see a RowDescription where they expect none.
+fn is_duckdb_non_query_schema(schema: &duckdb::arrow::datatypes::Schema) -> bool {
+    use duckdb::arrow::datatypes::DataType;
+    let fields = schema.fields();
+    if fields.len() != 1 {
+        return false;
+    }
+    let f = &fields[0];
+    matches!(
+        (f.name().as_str(), f.data_type()),
+        ("Success", DataType::Boolean) | ("Count", DataType::Int64)
+    )
+}
+
 /// Convert Arrow schema to pgwire field info
 fn schema_to_field_info(schema: &duckdb::arrow::datatypes::Schema, format: &Format) -> PgWireResult<Vec<FieldInfo>> {
-    schema.fields().iter().enumerate().map(|(idx, field)| {
+    let effective = rebuild_schema_for_pg(schema);
+    effective.fields().iter().enumerate().map(|(idx, field)| {
         let pg_type = arrow_type_to_pg_type(field.data_type());
         Ok(FieldInfo::new(
             field.name().clone(),
@@ -340,12 +371,120 @@ fn arrow_type_to_pg_type(arrow_type: &duckdb::arrow::datatypes::DataType) -> Typ
         DataType::UInt64 => Type::INT8,
         DataType::Float16 | DataType::Float32 => Type::FLOAT4,
         DataType::Float64 => Type::FLOAT8,
+        DataType::Decimal128(_, _) | DataType::Decimal256(_, _) => Type::NUMERIC,
         DataType::Utf8 | DataType::LargeUtf8 => Type::TEXT,
         DataType::Date32 | DataType::Date64 => Type::DATE,
         DataType::Timestamp(_, _) => Type::TIMESTAMP,
         DataType::Time32(_) | DataType::Time64(_) => Type::TIME,
         DataType::Binary | DataType::LargeBinary => Type::BYTEA,
         _ => Type::TEXT,
+    }
+}
+
+fn extract_panic_message(err: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = err.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = err.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    }
+}
+
+/// True when arrow-pg's encoder cannot natively encode this Arrow type and
+/// we must pre-cast the column to Utf8 so the row encodes as TEXT.
+fn needs_string_cast(dt: &duckdb::arrow::datatypes::DataType) -> bool {
+    use duckdb::arrow::datatypes::DataType;
+    match dt {
+        DataType::Float16
+        | DataType::Decimal256(_, _)
+        | DataType::FixedSizeBinary(_)
+        | DataType::Map(_, _)
+        | DataType::Union(_, _)
+        | DataType::RunEndEncoded(_, _) => true,
+        DataType::Dictionary(_, value_type) => !matches!(
+            value_type.as_ref(),
+            DataType::Utf8 | DataType::LargeUtf8
+        ),
+        _ => false,
+    }
+}
+
+fn rebuild_record_batch_for_pg(rb: RecordBatch) -> RecordBatch {
+    use duckdb::arrow::array::ArrayRef;
+    use duckdb::arrow::compute::kernels::cast::cast;
+    use duckdb::arrow::datatypes::{DataType, Field, Schema};
+
+    let schema = rb.schema();
+    if !schema.fields().iter().any(|f| needs_string_cast(f.data_type())) {
+        return rb;
+    }
+
+    let mut new_fields = Vec::with_capacity(schema.fields().len());
+    let mut new_columns: Vec<ArrayRef> = Vec::with_capacity(rb.num_columns());
+    for (i, field) in schema.fields().iter().enumerate() {
+        if needs_string_cast(field.data_type()) {
+            match cast(rb.column(i), &DataType::Utf8) {
+                Ok(casted) => {
+                    new_columns.push(casted);
+                    new_fields.push(Field::new(
+                        field.name(),
+                        DataType::Utf8,
+                        field.is_nullable(),
+                    ));
+                    continue;
+                }
+                Err(_) => {
+                    // Cast failed — leave column as-is and let arrow-pg decide.
+                }
+            }
+        }
+        new_columns.push(rb.column(i).clone());
+        new_fields.push(field.as_ref().clone());
+    }
+    let new_schema = Arc::new(Schema::new(new_fields));
+    RecordBatch::try_new(new_schema, new_columns).unwrap_or(rb)
+}
+
+fn rebuild_schema_for_pg(schema: &Schema) -> Schema {
+    use duckdb::arrow::datatypes::{DataType, Field};
+    if !schema.fields().iter().any(|f| needs_string_cast(f.data_type())) {
+        return schema.clone();
+    }
+    let new_fields: Vec<Field> = schema
+        .fields()
+        .iter()
+        .map(|f| {
+            if needs_string_cast(f.data_type()) {
+                Field::new(f.name(), DataType::Utf8, f.is_nullable())
+            } else {
+                f.as_ref().clone()
+            }
+        })
+        .collect();
+    Schema::new(new_fields)
+}
+
+fn encode_batches_safely(
+    header: Arc<Vec<FieldInfo>>,
+    batches: Vec<RecordBatch>,
+) -> Vec<PgWireResult<pgwire::messages::data::DataRow>> {
+    match panic::catch_unwind(AssertUnwindSafe(|| {
+        batches
+            .into_iter()
+            .map(rebuild_record_batch_for_pg)
+            .flat_map(|rb| encode_recordbatch(header.clone(), rb))
+            .collect::<Vec<_>>()
+    })) {
+        Ok(rows) => rows,
+        Err(p) => {
+            let msg = extract_panic_message(p);
+            vec![Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                "ERROR".to_owned(),
+                "XX000".to_owned(),
+                format!("Row encoding panicked: {}", msg),
+            ))))]
+        }
     }
 }
 
@@ -363,7 +502,12 @@ impl SimpleQueryHandler for TrexQueryHandler {
                 if matches!(check_database_action(db, &db_credentials), DatabaseAction::SetDatabase) {
                     let use_sql = format!("USE \"{}\"", db.replace('"', "\"\""));
                     let session_id = self.session_id;
-                    if let Err(err) = tokio::task::spawn_blocking(move || trex_pool_client::session_execute(session_id, &use_sql)).await.unwrap_or(Err("spawn error".into())) {
+                    let result = tokio::task::spawn_blocking(move || {
+                        trex_pool_client::session_execute(session_id, &use_sql).map(|_| ())
+                    })
+                    .await
+                    .unwrap_or_else(|e| Err(format!("spawn error: {e}")));
+                    if let Err(err) = result {
                         return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                             "ERROR".to_owned(),
                             "XX000".to_owned(),
@@ -406,7 +550,7 @@ impl SimpleQueryHandler for TrexQueryHandler {
             log_debug(&format!("Submitting query: {}", sql));
             let sql_owned = sql.clone();
             let session_id = self.session_id;
-            let (schema, batches) = tokio::task::spawn_blocking(move || {
+            let (schema, batches): (Arc<Schema>, Vec<RecordBatch>) = tokio::task::spawn_blocking(move || {
                 trex_pool_client::session_execute(session_id, &sql_owned)
             }).await.map_err(|e| {
                 PgWireError::UserError(Box::new(ErrorInfo::new(
@@ -422,17 +566,15 @@ impl SimpleQueryHandler for TrexQueryHandler {
                 )))
             })?;
 
-            if schema.fields().is_empty() && batches.is_empty() {
+            if (schema.fields().is_empty() && batches.is_empty())
+                || is_duckdb_non_query_schema(&schema)
+            {
                 log_debug("Got EXECUTE result");
                 responses.push(Response::Execution(Tag::new("OK").with_rows(0)));
             } else {
                 log_debug(&format!("Got SELECT result: {} batches", batches.len()));
                 let header = Arc::new(schema_to_field_info(&schema, &Format::UnifiedText)?);
-                let header_ref = header.clone();
-
-                let data: Vec<_> = batches.into_iter()
-                    .flat_map(|rb| encode_recordbatch(header_ref.clone(), rb))
-                    .collect();
+                let data = encode_batches_safely(header.clone(), batches);
 
                 responses.push(Response::Query(QueryResponse::new(
                     header,
@@ -482,7 +624,12 @@ impl ExtendedQueryHandler for TrexQueryHandler {
                 if matches!(check_database_action(db, &db_credentials), DatabaseAction::SetDatabase) {
                     let use_sql = format!("USE \"{}\"", db.replace('"', "\"\""));
                     let session_id = self.session_id;
-                    if let Err(err) = tokio::task::spawn_blocking(move || trex_pool_client::session_execute(session_id, &use_sql)).await.unwrap_or(Err("spawn error".into())) {
+                    let result = tokio::task::spawn_blocking(move || {
+                        trex_pool_client::session_execute(session_id, &use_sql).map(|_| ())
+                    })
+                    .await
+                    .unwrap_or_else(|e| Err(format!("spawn error: {e}")));
+                    if let Err(err) = result {
                         return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                             "ERROR".to_owned(),
                             "XX000".to_owned(),
@@ -494,7 +641,7 @@ impl ExtendedQueryHandler for TrexQueryHandler {
         }
 
         let session_id = self.session_id;
-        let (schema, batches) = tokio::task::spawn_blocking(move || {
+        let (schema, batches): (Arc<Schema>, Vec<RecordBatch>) = tokio::task::spawn_blocking(move || {
             trex_pool_client::session_execute(session_id, &query)
         }).await.map_err(|e| {
             PgWireError::UserError(Box::new(ErrorInfo::new(
@@ -510,15 +657,13 @@ impl ExtendedQueryHandler for TrexQueryHandler {
             )))
         })?;
 
-        if schema.fields().is_empty() && batches.is_empty() {
+        if (schema.fields().is_empty() && batches.is_empty())
+            || is_duckdb_non_query_schema(&schema)
+        {
             Ok(Response::Execution(Tag::new("OK").with_rows(0)))
         } else {
             let header = Arc::new(schema_to_field_info(&schema, &Format::UnifiedText)?);
-            let header_ref = header.clone();
-
-            let data: Vec<_> = batches.into_iter()
-                .flat_map(|rb| encode_recordbatch(header_ref.clone(), rb))
-                .collect();
+            let data = encode_batches_safely(header.clone(), batches);
 
             Ok(Response::Query(QueryResponse::new(
                 header,
@@ -755,11 +900,6 @@ pub fn start_pgwire_server_capi(
                 let listener = TcpListener::bind(format!("{}:{}", server_host, server_port)).await?;
                 log_debug(&format!("Bound to {}:{}", server_host, server_port));
 
-                let pool_size = trex_pool_client::read_pool_size().map_err(|e| {
-                    log_debug(&format!("Pool not available: {}", e));
-                    std::io::Error::new(std::io::ErrorKind::Other, "Connection pool not available")
-                })?;
-                log_debug(&format!("Using shared trex_pool with {} read workers", pool_size));
                 let worker_counter = std::sync::atomic::AtomicUsize::new(0);
 
                 // Treat empty password as no authentication
@@ -770,11 +910,11 @@ pub fn start_pgwire_server_capi(
                             result = listener.accept() => {
                                 match result {
                                     Ok((socket, _addr)) => {
-                                        let worker_id = worker_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % pool_size;
+                                        let worker_id = worker_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         let session_id = match trex_pool_client::create_session() {
                                             Ok(id) => id,
                                             Err(e) => {
-                                                log_debug(&format!("Failed to create session: {}", e));
+                                                log_debug(&format!("create_session: {e}"));
                                                 continue;
                                             }
                                         };
@@ -803,11 +943,11 @@ pub fn start_pgwire_server_capi(
                                 match result {
                                     Ok((socket, addr)) => {
                                         log_debug(&format!("New connection from {:?}", addr));
-                                        let worker_id = worker_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % pool_size;
+                                        let worker_id = worker_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         let session_id = match trex_pool_client::create_session() {
                                             Ok(id) => id,
                                             Err(e) => {
-                                                log_debug(&format!("Failed to create session: {}", e));
+                                                log_debug(&format!("create_session: {e}"));
                                                 continue;
                                             }
                                         };
@@ -828,7 +968,7 @@ pub fn start_pgwire_server_capi(
                         }
                     }
                 }
-                
+
                 Ok(())
             });
             
@@ -905,5 +1045,117 @@ mod tests {
         assert!(!is_postgres_only_set("RESET extra_float_digits"));
         // SETOF is not a SET statement (would be inside e.g. CREATE FUNCTION).
         assert!(!is_postgres_only_set("SETOF integer"));
+    }
+
+    // -------- needs_string_cast / rebuild_*_for_pg --------
+
+    #[test]
+    fn needs_string_cast_unsupported() {
+        use duckdb::arrow::datatypes::{DataType, Field};
+        assert!(needs_string_cast(&DataType::Float16));
+        assert!(needs_string_cast(&DataType::Decimal256(76, 4)));
+        assert!(needs_string_cast(&DataType::FixedSizeBinary(16)));
+        assert!(needs_string_cast(&DataType::Map(
+            Arc::new(Field::new(
+                "entries",
+                DataType::Struct(
+                    vec![
+                        Field::new("key", DataType::Utf8, false),
+                        Field::new("value", DataType::Int32, false),
+                    ]
+                    .into(),
+                ),
+                false,
+            )),
+            false,
+        )));
+        let dict_int_value = DataType::Dictionary(
+            Box::new(DataType::Int32),
+            Box::new(DataType::Int32),
+        );
+        assert!(needs_string_cast(&dict_int_value));
+    }
+
+    #[test]
+    fn needs_string_cast_supported() {
+        use duckdb::arrow::datatypes::DataType;
+        assert!(!needs_string_cast(&DataType::Boolean));
+        assert!(!needs_string_cast(&DataType::Int32));
+        assert!(!needs_string_cast(&DataType::Int64));
+        assert!(!needs_string_cast(&DataType::Float64));
+        assert!(!needs_string_cast(&DataType::Decimal128(10, 2)));
+        assert!(!needs_string_cast(&DataType::Utf8));
+        assert!(!needs_string_cast(&DataType::Date32));
+        let dict_utf8_value = DataType::Dictionary(
+            Box::new(DataType::Int32),
+            Box::new(DataType::Utf8),
+        );
+        assert!(!needs_string_cast(&dict_utf8_value));
+    }
+
+    #[test]
+    fn rebuild_schema_for_pg_replaces_unsupported_with_utf8() {
+        use duckdb::arrow::datatypes::{DataType, Field, Schema};
+        let original = Schema::new(vec![
+            Field::new("kept", DataType::Int32, false),
+            Field::new("uuid", DataType::FixedSizeBinary(16), true),
+            Field::new("score", DataType::Decimal256(76, 4), true),
+        ]);
+        let rebuilt = rebuild_schema_for_pg(&original);
+        assert_eq!(rebuilt.field(0).data_type(), &DataType::Int32);
+        assert_eq!(rebuilt.field(1).data_type(), &DataType::Utf8);
+        assert_eq!(rebuilt.field(2).data_type(), &DataType::Utf8);
+        assert!(rebuilt.field(1).is_nullable());
+    }
+
+    #[test]
+    fn rebuild_schema_for_pg_passthrough_when_all_supported() {
+        use duckdb::arrow::datatypes::{DataType, Field, Schema};
+        let original = Schema::new(vec![
+            Field::new("a", DataType::Int32, false),
+            Field::new("b", DataType::Utf8, false),
+        ]);
+        let rebuilt = rebuild_schema_for_pg(&original);
+        assert_eq!(rebuilt, original);
+    }
+
+    #[test]
+    fn rebuild_record_batch_casts_fixed_size_binary_to_utf8() {
+        use duckdb::arrow::array::FixedSizeBinaryArray;
+        use duckdb::arrow::datatypes::{DataType, Field, Schema};
+        let arr =
+            FixedSizeBinaryArray::try_from_iter(vec![vec![0xDEu8, 0xAD]].into_iter())
+                .unwrap();
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "b",
+            DataType::FixedSizeBinary(2),
+            false,
+        )]));
+        let rb = RecordBatch::try_new(schema, vec![Arc::new(arr)]).unwrap();
+        let casted = rebuild_record_batch_for_pg(rb);
+        assert_eq!(
+            casted.schema().field(0).data_type(),
+            &DataType::Utf8
+        );
+        assert_eq!(casted.num_rows(), 1);
+    }
+
+    #[test]
+    fn rebuild_record_batch_passthrough_for_supported_types() {
+        use duckdb::arrow::array::Int32Array;
+        use duckdb::arrow::datatypes::{DataType, Field, Schema};
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "i",
+            DataType::Int32,
+            false,
+        )]));
+        let original = RecordBatch::try_new(
+            schema,
+            vec![Arc::new(Int32Array::from(vec![42]))],
+        )
+        .unwrap();
+        let rebuilt = rebuild_record_batch_for_pg(original.clone());
+        assert_eq!(rebuilt.schema().field(0).data_type(), &DataType::Int32);
+        assert_eq!(rebuilt.num_rows(), 1);
     }
 }

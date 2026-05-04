@@ -180,7 +180,7 @@ export class TrexConnection  {
             callback(null, result);
         } catch (err) {
             console.error(err);
-            callback(new Error(console.error(err), err.message), null);
+            callback(err instanceof Error ? err : new Error(err?.message ?? String(err)), null);
         }
     }
 
@@ -204,7 +204,7 @@ export class TrexConnection  {
             callback(null, result);
         } catch (err) {
             console.error(err);
-            callback(new Error(console.error(err), err.message), null);
+            callback(err instanceof Error ? err : new Error(err?.message ?? String(err)), null);
         }
     }
 
@@ -240,7 +240,8 @@ export class TrexConnection  {
                 }
             });
         } catch (err) {
-            callback(new Error(console.error(err), err.message), null);
+            console.error(err);
+            callback(err instanceof Error ? err : new Error(err?.message ?? String(err)), null);
         }
     }
 
@@ -310,7 +311,16 @@ export class TrexConnection  {
     }
 
     async close() {
-        console.log(`Duckdb database connection has been closed`);
+        try {
+            if (this.connection && typeof this.connection.close === 'function') {
+                this.connection.close();
+            }
+            if (this.writeConn && this.writeConn !== this.connection && typeof this.writeConn.close === 'function') {
+                this.writeConn.close();
+            }
+        } catch (e) {
+            console.error(`Error closing TrexConnection: ${e?.message ?? e}`);
+        }
     }
 
     executeBulkUpdate(

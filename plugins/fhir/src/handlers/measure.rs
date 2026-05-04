@@ -135,7 +135,8 @@ async fn evaluate_measure_impl(
     let sql = compiler::compile_measure_population(&elm_library, schema_name, &expression_name)
         .map_err(|e| AppError::BadRequest(format!("CQL compilation error: {}", e)))?;
 
-    let count = match state.executor.submit(sql).await {
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
+    let count = match conn.execute(sql).await {
         QueryResult::Select { rows, .. } => rows
             .first()
             .and_then(|r| r.first())
@@ -199,7 +200,8 @@ async fn load_single_resource(
     resource_type: &str,
     identifier: &str,
 ) -> Result<String, AppError> {
-    match state.executor.submit(sql.to_string()).await {
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
+    match conn.execute(sql.to_string()).await {
         QueryResult::Select { rows, .. } => rows
             .first()
             .and_then(|r| r.first())
@@ -278,7 +280,8 @@ async fn extract_elm_from_library(state: &AppState, library: &Value) -> Result<V
 async fn translate_cql_to_elm(state: &AppState, cql_text: &str) -> Result<Value, AppError> {
     let escaped = cql_text.replace('\'', "''");
     let sql = format!("SELECT cql_to_elm('{}')", escaped);
-    match state.executor.submit(sql).await {
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
+    match conn.execute(sql).await {
         QueryResult::Select { rows, .. } => {
             let elm_str = rows
                 .first()

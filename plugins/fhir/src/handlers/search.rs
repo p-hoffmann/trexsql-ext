@@ -62,9 +62,9 @@ pub async fn search_resources(
         where_clause = where_clause
     );
 
-    let worker_id = state.executor.next_worker_id();
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
 
-    let total = match state.executor.submit_on(worker_id, count_sql).await {
+    let total = match conn.execute(count_sql).await {
         QueryResult::Select { rows, .. } => rows
             .first()
             .and_then(|r| r.first())
@@ -74,7 +74,7 @@ pub async fn search_resources(
         _ => 0,
     };
 
-    match state.executor.submit_on(worker_id, sql).await {
+    let result = match conn.execute(sql).await {
         QueryResult::Select { rows, .. } => {
             let has_more = rows.len() > count;
             let entries: Vec<Value> = rows
@@ -142,13 +142,14 @@ pub async fn search_resources(
         }
         QueryResult::Error(e) => {
             if e.contains("does not exist") || e.contains("Table") {
-                return Err(AppError::NotFound(format!(
+                Err(AppError::NotFound(format!(
                     "Resource type '{}' not found in dataset '{}'",
                     resource_type, dataset_id
-                )));
+                )))
+            } else {
+                eprintln!("[fhir] Search failed: {}", e);
+                Err(AppError::Internal("Search failed".to_string()))
             }
-            eprintln!("[fhir] Search failed: {}", e);
-            Err(AppError::Internal("Search failed".to_string()))
         }
         _ => Ok(Json(json!({
             "resourceType": "Bundle",
@@ -156,5 +157,7 @@ pub async fn search_resources(
             "total": 0,
             "entry": []
         }))),
-    }
+    };
+
+    result
 }

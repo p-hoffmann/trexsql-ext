@@ -19,7 +19,8 @@ pub async fn get_metadata(
         state.meta_schema(),
         dataset_id.replace('\'', "''")
     );
-    match state.executor.submit(check_sql).await {
+    let conn = state.new_request_conn().map_err(AppError::Internal)?;
+    match conn.execute(check_sql).await {
         crate::query_executor::QueryResult::Select { rows, .. } if !rows.is_empty() => {}
         _ => {
             return Err(AppError::NotFound(format!(

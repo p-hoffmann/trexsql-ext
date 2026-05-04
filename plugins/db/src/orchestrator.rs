@@ -5,12 +5,18 @@ use crate::service_functions::get_start_service_sql;
 
 /// Load extensions, start their services, and publish endpoints to gossip.
 pub fn orchestrate_extensions(extensions: &[ExtensionConfig]) -> Vec<String> {
-    if trex_pool_client::read_pool_size().is_err() {
-        SwarmLogger::error("orchestrator", "Connection pool is not available");
-        return extensions
-            .iter()
-            .map(|ext| format!("{}: error — no shared connection", ext.name))
-            .collect();
+    // Probe the pool extension by leasing a session.
+    match trex_pool_client::create_session() {
+        Ok(sid) => {
+            let _ = trex_pool_client::destroy_session(sid);
+        }
+        Err(_) => {
+            SwarmLogger::error("orchestrator", "Connection pool is not available");
+            return extensions
+                .iter()
+                .map(|ext| format!("{}: error — no shared connection", ext.name))
+                .collect();
+        }
     }
 
     let mut statuses: Vec<String> = Vec::with_capacity(extensions.len());
