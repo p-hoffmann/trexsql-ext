@@ -116,21 +116,22 @@ jobs:
           path: d2e
           submodules: recursive
 
-      - name: Inject local extension into D2E
-        run: |
-          # Copy our built extension to D2E's services/trex directory
-          cp ./trexas-artifact/trexas.trex ./d2e/services/trex/local-trexas.trex
-
-          # Insert COPY instruction after 'RUN npm install' in Dockerfile (flexible pattern)
-          sed -i '/RUN npm install/a\COPY local-trexas.trex /usr/src/node_modules/@trex/as/trexas.trex' ./d2e/services/trex/Dockerfile
-
-          # Verify modification succeeded
-          echo "=== Modified Dockerfile (relevant section) ==="
-          grep -A2 "RUN npm install" ./d2e/services/trex/Dockerfile
-          if ! grep -q "COPY local-trexas.trex" ./d2e/services/trex/Dockerfile; then
-            echo "ERROR: Failed to inject local extension into Dockerfile"
-            exit 1
-          fi
+      # Temporarily disabled to test if e2e failure is from the extension or the D2E setup.
+      # - name: Inject local extension into D2E
+      #   run: |
+      #     # Copy our built extension to D2E's services/trex directory
+      #     cp ./trexas-artifact/trexas.trex ./d2e/services/trex/local-trexas.trex
+      #
+      #     # Insert COPY instruction after 'RUN npm install' in Dockerfile (flexible pattern)
+      #     sed -i '/RUN npm install/a\COPY local-trexas.trex /usr/src/node_modules/@trex/as/trexas.trex' ./d2e/services/trex/Dockerfile
+      #
+      #     # Verify modification succeeded
+      #     echo "=== Modified Dockerfile (relevant section) ==="
+      #     grep -A2 "RUN npm install" ./d2e/services/trex/Dockerfile
+      #     if ! grep -q "COPY local-trexas.trex" ./d2e/services/trex/Dockerfile; then
+      #       echo "ERROR: Failed to inject local extension into Dockerfile"
+      #       exit 1
+      #     fi
 
       - name: Setup D2E
         working-directory: d2e
@@ -258,15 +259,6 @@ jobs:
         working-directory: d2e
         run: npm install
 
-      - name: Create CI compose override
-        run: |
-          cat > d2e/docker-compose-ci.yml << 'EOF'
-          services:
-            alp-caddy:
-              ports: !override
-                - ${CADDY_PORT:-${PORT:-443}}:443
-          EOF
-
       - name: Start D2E services
         uses: nick-fields/retry@v3
         with:
@@ -275,7 +267,7 @@ jobs:
           max_attempts: 2
           command: |
             cd d2e
-            ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions -c ./docker-compose-ci.yml start
+            ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions start
             docker ps --format "{{.Names}},{{.Status}}"
 
       - name: Wait for services to be healthy
@@ -293,10 +285,11 @@ jobs:
         uses: nick-fields/retry@v3
         with:
           timeout_seconds: 1800
-          max_attempts: 1
+          retry_wait_seconds: 100
+          max_attempts: 2
           command: |
             cd d2e
-            ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions -c ./docker-compose-ci.yml setupdemo
+            ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions setupdemo
 
       - name: Run checkflow
         uses: nick-fields/retry@v3
@@ -305,13 +298,13 @@ jobs:
           max_attempts: 1
           command: |
             cd d2e
-            ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions -c ./docker-compose-ci.yml checkflow
+            ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions checkflow
 
       - name: Logs after checkflow
         if: success() || failure()
         working-directory: d2e
         run: |
-          ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions -c ./docker-compose-ci.yml logs
+          ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions logs
 
       - name: Check app status (informational)
         continue-on-error: true
@@ -324,8 +317,8 @@ jobs:
       - name: Restart d2e services
         working-directory: d2e
         run: |
-          ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions -c ./docker-compose-ci.yml stop
-          ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions -c ./docker-compose-ci.yml start
+          ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions stop
+          ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions start
 
       - name: Wait for d2e-trex healthy after restart
         timeout-minutes: 5
@@ -390,7 +383,7 @@ jobs:
             -e D2E_BASE_URL=https://localhost:443 \
             -e CI=true \
             -e GITHUB_ACTIONS=true \
-            d2e-e2e npx playwright test --grep-invert "patient-analytics-patient-list"
+            d2e-e2e npm test
 
       - name: Upload test results
         if: always()
@@ -411,13 +404,13 @@ jobs:
         if: failure()
         working-directory: d2e
         run: |
-          ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions -c ./docker-compose-ci.yml logs
+          ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions logs
 
       - name: Stop D2E services
         if: always()
         working-directory: d2e
         run: |
-          ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions -c ./docker-compose-ci.yml stop
+          ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions stop
 
       - name: Prune system
         if: always()
