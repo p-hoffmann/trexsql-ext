@@ -321,6 +321,63 @@ jobs:
           echo "HTTP Status: $HTTP_CODE"
           curl -k -I https://localhost:443/d2e/portal || true
 
+      - name: Restart d2e services
+        working-directory: d2e
+        run: |
+          ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions -c ./docker-compose-ci.yml stop
+          ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions -c ./docker-compose-ci.yml start
+
+      - name: Wait for d2e-trex healthy after restart
+        timeout-minutes: 5
+        run: |
+          until [ "$(docker inspect -f '{{.State.Health.Status}}' d2e-trex 2>/dev/null)" = "healthy" ]; do
+            echo "  d2e-trex: $(docker inspect -f '{{.State.Health.Status}}' d2e-trex 2>/dev/null || echo 'not found')"
+            sleep 5
+          done
+          echo "d2e-trex is healthy"
+
+      - name: Wait for d2e-ui plugin to be installed
+        run: |
+          echo "Waiting for d2e-ui plugin to be installed..."
+          max_attempts=60
+          attempt=0
+          start_time=$(date +%s)
+          while [ $attempt -lt $max_attempts ]; do
+            if docker exec d2e-trex ls /usr/src/data/plugins/@data2evidence/d2e-ui/resources/portal >/dev/null 2>&1; then
+              end_time=$(date +%s)
+              elapsed=$((end_time - start_time))
+              echo "d2e-ui plugin is ready (took ${elapsed}s)"
+              break
+            fi
+            attempt=$((attempt + 1))
+            echo "  Attempt $attempt/$max_attempts: waiting..."
+            sleep 2
+          done
+          if [ $attempt -eq $max_attempts ]; then
+            echo "Timeout waiting for d2e-ui plugin to be installed"
+            exit 1
+          fi
+
+      - name: Wait for webapi-init to complete
+        run: |
+          echo "Waiting for webapi-init to complete (ensures logto admin user is created)..."
+          for i in $(seq 1 60); do
+            if docker ps -a --filter "name=webapi-init" --format '{{.Status}}' | grep -q "Exited (0)"; then
+              echo "webapi-init completed successfully"
+              break
+            fi
+            if docker ps -a --filter "name=webapi-init" --format '{{.Status}}' | grep -qE "Exited \([1-9]"; then
+              echo "webapi-init failed!"
+              docker logs d2e-webapi-init || true
+              exit 1
+            fi
+            echo "Waiting for webapi-init... ($i/60)"
+            sleep 5
+          done
+
+      - name: Disable IPv6 to prevent ERR_NETWORK_CHANGED
+        run: sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
+
       - name: Run e2e tests
         working-directory: d2e/tests/e2e
         timeout-minutes: 45
