@@ -27,6 +27,20 @@ jobs:
   build-extension:
     runs-on: ubuntu-24.04
     if: github.event.pull_request.draft == false
+    strategy:
+      fail-fast: false
+      matrix:
+        ext:
+          # plugin_dir: location under plugins/
+          # file:       produced .trex filename (matches EXTENSION_NAME in plugin Makefile)
+          # mount:      target path inside d2e-trex container (npm package location)
+          - { plugin_dir: runtime, file: trexas.trex,    mount: /usr/src/node_modules/@trex/as/trexas.trex }
+          - { plugin_dir: atlas,   file: circe.trex,     mount: /usr/src/node_modules/@trex/circe/circe.trex }
+          - { plugin_dir: hana,    file: hana_scan.trex, mount: /usr/src/node_modules/@trex/hana/hana_scan.trex }
+          - { plugin_dir: pgwire,  file: pgwire.trex,    mount: /usr/src/node_modules/@trex/pgwire/pgwire.trex }
+          - { plugin_dir: fhir,    file: fhir.trex,      mount: /usr/src/node_modules/@trex/fhir/fhir.trex }
+          - { plugin_dir: pool,    file: pool.trex,      mount: /usr/src/node_modules/@trex/pool/pool.trex }
+          - { plugin_dir: tpm,     file: tpm.trex,       mount: /usr/src/node_modules/@trex/tpm/tpm.trex }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,25 +61,36 @@ jobs:
           sudo ldconfig
 
       - name: Setup Rust
-        working-directory: plugins/runtime
+        working-directory: plugins/${{ matrix.ext.plugin_dir }}
         run: rustup show
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: plugins/runtime
+          workspaces: plugins/${{ matrix.ext.plugin_dir }}
 
       - name: Clean V8 cache
-        working-directory: plugins/runtime
+        working-directory: plugins/${{ matrix.ext.plugin_dir }}
         run: rm -rf target/*/gn_out target/*/obj/librusty_v8.a || true
 
+      - name: Install GraalVM and Maven (atlas only)
+        if: matrix.ext.plugin_dir == 'atlas'
+        working-directory: plugins/atlas
+        run: |
+          sudo apt-get install -y --no-install-recommends maven xxd
+          export GRAAL_HOME=/opt/graalvm
+          sudo -E bash ./install-graalvm.sh
+          echo "GRAAL_HOME=/opt/graalvm" >> "$GITHUB_ENV"
+          echo "JAVA_HOME=/opt/graalvm" >> "$GITHUB_ENV"
+          echo "/opt/graalvm/bin" >> "$GITHUB_PATH"
+
       - name: Build extension
-        working-directory: plugins/runtime
+        working-directory: plugins/${{ matrix.ext.plugin_dir }}
         run: |
           make configure
           make release
 
       - name: Sign extension
-        working-directory: plugins/runtime
+        working-directory: plugins/${{ matrix.ext.plugin_dir }}
         env:
           DUCKDB_EXTENSION_SIGNING_KEY: ${{ secrets.DUCKDB_EXTENSION_SIGNING_KEY }}
         run: |
@@ -74,12 +99,12 @@ jobs:
       - name: Upload extension artifact
         uses: actions/upload-artifact@v4
         with:
-          name: trexas-extension
-          path: plugins/runtime/build/release/trexas.trex
+          name: trex-ext-${{ matrix.ext.plugin_dir }}
+          path: plugins/${{ matrix.ext.plugin_dir }}/build/release/${{ matrix.ext.file }}
           retention-days: 1
           if-no-files-found: error
 
-  build-d2e-images:
+  run-e2e-tests:
     needs: build-extension
     runs-on: ubuntu-24.04
     steps:
@@ -102,11 +127,12 @@ jobs:
           sudo mkswap /swapfile
           sudo swapon /swapfile
 
-      - name: Download extension artifact
+      - name: Download extension artifacts
         uses: actions/download-artifact@v4
         with:
-          name: trexas-extension
-          path: ./trexas-artifact
+          pattern: trex-ext-*
+          path: ./trex-artifacts
+          merge-multiple: true
 
       - name: Checkout D2E
         uses: actions/checkout@v4
@@ -115,22 +141,6 @@ jobs:
           ref: ${{ env.D2E_BRANCH }}
           path: d2e
           submodules: recursive
-
-      - name: Inject local extension into D2E
-        run: |
-          # Copy our built extension to D2E's services/trex directory
-          cp ./trexas-artifact/trexas.trex ./d2e/services/trex/local-trexas.trex
-
-          # Insert COPY instruction after 'RUN npm install' in Dockerfile (flexible pattern)
-          sed -i '/RUN npm install/a\COPY local-trexas.trex /usr/src/node_modules/@trex/as/trexas.trex' ./d2e/services/trex/Dockerfile
-
-          # Verify modification succeeded
-          echo "=== Modified Dockerfile (relevant section) ==="
-          grep -A2 "RUN npm install" ./d2e/services/trex/Dockerfile
-          if ! grep -q "COPY local-trexas.trex" ./d2e/services/trex/Dockerfile; then
-            echo "ERROR: Failed to inject local extension into Dockerfile"
-            exit 1
-          fi
 
       - name: Setup D2E
         working-directory: d2e
@@ -145,127 +155,38 @@ jobs:
         run: |
           init_choice=y ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} init
 
-      - name: Build D2E Docker images
-        working-directory: d2e
+      - name: Stage trex extensions for mount
         run: |
-          ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions build
-          docker images --format "table {{.ID}}\t{{.Repository}}\t{{.Tag}}"
-
-      - name: Build e2e Docker image
-        working-directory: d2e/tests/e2e
-        run: docker build -t d2e-e2e .
-
-      - name: Prune build cache
-        run: docker buildx prune -af
-
-      - name: Save Docker images
-        run: |
-          # Save all non-dangling images (excluding base images like ubuntu, node, etc.)
-          IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -v '<none>' | grep -vE '^(ubuntu|node|postgres|docker|alpine|debian|caddy|redis):')
-          echo "Saving images:"
-          echo "$IMAGES"
-          docker save $IMAGES | zstd -T0 -3 -o /tmp/d2e-images.tar.zst
-
-      - name: Save D2E workspace
-        run: |
-          tar cf - \
-            -C d2e \
-            .env \
-            scripts/dist \
-            deploy/caddy-config \
-            functions \
-            docker-compose.yml \
-            docker-compose.*.yml \
-            package.json \
-            node_modules/.package-lock.json \
-            2>/dev/null | zstd -T0 -3 -o /tmp/d2e-workspace.tar.zst || true
-
-      - name: Upload Docker images artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: d2e-docker-images
-          path: /tmp/d2e-images.tar.zst
-          retention-days: 1
-          if-no-files-found: error
-
-      - name: Upload D2E workspace artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: d2e-workspace
-          path: /tmp/d2e-workspace.tar.zst
-          retention-days: 1
-          if-no-files-found: error
-
-      - name: Prune system
-        if: always()
-        run: docker system prune -af
-
-  run-e2e-tests:
-    needs: build-d2e-images
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Free Disk Space
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
-
-      - name: Download Docker images artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: d2e-docker-images
-          path: /tmp
-
-      - name: Load Docker images
-        run: |
-          zstd -dc /tmp/d2e-images.tar.zst | docker load
-          rm /tmp/d2e-images.tar.zst
-          docker images --format "table {{.ID}}\t{{.Repository}}\t{{.Tag}}"
-
-      - name: Checkout D2E
-        uses: actions/checkout@v4
-        with:
-          repository: OHDSI/Data2Evidence
-          ref: ${{ env.D2E_BRANCH }}
-          path: d2e
-          submodules: recursive
-
-      - name: Download D2E workspace artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: d2e-workspace
-          path: /tmp
-
-      - name: Restore D2E workspace
-        run: |
-          zstd -dc /tmp/d2e-workspace.tar.zst | tar xf - -C d2e
-          rm /tmp/d2e-workspace.tar.zst
-
-      - name: Increase swap to 15G
-        run: |
-          sudo swapoff -a
-          sudo fallocate -l 15G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-
-      - name: Setup D2E
-        working-directory: d2e
-        run: npm install
+          # Collect every locally-built .trex into d2e/.ci-overlay/ so the compose override can bind-mount them.
+          mkdir -p d2e/.ci-overlay
+          cp ./trex-artifacts/*.trex d2e/.ci-overlay/
+          ls -l d2e/.ci-overlay/
 
       - name: Create CI compose override
         run: |
+          # Override the trex service to:
+          #   - skip local build and pull ghcr.io/ohdsi/d2e-trex:develop instead
+          #   - bind-mount each locally-built .trex over the corresponding npm-installed file
+          # Also override caddy port for CI host networking.
           cat > d2e/docker-compose-ci.yml << 'EOF'
           services:
             alp-caddy:
               ports: !override
                 - ${CADDY_PORT:-${PORT:-443}}:443
+            trex:
+              build: !reset null
+              image: ${DOCKER_IMAGE_PREFIX:-ghcr.io/ohdsi/}d2e-trex:${DOCKER_TAG_NAME:-develop}
+              pull_policy: always
+              volumes:
+                - ./.ci-overlay/trexas.trex:/usr/src/node_modules/@trex/as/trexas.trex:ro
+                - ./.ci-overlay/circe.trex:/usr/src/node_modules/@trex/circe/circe.trex:ro
+                - ./.ci-overlay/hana_scan.trex:/usr/src/node_modules/@trex/hana/hana_scan.trex:ro
+                - ./.ci-overlay/pgwire.trex:/usr/src/node_modules/@trex/pgwire/pgwire.trex:ro
+                - ./.ci-overlay/fhir.trex:/usr/src/node_modules/@trex/fhir/fhir.trex:ro
+                - ./.ci-overlay/pool.trex:/usr/src/node_modules/@trex/pool/pool.trex:ro
+                - ./.ci-overlay/tpm.trex:/usr/src/node_modules/@trex/tpm/tpm.trex:ro
           EOF
+          cat d2e/docker-compose-ci.yml
 
       - name: Start D2E services
         uses: nick-fields/retry@v3
@@ -275,8 +196,9 @@ jobs:
           max_attempts: 2
           command: |
             cd d2e
-            ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions -c ./docker-compose-ci.yml start
+            ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions -c ./docker-compose-ci.yml --pull start
             docker ps --format "{{.Names}},{{.Status}}"
+            docker images --format "table {{.ID}}\t{{.Repository}}\t{{.Tag}}"
 
       - name: Wait for services to be healthy
         timeout-minutes: 5
@@ -293,7 +215,8 @@ jobs:
         uses: nick-fields/retry@v3
         with:
           timeout_seconds: 1800
-          max_attempts: 1
+          retry_wait_seconds: 100
+          max_attempts: 2
           command: |
             cd d2e
             ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions -c ./docker-compose-ci.yml setupdemo
@@ -321,6 +244,67 @@ jobs:
           echo "HTTP Status: $HTTP_CODE"
           curl -k -I https://localhost:443/d2e/portal || true
 
+      - name: Restart d2e services
+        working-directory: d2e
+        run: |
+          ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions -c ./docker-compose-ci.yml stop
+          ENV_TYPE=remote CADDY__CONFIG=./deploy/caddy-config node ./scripts/dist/cli.js -e -v ${{ env.VERSION }} -d ./functions -c ./docker-compose-ci.yml start
+
+      - name: Wait for d2e-trex healthy after restart
+        timeout-minutes: 5
+        run: |
+          until [ "$(docker inspect -f '{{.State.Health.Status}}' d2e-trex 2>/dev/null)" = "healthy" ]; do
+            echo "  d2e-trex: $(docker inspect -f '{{.State.Health.Status}}' d2e-trex 2>/dev/null || echo 'not found')"
+            sleep 5
+          done
+          echo "d2e-trex is healthy"
+
+      - name: Wait for d2e-ui plugin to be installed
+        run: |
+          echo "Waiting for d2e-ui plugin to be installed..."
+          max_attempts=60
+          attempt=0
+          start_time=$(date +%s)
+          while [ $attempt -lt $max_attempts ]; do
+            if docker exec d2e-trex ls /usr/src/data/plugins/@data2evidence/d2e-ui/resources/portal >/dev/null 2>&1; then
+              end_time=$(date +%s)
+              elapsed=$((end_time - start_time))
+              echo "d2e-ui plugin is ready (took ${elapsed}s)"
+              break
+            fi
+            attempt=$((attempt + 1))
+            echo "  Attempt $attempt/$max_attempts: waiting..."
+            sleep 2
+          done
+          if [ $attempt -eq $max_attempts ]; then
+            echo "Timeout waiting for d2e-ui plugin to be installed"
+            exit 1
+          fi
+
+      - name: Wait for webapi-init to complete
+        run: |
+          echo "Waiting for webapi-init to complete (ensures logto admin user is created)..."
+          for i in $(seq 1 60); do
+            if docker ps -a --filter "name=webapi-init" --format '{{.Status}}' | grep -q "Exited (0)"; then
+              echo "webapi-init completed successfully"
+              break
+            fi
+            if docker ps -a --filter "name=webapi-init" --format '{{.Status}}' | grep -qE "Exited \([1-9]"; then
+              echo "webapi-init failed!"
+              docker logs d2e-webapi-init || true
+              exit 1
+            fi
+            echo "Waiting for webapi-init... ($i/60)"
+            sleep 5
+          done
+
+      - name: Disable IPv6 to prevent ERR_NETWORK_CHANGED
+        run: sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
+
+      - name: Build e2e Docker image
+        working-directory: d2e/tests/e2e
+        run: docker build -t d2e-e2e .
+
       - name: Run e2e tests
         working-directory: d2e/tests/e2e
         timeout-minutes: 45
@@ -333,7 +317,7 @@ jobs:
             -e D2E_BASE_URL=https://localhost:443 \
             -e CI=true \
             -e GITHUB_ACTIONS=true \
-            d2e-e2e npx playwright test --grep-invert "patient-analytics-patient-list"
+            d2e-e2e npm test
 
       - name: Upload test results
         if: always()

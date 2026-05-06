@@ -1,14 +1,14 @@
-# TrexSQL
+# Trex
 
 A lightweight, self-hosted backend platform built around an analytical-first database engine.
 
-TrexSQL gives you a single binary that speaks Postgres wire, runs edge functions, hosts a plugin system for UIs and APIs, and embeds a column-store engine you can point at Parquet on S3, BigQuery, MySQL, SAP HANA, or another Postgres, all in one query. On top, an Express server provides an identity provider, a GraphQL layer over Postgres, a REST API, an admin UI, and an MCP server. The result is a small set of containers that handles application data and an analytical workload in one place.
+Trex gives you a single binary that speaks Postgres wire, runs edge functions, hosts a plugin system for UIs and APIs, and embeds a column-store engine you can point at Parquet on S3, BigQuery, MySQL, SAP HANA, or another Postgres, all in one query. On top, an Express server provides an identity provider, a GraphQL layer over Postgres, a REST API, an admin UI, and an MCP server. The result is a small set of containers that handles application data and an analytical workload in one place.
 
 ## Quick start
 
 ```bash
 git clone --recurse-submodules <repo>
-cd trexsql-ext
+cd trex
 docker compose up -d
 ```
 
@@ -45,33 +45,6 @@ The `trex` binary embeds a column-store engine that auto-loads a curated set of 
 - **Speak Postgres wire**: clients connect with `psql`, JDBC, or `pg_dump` and see Trex as just another Postgres.
 - **Run distributed**: multi-node cluster coordination over Arrow Flight SQL, Postgres CDC replication into Trex, schema migrations, declarative data transforms, runtime extension installation.
 - **Use domain extensions**: FHIR server, OHDSI Atlas cohort-to-SQL, Clinical Quality Language to ELM, and in-process LLM inference (CUDA / Vulkan / Metal).
-
-## Repository layout
-
-```
-trexsql-ext/
-├── core/                  Express server, auth, GraphQL, core schema
-├── plugins/
-│   ├── ai/                LLM inference 
-│   ├── atlas/             Atlas cohort SQL
-│   ├── chdb/              ClickHouse engine
-│   ├── cql2elm/           CQL to ELM
-│   ├── db/                Cluster coordination + Arrow Flight SQL
-│   ├── etl/               Postgres CDC
-│   ├── fhir/              FHIR server
-│   ├── hana/              SAP HANA scanner
-│   ├── migration/         Schema migrations
-│   ├── pg_trex/           Postgres-with-trex packaging
-│   ├── pgwire/            Postgres wire protocol
-│   ├── pool/              Connection pooling
-│   ├── runtime/           Trex runtime (Rust + edge function runtime, submodule)
-│   ├── storage/           Object storage
-│   ├── tpm/               Package manager
-│   ├── transform/         Transformation pipelines
-│   └── web/               Web shell
-└── deploy/
-    └── aws/               Pulumi config for ECS Fargate
-```
 
 ## Built on
 
