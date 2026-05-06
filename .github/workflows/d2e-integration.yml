@@ -72,6 +72,17 @@ jobs:
         working-directory: plugins/${{ matrix.ext.plugin_dir }}
         run: rm -rf target/*/gn_out target/*/obj/librusty_v8.a || true
 
+      - name: Install GraalVM and Maven (atlas only)
+        if: matrix.ext.plugin_dir == 'atlas'
+        working-directory: plugins/atlas
+        run: |
+          sudo apt-get install -y --no-install-recommends maven xxd
+          export GRAAL_HOME=/opt/graalvm
+          sudo -E bash ./install-graalvm.sh
+          echo "GRAAL_HOME=/opt/graalvm" >> "$GITHUB_ENV"
+          echo "JAVA_HOME=/opt/graalvm" >> "$GITHUB_ENV"
+          echo "/opt/graalvm/bin" >> "$GITHUB_PATH"
+
       - name: Build extension
         working-directory: plugins/${{ matrix.ext.plugin_dir }}
         run: |
