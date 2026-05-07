@@ -39,7 +39,7 @@ The `trex` key defines what the plugin provides:
       "api": [
         {
           "source": "/my-plugin",
-          "function": "/functions/index.ts",
+          "function": "/functions",
           "imports": "/functions/import_map.json"
         }
       ]
@@ -86,6 +86,7 @@ Run one-time setup tasks at plugin startup:
         {
           "function": "/functions/setup.ts",
           "env": "production",
+          "imports": "/functions/import_map.json",
           "waitfor": "http://localhost:5432",
           "delay": 1000
         }
@@ -97,11 +98,13 @@ Run one-time setup tasks at plugin startup:
 
 | Field | Description |
 |-------|-------------|
-| `function` | Path to init script |
-| `env` | Required `NODE_ENV` to run |
-| `waitfor` | URL to poll before running |
-| `waitforEnvVar` | Env var containing URL to poll |
-| `delay` | Milliseconds to wait after init |
+| `function` | Path to init script. |
+| `env` | Environment block to merge with `_shared`. |
+| `imports` | Path to a Deno import map. |
+| `eszip` | Path to a prebuilt ESZIP bundle (alternative to source). |
+| `waitfor` | URL to poll before running. |
+| `waitforEnvVar` | Env var containing URL to poll. |
+| `delay` | Milliseconds to wait after init. |
 
 ## Development Workflow
 

@@ -1,3 +1,5 @@
+use std::sync::Once;
+
 use arrow::array::RecordBatch;
 use arrow::datatypes::SchemaRef;
 use arrow_flight::decode::FlightRecordBatchStream;
@@ -7,6 +9,19 @@ use futures::TryStreamExt;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 
 use crate::logging::SwarmLogger;
+
+/// rustls 0.23+ requires a CryptoProvider be installed before any TLS handshake.
+/// Both `ring` and `aws-lc-rs` features can be linked transitively, so the
+/// auto-selection panics with "Could not automatically determine the
+/// process-level CryptoProvider". We install `ring` explicitly. Mirrors the
+/// pattern in plugins/etl/src/etl_start.rs.
+static CRYPTO_INIT: Once = Once::new();
+
+fn ensure_crypto_provider() {
+    CRYPTO_INIT.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
 
 /// Arrow Flight gRPC client for executing SQL queries via DoGet.
 #[derive(Debug)]
@@ -21,6 +36,8 @@ impl FlightClient {
             "flight-client",
             &format!("Connecting to Flight server at {endpoint}"),
         );
+
+        ensure_crypto_provider();
 
         let channel = Endpoint::from_shared(endpoint.to_string())
             .map_err(|e| format!("Failed to connect to {endpoint}: invalid URI: {e}"))?
@@ -52,6 +69,8 @@ impl FlightClient {
             "flight-client",
             &format!("Connecting to Flight server at {endpoint} with mTLS"),
         );
+
+        ensure_crypto_provider();
 
         let cert = std::fs::read(cert_path)
             .map_err(|e| format!("Failed to read client certificate {cert_path}: {e}"))?;

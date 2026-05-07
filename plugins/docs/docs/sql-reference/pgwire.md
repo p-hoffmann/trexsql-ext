@@ -96,3 +96,49 @@ Once the pgwire server is running, connect with any PostgreSQL client:
 ```bash
 psql -h localhost -p 5432 -U trex -d main
 ```
+
+## Connection Pool & Session Pinning
+
+The pgwire server backs every client connection with a session from the shared
+[pool extension](#). Three behaviors are worth knowing:
+
+- **Default database.** Sessions inherit the pgwire process's default catalog at
+  pool initialization time. With the default compose stack that catalog is
+  `memory`. You can switch with `SET search_path` / `USE <db>` mid-session, or
+  set `DATABASE_PATH` on the Trex binary to start with an on-disk catalog.
+- **Auto-pinning.** When a client issues a write or a parameterized prepared
+  statement, the pool transparently *pins* the underlying engine connection to
+  that pgwire session for the duration of the open transaction. Reads remain
+  unpinned and may be served by any pool connection.
+- **Persistent sessions.** `ATTACH`, temporary tables, and other connection-local
+  state require a persistent session. The pool detects these statements and
+  upgrades the pgwire session in place — the client does not need to opt in.
+
+These mechanics are transparent — `psql` and JDBC drivers see a normal Postgres
+session. They matter if you're benchmarking pool sizing or debugging "lost"
+session-local state across statements.
+
+## Supported Data Types
+
+The pgwire server encodes Arrow result columns into PostgreSQL wire types as
+follows. Types not explicitly mapped are pre-cast to `TEXT` before encoding.
+
+| Arrow / Trex type | Postgres wire type | Notes |
+|-------------------|--------------------|-------|
+| `BOOLEAN` | `bool` | |
+| `INT8` / `INT16` / `INT32` / `INT64` | `int2` / `int2` / `int4` / `int8` | |
+| `UINT8` / `UINT16` / `UINT32` / `UINT64` | `int2` / `int4` / `int8` / `numeric` | UInt64 widened to numeric to avoid overflow. |
+| `FLOAT32` / `FLOAT64` | `float4` / `float8` | |
+| `DECIMAL128(p,s)` | `numeric(p,s)` | Added in v1.4. |
+| `UTF8` / `LARGE_UTF8` | `text` | |
+| `BINARY` / `LARGE_BINARY` | `bytea` | |
+| `DATE32` / `DATE64` | `date` | |
+| `TIME32` / `TIME64` | `time` | |
+| `TIMESTAMP` (any unit, no tz) | `timestamp` | Formatted as `YYYY-MM-DD HH:MM:SS.mmm` (millisecond precision). |
+| `TIMESTAMP` (any unit, UTC) | `timestamptz` | |
+| `INTERVAL` | `interval` | |
+| `LIST` / `LARGE_LIST` | array of element type | One level deep. |
+| `STRUCT` / `MAP` | `text` (JSON) | Serialized to JSON, then text-encoded. |
+| `DECIMAL256`, `FIXED_SIZE_BINARY`, dictionary types | `text` | Pre-cast for compatibility. |
+
+NULLs are encoded with the standard `-1` length sentinel.

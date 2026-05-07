@@ -689,7 +689,7 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
           if (!plugin) throw new Error(`Transform plugin '${args.pluginName}' not found`);
           try {
             const destSchema = `${args.destDb}.${args.destSchema}`;
-            const sourceSchema = `${args.sourceDb}.${args.sourceSchema}`;
+            const sourceSchema = `${args.sourceSchema}`;
             const conn = new Trex.TrexDB("memory");
             const sql = `SELECT * FROM trex_transform_plan('${escapeSql(plugin.projectPath)}', '${escapeSql(destSchema)}', source_schema := '${escapeSql(sourceSchema)}')`;
             const result = await conn.execute(sql, []);
@@ -1222,7 +1222,7 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
           if (!plugin) throw new Error(`Transform plugin '${args.pluginName}' not found`);
           try {
             const destSchema = `${args.destDb}.${args.destSchema}`;
-            const sourceSchema = `${args.sourceDb}.${args.sourceSchema}`;
+            const sourceSchema = `${args.sourceSchema}`;
             const conn = new Trex.TrexDB("memory");
             const sql = `SELECT * FROM trex_transform_run('${escapeSql(plugin.projectPath)}', '${escapeSql(destSchema)}', source_schema := '${escapeSql(sourceSchema)}')`;
             const result = await conn.execute(sql, []);
@@ -1285,7 +1285,7 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
           if (!plugin) throw new Error(`Transform plugin '${args.pluginName}' not found`);
           try {
             const destSchema = `${args.destDb}.${args.destSchema}`;
-            const sourceSchema = `${args.sourceDb}.${args.sourceSchema}`;
+            const sourceSchema = `${args.sourceSchema}`;
             const conn = new Trex.TrexDB("memory");
             const sql = `SELECT * FROM trex_transform_test('${escapeSql(plugin.projectPath)}', '${escapeSql(destSchema)}', source_schema := '${escapeSql(sourceSchema)}')`;
             const result = await conn.execute(sql, []);

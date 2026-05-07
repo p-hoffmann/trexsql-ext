@@ -792,6 +792,7 @@ dependencies = [
  "etl-config",
  "etl-postgres",
  "libduckdb-sys",
+ "rustls",
  "secrecy",
  "serde",
  "serde_json",

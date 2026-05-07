@@ -139,13 +139,20 @@ void ContextPool::ReleaseContext(std::unique_ptr<ContextPoolEntry> entry) {
 std::unique_ptr<ContextPoolEntry> ContextPool::CreateNewContext() {
     if (!model_) return nullptr;
     
-    
+
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx = config_.n_ctx;
     ctx_params.n_batch = config_.n_batch;
     ctx_params.n_threads = config_.n_threads;
     ctx_params.embeddings = config_.embeddings;
     ctx_params.offload_kqv = config_.n_gpu_layers > 0;
+    // For embedding models, honor a configured pooling type. UNSPECIFIED (-1)
+    // lets llama.cpp pick the architecture default (e.g. CLS for BERT/MiniLM,
+    // MEAN for nomic-embed), which is required for BERT-family models to
+    // produce non-zero pooled vectors.
+    if (config_.embeddings) {
+        ctx_params.pooling_type = static_cast<enum llama_pooling_type>(config_.pooling_type);
+    }
     
     
     llama_context* context = llama_init_from_model(model_, ctx_params);
@@ -727,17 +734,33 @@ std::vector<float> SimpleModelManager::GetEmbeddings(const std::string& model_na
             return {};
         }
 
-        
+
         int32_t n_embd = llama_model_n_embd(model->model);
-        const float* embeddings = llama_get_embeddings(context_entry->context);
-        
+
+        // When pooling is configured (CLS/MEAN/LAST — typical for BERT and
+        // nomic-embed style sentence-transformer models), the per-token
+        // embeddings buffer is empty and we must fetch the pooled vector for
+        // the sequence. When pooling is NONE (decoder-only models), the
+        // pooled API returns NULL and we read the per-token buffer instead.
+        const float* embeddings = nullptr;
+        enum llama_pooling_type ptype = llama_pooling_type(context_entry->context);
+        if (ptype != LLAMA_POOLING_TYPE_NONE) {
+            embeddings = llama_get_embeddings_seq(context_entry->context, 0);
+        }
+        if (!embeddings) {
+            embeddings = llama_get_embeddings(context_entry->context);
+        }
+        if (!embeddings) {
+            // Last resort: try the per-token API on the final token.
+            embeddings = llama_get_embeddings_ith(context_entry->context, -1);
+        }
+
         if (!embeddings) {
             std::cerr << "Failed to get embeddings from context" << std::endl;
             model->context_pool->ReleaseContext(std::move(context_entry));
             return {};
         }
 
-        
         std::vector<float> result(embeddings, embeddings + n_embd);
         
         

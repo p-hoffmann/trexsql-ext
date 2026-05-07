@@ -6,6 +6,7 @@ import { ROLE_SCOPES, REQUIRED_URL_SCOPES } from "./function.ts";
 import { PLUGINS_BASE_PATH } from "../config.ts";
 import { apiLimiter } from "../middleware/rate-limit.ts";
 import { poolSsl } from "../lib/db-ssl.ts";
+import { tableFromJSON, tableToIPC } from "npm:apache-arrow@^21.1.0";
 
 declare const Trex: any;
 declare const Deno: any;
@@ -89,7 +90,15 @@ export function addTransformPlugin(
 
     try {
       const conn = new Trex.TrexDB("memory");
-      const tableFqn = `"${escapeSqlIdentifier(endpoint.destDb)}"."${escapeSqlIdentifier(endpoint.destSchema)}"."${escapeSqlIdentifier(endpoint.modelName)}"`;
+      // The transform extension creates the materialized table in a single
+      // schema whose name is the literal `${destDb}.${destSchema}` string —
+      // run.rs uses the schema arg verbatim (no catalog/schema split). So the
+      // table lives at "<destDb>.<destSchema>"."<modelName>" rather than the
+      // 3-part "<destDb>"."<destSchema>"."<modelName>" identifier.
+      const schemaName = endpoint.destDb
+        ? `${endpoint.destDb}.${endpoint.destSchema}`
+        : endpoint.destSchema;
+      const tableFqn = `"${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(endpoint.modelName)}"`;
 
       if (format === "csv") {
         const result = await conn.execute(`SELECT * FROM ${tableFqn}`, []);
@@ -109,16 +118,23 @@ export function addTransformPlugin(
         res.setHeader("Content-Disposition", `attachment; filename="${endpoint.modelName}.csv"`);
         res.send(header + "\n" + lines.join("\n"));
       } else if (format === "arrow") {
-        const tmpPath = await Deno.makeTempFile({ prefix: "trex_arrow_", suffix: ".arrow" });
-        await conn.execute(
-          `COPY (SELECT * FROM ${tableFqn}) TO '${escapeSql(tmpPath)}' WITH (FORMAT 'arrow')`,
-          []
-        );
-        const data = await Deno.readFile(tmpPath);
+        // Build an Arrow IPC stream client-side from row-objects.
+        // Trex.TrexDB's Deno binding has no native toArrow() API, so we use
+        // apache-arrow (npm) to serialize SELECT * rows into IPC stream format.
+        const result = await conn.execute(`SELECT * FROM ${tableFqn}`, []);
+        const rows: any[] = result?.rows || result || [];
         res.setHeader("Content-Type", "application/vnd.apache.arrow.stream");
         res.setHeader("Content-Disposition", `attachment; filename="${endpoint.modelName}.arrow"`);
-        res.send(Buffer.from(data));
-        try { await Deno.remove(tmpPath); } catch {}
+        if (rows.length === 0) {
+          // Empty IPC stream: build a single-row dummy to get a schema, then drop it.
+          // tableFromJSON requires non-empty input to infer schema; with no rows
+          // we have no schema, so emit an empty body.
+          res.send(Buffer.alloc(0));
+          return;
+        }
+        const table = tableFromJSON(rows);
+        const ipc = tableToIPC(table, "stream");
+        res.send(Buffer.from(ipc.buffer, ipc.byteOffset, ipc.byteLength));
       } else {
         const result = await conn.execute(`SELECT * FROM ${tableFqn}`, []);
         const rows = result?.rows || result || [];

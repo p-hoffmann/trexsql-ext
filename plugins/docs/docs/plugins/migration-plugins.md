@@ -4,7 +4,9 @@ sidebar_position: 6
 
 # Migration Plugins
 
-Migration plugins manage SQL schema migrations for plugin-specific databases. Migrations are versioned SQL files that are automatically executed at server startup, with checksum verification to prevent tampering.
+Migration plugins manage SQL schema migrations for plugin-specific schemas. Each
+plugin's `migrations/` directory is scanned at server startup and pending versions
+are executed in order against the configured Postgres database.
 
 ## Configuration
 
@@ -21,14 +23,14 @@ Migration plugins manage SQL schema migrations for plugin-specific databases. Mi
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `schema` | string | *(required)* | Target schema name. Created automatically if it does not exist |
-| `database` | string | `_config` | Target database. Use `_config` for PostgreSQL, or a trexsql database name |
+| `schema` | string | *(required)* | Target schema. Created automatically if absent. Must match `^[A-Za-z_][A-Za-z0-9_]{0,62}$` (unquoted Postgres identifier). |
+| `database` | string | `_config` | Target database. Currently only `_config` (the Postgres metadata DB pointed at by `DATABASE_URL`) is supported by the plugin runner. |
 
-Migration files are read from a `migrations/` directory inside the plugin package.
+Migration files live in a `migrations/` directory inside the plugin package.
 
 ## File Naming Convention
 
-Migration files must follow the pattern `V<version>__<name>.sql`:
+Migration files follow the pattern `V<version>__<name>.sql`:
 
 ```
 migrations/
@@ -38,60 +40,56 @@ migrations/
 ```
 
 **Rules:**
-- **V prefix** — files must start with an uppercase `V`
-- **Version** — positive integer immediately after `V`
-- **Separator** — double underscore `__` between version and name
-- **Name** — alphanumeric characters and underscores only
-- **Extension** — must end with `.sql`
-- **Unique versions** — duplicate version numbers cause an error
-
-Files that don't match this pattern are silently skipped.
+- Filename ends with `.sql`.
+- The leading `V<number>` prefix determines execution order — files are sorted by
+  the integer parsed out of `^V(\d+)`.
+- The full filename (without `.sql`) is the version key recorded in the history
+  table, so two files cannot share an identical name.
+- Files that do not end in `.sql` are silently skipped.
 
 ## Execution Lifecycle
 
 ```mermaid
 flowchart TD
-    Discover["Discover V*__.sql files"] --> CreateSchema["Create schema if absent"]
-    CreateSchema --> CreateHistory["Create refinery_schema_history table"]
-    CreateHistory --> Verify["Verify checksums of applied migrations"]
-    Verify -->|Mismatch| Error["Abort with checksum error"]
-    Verify -->|OK| Execute["Execute pending migrations in order"]
-    Execute --> Record["Record version + checksum in history"]
+    Discover["Discover *.sql files"] --> Sort["Sort by V&lt;n&gt; prefix"]
+    Sort --> CreateSchema["CREATE SCHEMA IF NOT EXISTS"]
+    CreateSchema --> CreateHistory["CREATE TABLE IF NOT EXISTS &lt;schema&gt;._migrations"]
+    CreateHistory --> Loop{"For each file"}
+    Loop --> Check["Already in _migrations?"]
+    Check -->|Yes| Skip[Skip]
+    Check -->|No| Apply["Execute SQL"]
+    Apply --> Record["INSERT INTO _migrations(version)"]
+    Record --> Loop
 ```
 
 ## History Table
 
-Each schema gets a `refinery_schema_history` table that tracks applied migrations:
+Each schema gets a `<schema>._migrations` table tracking applied versions:
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `version` | INT4 (PK) | Migration version number |
-| `name` | VARCHAR | Migration name (from filename) |
-| `applied_on` | VARCHAR | Timestamp when the migration was applied |
-| `checksum` | VARCHAR | SipHash-1-3 checksum for integrity verification |
+| `version` | TEXT (PK) | Migration version key (filename without `.sql`). |
+| `applied_at` | TIMESTAMPTZ | Defaults to `NOW()` when the row is inserted. |
 
-## Checksum Verification
-
-Every migration file gets a checksum computed from its name, version number, and SQL content using SipHash-1-3. When the migration runner starts, it compares stored checksums against current file checksums. A mismatch means a previously applied migration was modified, which aborts execution to prevent schema drift.
-
-## Multi-Database Support
-
-The `database` field controls where migrations run:
-
-| Value | Target |
-|-------|--------|
-| `_config` | PostgreSQL metadata database (via the configured `DATABASE_URL`) |
-| `memory` | trexsql in-memory database |
-| *other* | A named trexsql attached database |
+The runner does not currently compute or verify checksums — re-applying a modified
+migration file is a no-op once its version is recorded. If you need to re-run a
+modified migration, drop or update the corresponding `_migrations` row first.
 
 ## Automatic Execution
 
-All registered migration plugins run automatically at server startup via `runAllPluginMigrations()`. This happens after plugin discovery but before the server begins accepting requests.
+`runAllPluginMigrations()` is called once at server startup, after plugin discovery
+and before the server begins accepting requests. It opens a dedicated `pg.Pool`
+against `DATABASE_URL` (with optional TLS via `DB_TLS_CA_PATH` / `DB_TLS_INSECURE`),
+runs every registered plugin's pending migrations, then closes the pool.
 
-Migrations can also be triggered manually via GraphQL:
+If `DATABASE_URL` is unset, plugin migrations are skipped with a warning.
+
+## Manual Execution
+
+Run migrations on demand via GraphQL:
 
 ```graphql
-# Run migrations for a specific plugin
+# Run pending migrations for a specific plugin
 mutation {
   runPluginMigrations(pluginName: "my-plugin") {
     success
@@ -100,11 +98,12 @@ mutation {
       version
       name
       status
+      appliedOn
     }
   }
 }
 
-# Run all pending migrations
+# Run pending migrations for every registered plugin
 mutation {
   runPluginMigrations {
     success
@@ -113,9 +112,9 @@ mutation {
 }
 ```
 
-## Monitoring
+The MCP tool `migration-run` exposes the same operation.
 
-Query migration status across all plugins:
+## Monitoring
 
 ```graphql
 query {
@@ -132,7 +131,6 @@ query {
       name
       status
       appliedOn
-      checksum
     }
   }
 }
@@ -142,11 +140,11 @@ query {
 
 | Error | Cause | Resolution |
 |-------|-------|------------|
-| Missing schema | `schema` field not set in config | Add a `schema` string to `trex.migrations` |
-| Duplicate version | Two files share the same version number | Renumber one of the conflicting files |
-| Checksum mismatch | An applied migration file was modified | Restore the original file content or reset the history |
-| SQL failure | A migration statement failed | Fix the SQL and re-run |
-| Directory not found | `migrations/` directory missing from plugin | Create the directory and add migration files |
+| `invalid migration config (missing schema)` | `schema` field absent or non-string | Add a valid `schema` to `trex.migrations`. |
+| `invalid schema name` | Schema fails the identifier regex | Rename to a plain unquoted identifier. |
+| `DATABASE_URL not set — skipping plugin migrations` | Server has no Postgres URL | Set `DATABASE_URL` (or `EXTERNAL_DB_URL` / `POOLER_URL`). |
+| SQL execution error | A statement in the migration failed | Fix the SQL, drop the `_migrations` row if already recorded, restart. |
+| Directory not found | `migrations/` directory missing | Create it. Plugins without migration directories simply log no work. |
 
 ## Complete Example
 

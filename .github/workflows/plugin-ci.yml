@@ -188,19 +188,52 @@ jobs:
           node-version: "20.x"
           registry-url: "https://pkgs.dev.azure.com/data2evidence/d2e/_packaging/ms/npm/registry/"
           scope: "@data2evidence"
-      - name: Publish
+      - name: Pack
         env:
           CI: true
-          SHOULD_PUBLISH: ${{ github.ref_name == 'develop' || github.ref_name == 'main' || github.event_name == 'workflow_dispatch' }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_PROJECT_TOKEN }}
           DUCKDB_EXTENSION_SIGNING_KEY: ${{ secrets.DUCKDB_EXTENSION_SIGNING_KEY }}
         run: |
           cd ${{ matrix.PKGPATH }}
-          if [[ $SHOULD_PUBLISH == true ]]; then
-             npm publish
-          else
-             npm pack
-          fi
+          npm pack
+      - name: Verify .trex artifact in tarball (extension plugins only)
+        run: |
+          cd ${{ matrix.PKGPATH }}
+          # Plugins whose published tarball MUST include a compiled *.trex
+          # artifact. Web/docs/notebook/cli/runtime/bao publish other shapes;
+          # everything else is a DuckDB extension and must ship a .trex.
+          case "${{ matrix.PKGPATH }}" in
+            ./plugins/web|./plugins/docs|./plugins/notebook|./plugins/cli|./plugins/runtime|./plugins/bao)
+              echo "skip — non-extension plugin"
+              ;;
+            *)
+              TARBALL=$(ls -t *.tgz | head -1)
+              if [ -z "$TARBALL" ]; then
+                echo "::error::npm pack produced no tarball"
+                exit 1
+              fi
+              if ! tar -tzf "$TARBALL" | grep -qE '\.trex$'; then
+                echo "::error::tarball $TARBALL is missing the .trex artifact — prepack/build did not produce one"
+                echo "Tarball contents:"
+                tar -tzf "$TARBALL" | head -40
+                exit 1
+              fi
+              echo "OK: tarball $TARBALL contains a .trex artifact"
+              tar -tzf "$TARBALL" | grep '\.trex$'
+              ;;
+          esac
+      - name: Publish
+        # Publish only from the canonical OHDSI/trex repository on develop or main.
+        # Forks and feature branches build + verify but do not push to the registry.
+        if: github.repository == 'OHDSI/trex' && (github.ref_name == 'develop' || github.ref_name == 'main')
+        env:
+          CI: true
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PROJECT_TOKEN }}
+        run: |
+          cd ${{ matrix.PKGPATH }}
+          TARBALL=$(ls -t *.tgz | head -1)
+          # Publish the already-built tarball — prepack already ran during npm pack.
+          # Use --ignore-scripts to avoid re-running prepack (and re-building) here.
+          npm publish "$TARBALL" --ignore-scripts
       - name: Extract extension name
         id: extname
         run: echo "name=$(basename ${{ matrix.PKGPATH }})" >> "$GITHUB_OUTPUT"
@@ -290,7 +323,12 @@ jobs:
 
   create-release:
     needs: [build, build-arm]
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+    # Releases only from canonical repo on develop or main.
+    if: |
+      github.repository == 'OHDSI/trex'
+      && github.event_name == 'workflow_dispatch'
+      && github.event.inputs.tag != ''
+      && (github.ref_name == 'develop' || github.ref_name == 'main')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -410,7 +448,8 @@ jobs:
           docker run --rm --entrypoint sh trexsql-test:dev -c 'command -v claude' >/dev/null
 
       - name: Login to GHCR
-        if: github.ref_name == 'develop' || github.ref_name == 'main' || github.event_name == 'workflow_dispatch'
+        # Push only from canonical repo on develop/main.
+        if: github.repository == 'OHDSI/trex' && (github.ref_name == 'develop' || github.ref_name == 'main')
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -418,7 +457,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push prod image
-        if: github.ref_name == 'develop' || github.ref_name == 'main' || github.event_name == 'workflow_dispatch'
+        if: github.repository == 'OHDSI/trex' && (github.ref_name == 'develop' || github.ref_name == 'main')
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -430,7 +469,7 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/trexsql:sha-${{ github.sha }}
 
       - name: Build and push dev image
-        if: github.ref_name == 'develop' || github.ref_name == 'main' || github.event_name == 'workflow_dispatch'
+        if: github.repository == 'OHDSI/trex' && (github.ref_name == 'develop' || github.ref_name == 'main')
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -517,7 +556,8 @@ jobs:
           docker rm -f pg-trex-smoke
 
       - name: Login to GHCR
-        if: github.ref_name == 'develop' || github.ref_name == 'main' || github.event_name == 'workflow_dispatch'
+        # Push only from canonical repo on develop/main.
+        if: github.repository == 'OHDSI/trex' && (github.ref_name == 'develop' || github.ref_name == 'main')
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -525,7 +565,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push to GHCR
-        if: github.ref_name == 'develop' || github.ref_name == 'main' || github.event_name == 'workflow_dispatch'
+        if: github.repository == 'OHDSI/trex' && (github.ref_name == 'develop' || github.ref_name == 'main')
         run: |
           docker tag pg-trex-test ghcr.io/${{ github.repository_owner }}/pg-trex:latest
           docker tag pg-trex-test ghcr.io/${{ github.repository_owner }}/pg-trex:sha-${{ github.sha }}

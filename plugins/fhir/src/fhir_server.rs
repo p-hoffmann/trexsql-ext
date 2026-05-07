@@ -32,16 +32,42 @@ pub fn start_fhir_server(host: String, port: u16, db_name: String, _db_path: Str
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
+    // Gate so the spawned thread doesn't race ahead of the parent's
+    // register_server call. If it did and failed instantly, its
+    // deregister-on-exit would happen before the registry entry was
+    // ever inserted — and the parent's later register would leave a
+    // phantom entry pointing at a dead thread.
+    let (registered_tx, registered_rx) = std::sync::mpsc::sync_channel::<()>(1);
+
     let server_host = host.clone();
     let server_port = port;
     let success_host = host.clone();
 
+    // Cloned hostname for the thread's deregister-on-exit guard.
+    let cleanup_host = host.clone();
+
     let thread_handle = thread::Builder::new()
         .name(format!("fhir-server-{}:{}", host, port))
         .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-            let rt = tokio::runtime::Builder::new_current_thread()
+            // Wait for the parent to finish register_server. If the
+            // parent dropped the sender (registration failed), bail.
+            if registered_rx.recv().is_err() {
+                return Ok(());
+            }
+
+            let rt = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
-                .build()?;
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    // Runtime build failed — make absolutely sure the
+                    // registry entry doesn't leak.
+                    ServerRegistry::instance()
+                        .deregister_server(&cleanup_host, server_port);
+                    return Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
+                }
+            };
 
             let result = rt.block_on(async move {
                 {
@@ -107,6 +133,18 @@ pub fn start_fhir_server(host: String, port: u16, db_name: String, _db_path: Str
             if let Err(ref e) = result {
                 eprintln!("[fhir] ERROR: Server thread exiting with error: {e}");
             }
+
+            // Always deregister this server's registry entry on thread
+            // exit — whether the body returned Ok (graceful shutdown) or
+            // Err (init_fhir_meta / definition load / TcpListener::bind
+            // failure). Without this, an internal failure after the outer
+            // fn registers the handle leaves a phantom entry visible in
+            // trex_fhir_status(). If stop_server already removed the
+            // entry as part of an explicit shutdown, this is a harmless
+            // no-op.
+            ServerRegistry::instance()
+                .deregister_server(&cleanup_host, server_port);
+
             result
         })
         .map_err(|e| format!("Failed to spawn FHIR server thread: {}", e))?;
@@ -118,6 +156,11 @@ pub fn start_fhir_server(host: String, port: u16, db_name: String, _db_path: Str
     };
 
     ServerRegistry::instance().register_server(host.clone(), port, server_handle)?;
+
+    // Now that the registry entry is in place, release the gate so the
+    // spawned thread can begin its work. If the thread later fails or
+    // panics, its deregister-on-exit guard will clean up the entry.
+    let _ = registered_tx.send(());
 
     Ok(format!(
         "Started FHIR R4 server on {}:{}",

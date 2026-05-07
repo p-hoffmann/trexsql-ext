@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Once};
 use std::thread;
 
 use duckdb::core::{DataChunkHandle, Inserter, LogicalTypeId};
@@ -12,6 +12,17 @@ use crate::credential_mask;
 use crate::destination::DuckDbDestination;
 use crate::pipeline_registry::{self, PipelineMode, PipelineState};
 use crate::store::DuckDbStore;
+
+/// rustls 0.23+ requires a CryptoProvider be installed before any TLS handshake.
+/// Both `ring` and `aws-lc-rs` features are pulled in transitively (reqwest, etl-lib),
+/// so auto-selection panics. We install `ring` explicitly (smaller, more portable).
+static CRYPTO_INIT: Once = Once::new();
+
+fn ensure_crypto_provider() {
+    CRYPTO_INIT.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
 
 struct PipelineParams {
     batch_size: usize,
@@ -220,6 +231,8 @@ fn start_pipeline(
     mode: PipelineMode,
     params: PipelineParams,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    ensure_crypto_provider();
+
     let host = credential_mask::extract_param(connection_string, "host")
         .unwrap_or("localhost")
         .to_string();
@@ -305,6 +318,15 @@ fn start_pipeline(
                     DuckDbDestination::new(name.clone(), schemas.clone());
                 let store = DuckDbStore::new(name.clone(), schemas);
 
+                // Source PG TLS cert validation: by default the trusted root
+                // store is empty, so only well-known CAs would pass — except
+                // etl-lib seeds an empty RootCertStore, meaning self-signed
+                // certs always fail. Operators can drop a PEM bundle at
+                // /etc/trexsql/etl_pg_ca.pem to extend trust (e.g. for private
+                // CAs or test fixtures with self-signed certs).
+                let trusted_root_certs =
+                    std::fs::read_to_string("/etc/trexsql/etl_pg_ca.pem").unwrap_or_default();
+
                 let pg_config = etl_lib::config::PgConnectionConfig {
                     host,
                     port,
@@ -312,7 +334,7 @@ fn start_pipeline(
                     username,
                     password,
                     tls: etl_lib::config::TlsConfig {
-                        trusted_root_certs: String::new(),
+                        trusted_root_certs,
                         enabled: true,
                     },
                     keepalive: None,
@@ -342,8 +364,23 @@ fn start_pipeline(
                 pipeline_registry::registry()
                     .update_state(&name, PipelineState::Snapshotting);
 
+                // `pipeline.start()` returns Ok once workers are spawned; the
+                // workers then run until they finish or shutdown is requested.
+                // We must await `pipeline.wait()` to actually drive workers to
+                // completion, racing it against the external shutdown signal.
+                if let Err(e) = pipeline.start().await {
+                    pipeline_registry::registry()
+                        .set_error(&name, &format!("{}", e));
+                    return Err(format!("{}", e).into());
+                }
+
+                // Grab a shutdown handle *before* wait() consumes the pipeline.
+                let shutdown_handle = pipeline.shutdown_tx();
+                let wait_fut = pipeline.wait();
+                tokio::pin!(wait_fut);
+
                 tokio::select! {
-                    result = pipeline.start() => {
+                    result = &mut wait_fut => {
                         match result {
                             Ok(()) => {
                                 pipeline_registry::registry()
@@ -357,8 +394,33 @@ fn start_pipeline(
                         }
                     }
                     _ = shutdown_rx => {
+                        // Twin of the copy_only fix below: write Stopping while
+                        // we tear down workers, then set_state(Stopped) once
+                        // shutdown completes (or set_error on shutdown failure).
+                        // Without the final transition, `trex_etl_status()` would
+                        // be stuck reporting "stopping" indefinitely.
                         pipeline_registry::registry()
                             .update_state(&name, PipelineState::Stopping);
+
+                        // Signal workers to wind down, then drive wait_fut to
+                        // completion so the final state reflects reality.
+                        if let Err(e) = shutdown_handle.shutdown() {
+                            pipeline_registry::registry()
+                                .set_error(&name, &format!("shutdown signal failed: {}", e));
+                            return Err(format!("shutdown signal failed: {}", e).into());
+                        }
+
+                        match wait_fut.await {
+                            Ok(()) => {
+                                pipeline_registry::registry()
+                                    .update_state(&name, PipelineState::Stopped);
+                            }
+                            Err(e) => {
+                                pipeline_registry::registry()
+                                    .set_error(&name, &format!("{}", e));
+                                return Err(format!("{}", e).into());
+                            }
+                        }
                     }
                 }
 
@@ -410,7 +472,11 @@ fn start_copy_only_pipeline(
                 trex_pool_client::session_execute(session_id, "LOAD postgres")
                     .map_err(|e| format!("Failed to load postgres scanner: {}", e))?;
 
-                let escaped_conn = conn_str.replace('\'', "''");
+                // DuckDB's postgres scanner uses libpq directly and rejects
+                // ETL-specific keys like `publication=` and `schema=`. Strip them
+                // before ATTACH or libpq returns "invalid connection option".
+                let attach_conn = strip_non_libpq_params(&conn_str);
+                let escaped_conn = attach_conn.replace('\'', "''");
                 let attach_sql = format!(
                     "ATTACH IF NOT EXISTS '{}' AS \"{}\" (TYPE postgres, READ_ONLY)",
                     escaped_conn, attach_name
@@ -507,6 +573,18 @@ fn start_copy_only_pipeline(
             })();
 
             let _ = trex_pool_client::destroy_session(session_id);
+
+            // Surface any early-step failure (LOAD postgres, ATTACH, table query,
+            // schema-create) to the registry. Without this, the thread returns Err
+            // silently and the registry stays in its last set state (Starting or
+            // Snapshotting), which is what made copy_only appear stuck.
+            match &result {
+                Ok(()) => {}
+                Err(e) => {
+                    let msg = format!("{}", e);
+                    pipeline_registry::registry().set_error(&pipeline_name, &msg);
+                }
+            }
             result
         });
 
@@ -521,6 +599,71 @@ fn start_copy_only_pipeline(
     }
 
     Ok(format!("Pipeline '{}' started (copy_only)", name))
+}
+
+/// Strip ETL-specific keys (publication, schema) from a libpq-style connection
+/// string. The DuckDB postgres scanner forwards the conn string to libpq, which
+/// rejects unknown keys with `invalid connection option "<key>"`.
+fn strip_non_libpq_params(conn_str: &str) -> String {
+    const STRIP_KEYS: &[&str] = &["publication", "schema"];
+
+    let mut result = String::with_capacity(conn_str.len());
+    let mut remaining = conn_str;
+
+    while !remaining.is_empty() {
+        let trimmed = remaining.trim_start();
+        let leading_ws_len = remaining.len() - trimmed.len();
+        remaining = trimmed;
+        if remaining.is_empty() {
+            break;
+        }
+
+        let eq_pos = match remaining.find('=') {
+            Some(pos) => pos,
+            None => {
+                if !result.is_empty() && !result.ends_with(' ') {
+                    result.push(' ');
+                }
+                result.push_str(remaining);
+                break;
+            }
+        };
+
+        let key = &remaining[..eq_pos];
+        let after_eq = &remaining[eq_pos + 1..];
+
+        let (value, rest) = if after_eq.starts_with('\'') {
+            if let Some(end_quote) = after_eq[1..].find('\'') {
+                (&after_eq[..end_quote + 2], &after_eq[end_quote + 2..])
+            } else {
+                (after_eq, "")
+            }
+        } else {
+            match after_eq.find(' ') {
+                Some(sp) => (&after_eq[..sp], &after_eq[sp..]),
+                None => (after_eq, ""),
+            }
+        };
+
+        let is_strip_key = STRIP_KEYS
+            .iter()
+            .any(|k| key.eq_ignore_ascii_case(k));
+
+        if !is_strip_key {
+            if !result.is_empty() && leading_ws_len == 0 && !result.ends_with(' ') {
+                result.push(' ');
+            } else if !result.is_empty() && leading_ws_len > 0 {
+                result.push(' ');
+            }
+            result.push_str(key);
+            result.push('=');
+            result.push_str(value);
+        }
+
+        remaining = rest;
+    }
+
+    result.trim().to_string()
 }
 
 /// Extract all values from a named VARCHAR column across Arrow RecordBatches.

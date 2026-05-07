@@ -128,7 +128,25 @@ static llama_capi::ModelConfig parse_model_config(const std::string& config_json
     if (use_mlock_val && yyjson_is_bool(use_mlock_val)) {
         config.use_mlock = yyjson_get_bool(use_mlock_val);
     }
-    
+
+    // Allow overriding pooling per load: "pooling_type" can be an int
+    // (-1=unspec, 0=none, 1=mean, 2=cls, 3=last) or a string ("auto"/"none"/
+    // "mean"/"cls"/"last").
+    yyjson_val *pooling_val = yyjson_obj_get(root, "pooling_type");
+    if (pooling_val) {
+        if (yyjson_is_int(pooling_val)) {
+            config.pooling_type = static_cast<int>(yyjson_get_int(pooling_val));
+        } else if (yyjson_is_str(pooling_val)) {
+            std::string pv = yyjson_get_str(pooling_val);
+            std::transform(pv.begin(), pv.end(), pv.begin(), ::tolower);
+            if      (pv == "auto" || pv == "unspec" || pv == "unspecified") config.pooling_type = -1;
+            else if (pv == "none") config.pooling_type = 0;
+            else if (pv == "mean") config.pooling_type = 1;
+            else if (pv == "cls")  config.pooling_type = 2;
+            else if (pv == "last") config.pooling_type = 3;
+        }
+    }
+
     yyjson_doc_free(doc);
     return config;
 }
@@ -139,20 +157,31 @@ static llama_capi::SimpleModelManager& get_manager() {
 
 extern "C" {
 
-char* cpp_llama_load_model(const char* path, const char* config_json) {
+char* cpp_llama_load_model(const char* path, const char* alias_or_config) {
     try {
         if (!path) {
             return string_to_cstring("Error: Model path is required");
         }
-        
-        std::string path_str = cstring_to_string(path);
-        std::string config_str = cstring_to_string(config_json);
 
-        llama_capi::ModelConfig config = parse_model_config(config_str);
+        std::string path_str = cstring_to_string(path);
+        std::string second_arg = cstring_to_string(alias_or_config);
+
+        // The second SQL arg is treated as the alias. If it looks like JSON
+        // (starts with '{'), parse it as a config instead and fall back to
+        // the filename stem for the model name.
+        llama_capi::ModelConfig config;
+        std::string alias;
+        if (!second_arg.empty() && second_arg[0] == '{') {
+            config = parse_model_config(second_arg);
+        } else {
+            alias = second_arg;
+        }
         config.model_path = path_str;
 
-        std::string model_name = std::filesystem::path(path_str).stem().string();
-        
+        std::string model_name = alias.empty()
+            ? std::filesystem::path(path_str).stem().string()
+            : alias;
+
         if (get_manager().LoadModel(model_name, config)) {
             std::string result = "{\"status\": \"success\", \"model_name\": \"" + model_name + "\", \"path\": \"" + path_str + "\"}";
             return string_to_cstring(result);
@@ -521,7 +550,38 @@ char* cpp_llama_download_model(const char* source, const char* name, const char*
         std::string name_str = name ? cstring_to_string(name) : "";
         std::string options_str = cstring_to_string(options_json);
 
-        std::filesystem::path models_dir("./models");
+        // Allow `<org>/<repo>` shorthand: expand to a HuggingFace resolve URL.
+        // Triggered when source is not an absolute http(s) URL and contains exactly
+        // one '/' (so it looks like org/repo). Filename comes from the `name` arg.
+        bool is_url = source_str.compare(0, 7, "http://") == 0 ||
+                      source_str.compare(0, 8, "https://") == 0;
+        if (!is_url && !source_str.empty()) {
+            size_t first_slash = source_str.find('/');
+            size_t last_slash = source_str.rfind('/');
+            if (first_slash != std::string::npos &&
+                first_slash == last_slash &&
+                first_slash > 0 &&
+                first_slash < source_str.length() - 1) {
+                if (name_str.empty()) {
+                    return string_to_cstring(
+                        "Error: When using <org>/<repo> shorthand, the second "
+                        "argument must be the GGUF filename");
+                }
+                source_str = "https://huggingface.co/" + source_str +
+                             "/resolve/main/" + name_str;
+            }
+        }
+
+        // The third argument is either a JSON options blob (legacy, currently unused)
+        // or a destination directory. Treat strings starting with '{' as JSON options
+        // and fall back to the default ./models directory; otherwise use the string
+        // verbatim as the output directory.
+        std::filesystem::path models_dir;
+        if (options_str.empty() || (!options_str.empty() && options_str[0] == '{')) {
+            models_dir = std::filesystem::path("./models");
+        } else {
+            models_dir = std::filesystem::path(options_str);
+        }
         std::filesystem::create_directories(models_dir);
 
         std::string filename;
@@ -596,21 +656,29 @@ char* cpp_llama_download_model(const char* source, const char* name, const char*
     }
 }
 
-char* cpp_llama_load_model_for_embeddings(const char* path, const char* config_json) {
+char* cpp_llama_load_model_for_embeddings(const char* path, const char* alias_or_config) {
     try {
         if (!path) {
             return string_to_cstring("Error: Model path is required");
         }
-        
-        std::string path_str = cstring_to_string(path);
-        std::string config_str = cstring_to_string(config_json);
 
-        llama_capi::ModelConfig config = parse_model_config(config_str);
+        std::string path_str = cstring_to_string(path);
+        std::string second_arg = cstring_to_string(alias_or_config);
+
+        llama_capi::ModelConfig config;
+        std::string alias;
+        if (!second_arg.empty() && second_arg[0] == '{') {
+            config = parse_model_config(second_arg);
+        } else {
+            alias = second_arg;
+        }
         config.embeddings = true;
         config.model_path = path_str;
 
-        std::string model_name = std::filesystem::path(path_str).stem().string();
-        
+        std::string model_name = alias.empty()
+            ? std::filesystem::path(path_str).stem().string()
+            : alias;
+
         if (get_manager().LoadModel(model_name, config)) {
             std::string result = "{\"status\": \"success\", \"model_name\": \"" + model_name + "\", \"path\": \"" + path_str + "\", \"embeddings_enabled\": true}";
             return string_to_cstring(result);
