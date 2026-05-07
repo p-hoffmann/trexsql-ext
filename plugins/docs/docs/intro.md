@@ -3,122 +3,48 @@ slug: /
 sidebar_position: 1
 ---
 
-# Getting Started
+# Introduction
 
-trexsql is a distributed SQL engine built on top of a columnar database core. It provides clustering, federated queries, Arrow Flight SQL transport, and a full-stack management application with a plugin system.
+Trex is a single-binary, self-hosted backend platform built around an analytical
+column-store engine. One container speaks Postgres wire, runs Deno edge
+functions, hosts a plugin system for UIs and APIs, federates queries across
+Postgres / MySQL / SQLite / BigQuery / ClickHouse / SAP HANA / S3 / HTTP, and
+ships an identity provider, GraphQL API, REST API, MCP server, admin UI, and
+Supabase-CLI-compatible management API on top.
 
-## Architecture
+## Who reads which section
 
-trexsql extends the core database engine with loadable extensions (`.trex` files) that add distributed query capabilities, protocol servers, ETL pipelines, and more. The management application (`core/`) provides a web UI, GraphQL API, authentication, and a plugin system for extending functionality.
+| If you want to… | Start here |
+|-----------------|------------|
+| Run Trex on a single machine in 5 minutes | [Quickstart: Deploy](quickstarts/deploy) |
+| Understand how Trex is built | [Concepts: Architecture](concepts/architecture) |
+| Embed Trex in an existing app stack | [Tutorial: Embed Trex in your stack](tutorials/embed-trex-in-an-app) |
+| Federate Postgres + S3 + HANA into one query | [Tutorial: Multi-Source Analytics](tutorials/multi-source-analytics) |
+| Build a CDC-driven incremental warehouse | [Tutorial: Incremental Data Warehouse](tutorials/incremental-data-warehouse) |
+| Use LLM inference inside SQL (RAG, vector search, summarisation) | [Tutorial: LLM-Augmented SQL](tutorials/llm-augmented-sql) |
+| Drive Trex from an AI agent (Claude / Cursor) via MCP | [Tutorial: Agentic Trex with MCP](tutorials/agentic-trex-with-mcp) |
+| Run a clinical-analytics workflow (OMOP / Atlas / FHIR / CQL) | [Tutorial: Clinical Analytics](tutorials/clinical-analytics) |
+| Look up a SQL function | [SQL Reference](sql-reference/db) |
+| Write a plugin | [Tutorial: Build a plugin](tutorials/build-a-plugin) → [Plugins](plugins/overview) |
+| Publish a redistributable plugin | [Tutorial: Publish a Plugin](tutorials/publish-a-plugin) |
+| Use the admin / management APIs from code | [APIs](apis/graphql) |
+| Use the CLI | [CLI](cli) |
+| Run Trex in production | [Deployment](deployment/docker) |
 
-```mermaid
-flowchart TD
-    subgraph Frontend
-        WebUI["Web UI · /trex/"]
-        GraphQL["GraphQL API · /trex/graphql"]
-        Docs["Docs · /trex/docs/"]
-    end
+## Why a new project
 
-    subgraph Server
-        Express["Express + PostGraphile"]
-        Auth["Better Auth"]
-        MCP["MCP Server"]
-        PluginSys["Plugin System"]
-    end
+Trex consolidates an analytical-first database, an application backend, and a
+plugin layer into a single deployable unit. Most stacks force you to bolt these
+together: a separate OLAP warehouse, a separate auth/API server, a separate
+function runtime. Trex puts all three behind one Postgres-compatible
+endpoint, so application data and analytical workloads share one engine and one
+operational story.
 
-    subgraph Plugins["Plugin Types"]
-        Functions
-        UI
-        Flows
-        Transforms
-        Migrations
-    end
+This is opinionated and won't fit every shape — see
+[Concepts → Architecture](concepts/architecture) for the tradeoffs.
 
-    subgraph Data["Data Layer"]
-        PostgreSQL["PostgreSQL (metadata)"]
-        Engine["trexsql Engine"]
-    end
+## Getting started
 
-    subgraph Extensions
-        db & tpm & hana & pgwire & chdb
-        etl & fhir & migration & ai & atlas
-    end
-
-    Frontend --> Server
-    Server --> Plugins
-    Server --> Data
-    Engine --> Extensions
-```
-
-## Cluster Architecture
-
-In a distributed deployment, multiple trexsql nodes form a cluster using a gossip protocol for membership and Arrow Flight SQL for data transport.
-
-```mermaid
-flowchart LR
-    Client["Client"] --> Coord
-
-    subgraph Node1["Node 1 (Coordinator)"]
-        Coord["Coordinator"]
-        G1["Gossip"]
-        F1["Flight SQL"]
-        E1["Engine"]
-        Coord --> E1
-        Coord --> F1
-    end
-
-    subgraph Node2["Node 2"]
-        G2["Gossip"]
-        F2["Flight SQL"]
-        E2["Engine"]
-    end
-
-    subgraph Node3["Node 3"]
-        G3["Gossip"]
-        F3["Flight SQL"]
-        E3["Engine"]
-    end
-
-    G1 <-.->|gossip| G2
-    G2 <-.->|gossip| G3
-    G1 <-.->|gossip| G3
-
-    F1 <-->|Arrow Flight| F2
-    F1 <-->|Arrow Flight| F3
-```
-
-## Quick Start
-
-```bash
-docker compose up
-```
-
-This starts PostgreSQL and the trex service. The application is available at:
-
-- **Web UI**: [http://localhost:8001/trex/](http://localhost:8001/trex/)
-- **GraphiQL**: [http://localhost:8001/trex/graphiql](http://localhost:8001/trex/graphiql)
-- **Docs**: [http://localhost:8001/trex/docs/](http://localhost:8001/trex/docs/)
-
-## Extensions
-
-Each extension adds SQL functions that can be called directly:
-
-| Extension | Description |
-|-----------|-------------|
-| [db](sql-reference/db) | Distributed clustering, Arrow Flight, federated queries |
-| [tpm](sql-reference/tpm) | Plugin package manager |
-| [hana](sql-reference/hana) | SAP HANA database scanner |
-| [pgwire](sql-reference/pgwire) | PostgreSQL wire protocol server |
-| [chdb](sql-reference/chdb) | ClickHouse integration |
-| [etl](sql-reference/etl) | PostgreSQL CDC replication |
-| [fhir](sql-reference/fhir) | FHIR server |
-| [migration](sql-reference/migration) | Database schema migrations |
-| [ai](sql-reference/ai) | LLM inference via llama.cpp |
-| [atlas](sql-reference/atlas) | OHDSI Atlas cohort SQL rendering |
-
-## What's in This Documentation
-
-- **[SQL Reference](sql-reference/db)** — Complete function reference for every extension
-- **[Plugins](plugins/overview)** — How the plugin system works and how to build plugins
-- **[JS / API Interface](js-interface/graphql)** — GraphQL, Auth, MCP, and Function Worker APIs
-- **[Deployment](deployment/docker)** — Docker configuration and environment variables
+If this is your first time, run the [5-minute deploy quickstart](quickstarts/deploy).
+If you already know what Trex is and want a deep tour, jump to
+[Concepts → Architecture](concepts/architecture).

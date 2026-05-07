@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
 use base::server::{RequestIdleTimeout, ServerFlags, WorkerEntrypoints};
 use base::worker::pool::{SupervisorPolicy, WorkerPoolPolicy};
+use base::worker::TerminationToken;
 use base::InspectorOption;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -235,7 +236,12 @@ pub fn get_version() -> String {
 
 static LOG_INIT: AtomicBool = AtomicBool::new(false);
 
-type ServerThreads = Arc<Mutex<HashMap<String, thread::JoinHandle<()>>>>;
+struct ServerThreadEntry {
+  join_handle: thread::JoinHandle<()>,
+  termination_token: TerminationToken,
+}
+
+type ServerThreads = Arc<Mutex<HashMap<String, ServerThreadEntry>>>;
 
 static SERVER_THREADS: LazyLock<ServerThreads> =
   LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
@@ -359,6 +365,13 @@ impl TrexServerManagerWrapper {
 
     let (result_tx, result_rx) = mpsc::channel();
 
+    // Termination token used to signal an orderly shutdown of the spawned
+    // server's accept loop. We hand a clone to the Builder so the
+    // server::listen() select! arm picks it up; we keep the parent in
+    // SERVER_THREADS for stop_server to cancel later.
+    let termination_token = TerminationToken::new();
+    let thread_termination_token = termination_token.clone();
+
     let thread_handle = thread::spawn(move || {
       init_logging();
 
@@ -379,6 +392,9 @@ impl TrexServerManagerWrapper {
       let result: Result<()> = local.block_on(&runtime, async {
         let mut builder =
           Builder::new(config_clone.addr, &config_clone.main_service_path);
+
+        // Wire the termination token so stop_server can break server.listen().
+        builder.termination_token(thread_termination_token);
 
         if let (Some(cert_path), Some(key_path)) =
           (&config_clone.tls_cert_path, &config_clone.tls_key_path)
@@ -457,7 +473,13 @@ impl TrexServerManagerWrapper {
     });
 
     if let Ok(mut threads) = SERVER_THREADS.lock() {
-      threads.insert(server_id.clone(), thread_handle);
+      threads.insert(
+        server_id.clone(),
+        ServerThreadEntry {
+          join_handle: thread_handle,
+          termination_token,
+        },
+      );
     }
 
     match result_rx.recv_timeout(std::time::Duration::from_secs(180)) {
@@ -485,23 +507,60 @@ impl TrexServerManagerWrapper {
 
 impl TrexServerManagerWrapper {
   pub fn stop_server(&self, server_id: &str) -> Result<String> {
-    self.manager.unregister_server(server_id)?;
+    // Take the entry out of SERVER_THREADS *first* so we own the
+    // termination token + join handle. Drop the lock before joining; the
+    // join blocks until the spawned thread exits, which can take several
+    // seconds for graceful shutdown.
+    let entry = {
+      let mut threads = match SERVER_THREADS.lock() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+      };
+      threads.remove(server_id)
+    };
 
-    if let Ok(mut threads) = SERVER_THREADS.lock() {
-      threads.remove(server_id);
+    if let Some(entry) = entry {
+      // Signal the accept loop in server::listen() to break.
+      entry.termination_token.cancel();
+
+      // Wait for the worker thread to actually exit so the listening
+      // socket is released before we return. Without this, an immediate
+      // restart on the same port would race with the previous bind.
+      if let Err(e) = entry.join_handle.join() {
+        eprintln!(
+          "[TREX-EXT] Server thread panicked during shutdown: {:?}",
+          e
+        );
+      }
     }
+
+    // Cleanup of the ServerManager registry entry happens *after* the
+    // thread exits (the spawned thread also calls unregister_server on
+    // its way out, so this is idempotent).
+    let _ = self.manager.unregister_server(server_id);
 
     Ok(format!("Stopped Trex server: {}", server_id))
   }
 
   pub fn stop_all_servers(&self) -> Result<usize> {
-    let count = if let Ok(mut threads) = SERVER_THREADS.lock() {
-      let count = threads.len();
-      threads.clear();
-      count
-    } else {
-      0
-    };
+    // Drain entries (token + handle) under the lock, then signal and
+    // join each one outside the lock.
+    let entries: Vec<(String, ServerThreadEntry)> =
+      match SERVER_THREADS.lock() {
+        Ok(mut threads) => threads.drain().collect(),
+        Err(poisoned) => poisoned.into_inner().drain().collect(),
+      };
+
+    let count = entries.len();
+    for (id, entry) in entries {
+      entry.termination_token.cancel();
+      if let Err(e) = entry.join_handle.join() {
+        eprintln!(
+          "[TREX-EXT] Server thread {} panicked during shutdown: {:?}",
+          id, e
+        );
+      }
+    }
 
     let _ = self.manager.stop_all_servers();
     Ok(count)

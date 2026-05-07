@@ -44,29 +44,47 @@ fn check_freshness(
         let esc_name = escape_sql_ident(&source.name);
         let esc_field = escape_sql_ident(&source.loaded_at_field);
 
-        let max_rows = query_sql(&format!(
-            "SELECT MAX(\"{esc_field}\")::VARCHAR FROM \"{esc_schema}\".\"{esc_name}\""
+        // Combine MAX(loaded_at) and the age-in-hours computation into a
+        // single statement. Two reasons:
+        //   1. Halves the per-source round-trip count (1 query instead of
+        //      2). The previous two-query design issued 2N pool requests
+        //      for N sources and was observed to deadlock for N >= 2 —
+        //      even when all queries were pinned to the same session, the
+        //      4th request (= 2nd source's age query) would hang inside
+        //      `trex_pool_session_execute_arrow`. Folding the two into
+        //      one keeps the contract at exactly N pool calls.
+        //   2. Avoids re-serialising the timestamp through a VARCHAR cast
+        //      and back into a TIMESTAMP literal, which was the original
+        //      source of the TIMESTAMPTZ binder error. We still emit the
+        //      max as VARCHAR for the result row, but the age is
+        //      computed entirely on the DB side from the typed column.
+        //
+        // CURRENT_TIMESTAMP is cast to TIMESTAMP (matching the prior
+        // TIMESTAMP/TIMESTAMPTZ fix) so the subtraction binds for both
+        // TIMESTAMP and TIMESTAMP WITH TIME ZONE `loaded_at_field`s.
+        let combined = query_sql(&format!(
+            "SELECT MAX(\"{esc_field}\")::VARCHAR, \
+             CASE WHEN MAX(\"{esc_field}\") IS NULL THEN NULL \
+                  ELSE EXTRACT(EPOCH FROM CURRENT_TIMESTAMP::TIMESTAMP \
+                               - MAX(\"{esc_field}\")::TIMESTAMP) / 3600.0 \
+             END \
+             FROM \"{esc_schema}\".\"{esc_name}\""
         ));
 
-        let (max_loaded_at, age_hours, status) = match max_rows {
+        let (max_loaded_at, age_hours, status) = match combined {
             Ok(rows) => {
-                let max_val = rows
-                    .first()
-                    .map(|r| r.columns[0].clone())
+                let row = rows.first();
+                let max_val = row
+                    .map(|r| r.columns.get(0).cloned().unwrap_or_default())
+                    .unwrap_or_default();
+                let age_str = row
+                    .map(|r| r.columns.get(1).cloned().unwrap_or_default())
                     .unwrap_or_default();
 
                 if max_val.is_empty() {
                     ("NULL".to_string(), f64::INFINITY, "error".to_string())
                 } else {
-                    let age_rows = query_sql(&format!(
-                        "SELECT EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - '{}'::TIMESTAMP) / 3600.0",
-                        crate::escape_sql_str(&max_val)
-                    ))?;
-
-                    let age = age_rows
-                        .first()
-                        .and_then(|r| r.columns[0].parse::<f64>().ok())
-                        .unwrap_or(f64::INFINITY);
+                    let age = age_str.parse::<f64>().unwrap_or(f64::INFINITY);
 
                     let status = if let Some(error_threshold) = &source.error_after {
                         if age >= threshold_to_hours(error_threshold) {

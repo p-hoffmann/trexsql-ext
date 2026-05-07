@@ -1,8 +1,8 @@
 # Trex
 
-A lightweight, self-hosted backend platform built around an analytical-first database engine.
+A self-hosted backend platform with an analytical column-store engine and federation built in, packaged as a single binary.
 
-Trex gives you a single binary that speaks Postgres wire, runs edge functions, hosts a plugin system for UIs and APIs, and embeds a column-store engine you can point at Parquet on S3, BigQuery, MySQL, SAP HANA, or another Postgres, all in one query. On top, an Express server provides an identity provider, a GraphQL layer over Postgres, a REST API, an admin UI, and an MCP server. The result is a small set of containers that handles application data and an analytical workload in one place.
+Trex is **Supabase-compatible** at the wire level — the auth (GoTrue), REST (PostgREST), and Functions APIs preserve the Supabase contracts — and includes forks of several Supabase open-source components (Storage, Edge Runtime, CLI, pg-meta, ETL). On top of that base it adds an embedded analytical engine (a DuckDB fork) you can point at Parquet on S3, BigQuery, MySQL, SAP HANA, ClickHouse, or another Postgres in one SQL statement; a GraphQL layer (PostGraphile); a Model Context Protocol server; a plugin system; and domain extensions for healthcare and observational research (FHIR, OHDSI Atlas, Clinical Quality Language, in-process LLM inference).
 
 ## Quick start
 
@@ -24,7 +24,8 @@ For live source mounts during plugin development, use `docker-compose.dev.yml`.
   - `:8001`: HTTP for the web UI, edge functions, GraphQL, MCP server, auth
   - `:8000`: TLS-terminated HTTPS variant of the above
   - `:5433`: Postgres wire protocol (connect with `psql`, JDBC, `pg_dump`, etc.)
-  - `:4200`: gossip / cluster membership for multi-node deployments
+
+In multi-node deployments the `db` extension also opens a UDP gossip port and an Arrow Flight SQL port; these are configured per deployment and not exposed by the default compose.
 
 Out of the box you have:
 
@@ -40,27 +41,64 @@ Out of the box you have:
 The `trex` binary embeds a column-store engine that auto-loads a curated set of extensions on startup. Out of the box you can:
 
 - **Federate across heterogeneous sources**: query Postgres, MySQL, SQLite, BigQuery, SAP HANA, ClickHouse, S3, and HTTP-served files in a single SQL statement.
-- **Read and write open table formats**: Apache Iceberg, Delta Lake, ducklake, Parquet, Avro, JSON.
+- **Read open table formats**: Apache Iceberg, Delta Lake, ducklake, Parquet, Avro, JSON. Write support varies by format and tracks the upstream DuckDB extensions.
 - **Run search workloads**: full-text search (BM25), vector similarity (HNSW), GIS / spatial queries.
 - **Speak Postgres wire**: clients connect with `psql`, JDBC, or `pg_dump` and see Trex as just another Postgres.
 - **Run distributed**: multi-node cluster coordination over Arrow Flight SQL, Postgres CDC replication into Trex, schema migrations, declarative data transforms, runtime extension installation.
-- **Use domain extensions**: FHIR server, OHDSI Atlas cohort-to-SQL, Clinical Quality Language to ELM, and in-process LLM inference (CUDA / Vulkan / Metal).
+- **Use domain extensions**: FHIR server, OHDSI Atlas cohort-to-SQL, Clinical Quality Language to ELM, and in-process LLM inference (Vulkan in the standard image; CUDA and Metal supported via custom builds).
 
-## Built on
+## Relationship to Supabase
 
-Components Trex reuses or integrates. Each fork is maintained as a submodule (or separate repo) and retains its upstream copyright and license; see the `LICENSE` file inside each submodule.
+Trex's control-plane surface reuses several Supabase open-source components and implements wire compatibility with others. Specifically:
+
+**Forks of Supabase repositories** (vendored and modified):
+
+- **Storage**: `plugins/storage/supabase-storage/` — fork of `supabase/storage` (Apache-2.0)
+- **CLI**: `plugins/cli/` — fork of `supabase/cli` (MIT)
+- **pg-meta**: `plugins/pg-meta/postgres-meta/` — fork of `supabase/postgres-meta` (Apache-2.0)
+- **Edge Runtime**: `plugins/runtime/trex-runtime/` — fork of `supabase/edge-runtime` (MIT)
+
+**Wire-compatible reimplementations** (own code, matching the upstream HTTP contract):
+
+- **Auth**: `core/server/auth/auth-router.ts` implements the Supabase GoTrue REST API. Existing clients written against GoTrue work without modification.
+- **Functions API**: matches the Supabase Functions HTTP contract.
+
+**Library dependencies**:
+
+- **ETL**: `plugins/etl/` depends on Supabase's open-source ETL library at a pinned commit (Apache-2.0).
+
+**Used unmodified**:
+
+- **PostgREST**: runs as an unmodified upstream container (sidecar), reverse-proxied at `/rest/v1/*`.
+
+What Trex adds on top of that base:
+
+- An embedded analytical column-store engine (a DuckDB fork) reachable via Postgres wire on port 5433
+- Federation extensions for SAP HANA, embedded ClickHouse (chDB), and peer Trex nodes
+- A custom DataFusion-based distributed query scheduler with chitchat gossip and Arrow Flight SQL transport
+- In-process LLM inference (llama.cpp) composed with HNSW vector search
+- A FHIR R4 server, OHDSI Atlas cohort translator, and Clinical Quality Language compiler as plugins
+- A Model Context Protocol (MCP) server exposing the management surface to LLM clients
+- GraphQL via PostGraphile (rather than Supabase's pg_graphql) with a custom plugin for cross-cutting admin operations
+- A plugin system that ships database extensions, UI surfaces, edge functions, scheduled flows, and dbt-style transformation projects as one npm package
+- Runs against stock Postgres 16 — no custom Postgres extensions required, so any managed Postgres works
+
+Notable Supabase components Trex does **not** include: Realtime, Studio (Trex has its own admin UI), Logflare/Analytics, and the SMS/email infrastructure that Supabase ships for delivered messages.
+
+The architectural difference relative to Supabase is mostly a deployment-shape choice. Supabase runs its services as separate containers, which is the right default for many deployments — independent scaling, mature operational tooling, and a polished hosted offering. Trex collapses the same surface into a single binary by loading each capability as a DuckDB extension and embedding the Express server inside the SQL engine. The single-binary shape is suited to small and medium self-hosted deployments and to scenarios where colocating analytics with the application backend matters.
+
+## Other upstreams
+
+Components Trex reuses or integrates beyond the Supabase base. Each fork is maintained as a submodule (or separate repo) and retains its upstream copyright and license; see the `LICENSE` file inside each submodule.
 
 - **DuckDB** (fork, MIT): analytical engine and C-API extension framework
 - **Postgres** (PostgreSQL License): application data, auth schema, and the wire protocol Trex speaks
-- **PostgREST** (MIT): REST API layer over Postgres
+- **PostgREST** (MIT): REST API layer over Postgres (used unmodified as a sidecar)
 - **PostGraphile** (MIT): GraphQL API layer over Postgres
-- **Better Auth** (MIT): identity provider, session management, OAuth/OIDC flows
-- **Supabase Edge Runtime** (fork, MIT): edge function runtime
-- **Supabase Storage** (fork, Apache-2.0): object storage plugin
-- **Supabase ETL** (fork, Apache-2.0): Postgres CDC components used by the `etl` extension
-- **Supabase CLI** (fork, MIT): local dev, migrations, function deploy, secrets management against a Trex stack
-
-Trex is an independent project and is not affiliated with or endorsed by any of the upstream projects listed here.
+- **Better Auth** (MIT): identity provider, session management, OAuth/OIDC flows (coexists with the GoTrue-compatible router)
+- **chitchat** (MIT, Quickwit): cluster gossip protocol
+- **Apache Arrow / DataFusion** (Apache-2.0): in-memory columnar format and distributed query planner
+- **llama.cpp** (MIT): in-process LLM inference engine
 
 ## Building from source
 

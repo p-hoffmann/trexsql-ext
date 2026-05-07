@@ -638,9 +638,18 @@ impl VTab for DbQueryTable {
                 .map_err(|e| format!("Admission error: {}", e))?;
             match status {
                 admission::QueryStatus::Rejected(reason) => {
+                    // Rejected queries are not enqueued, but cancel defensively
+                    // in case future admission logic admits-then-rejects on a
+                    // post-admission policy check. cancel_query is a no-op if
+                    // the qid is not tracked.
+                    let _ = admission::cancel_query(&qid);
                     return Err(format!("Query rejected: {}", reason).into());
                 }
                 admission::QueryStatus::Queued { position } => {
+                    // The caller bails out without ever transitioning this qid
+                    // to Running/Completed, so without an explicit cancel the
+                    // queue would accumulate orphaned entries.
+                    let _ = admission::cancel_query(&qid);
                     return Err(format!("Query queued at position {}", position).into());
                 }
                 _ => {

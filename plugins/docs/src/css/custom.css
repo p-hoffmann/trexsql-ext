@@ -20,3 +20,87 @@
   --ifm-color-primary-lightest: #abd5ff;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
 }
+
+/* Mermaid: dark-mode tinting.
+   Docusaurus' Mermaid theme reads `theme.dark` from docusaurus.config.ts —
+   we set both light/dark to "base" there and override variables here so the
+   diagram backdrop matches the page chrome. The light palette lives in
+   docusaurus.config.ts; this block restyles for [data-theme="dark"]. */
+[data-theme="dark"] .docusaurus-mermaid-container {
+  --mm-bg: #1e293b;
+  --mm-border: #475569;
+  --mm-text: #e2e8f0;
+  --mm-line: #94a3b8;
+  --mm-cluster-bg: #0f172a;
+  --mm-cluster-border: #334155;
+  --mm-note-bg: #422006;
+  --mm-note-border: #ca8a04;
+  --mm-note-text: #fef9c3;
+}
+
+[data-theme="dark"] .docusaurus-mermaid-container svg {
+  background: transparent;
+}
+
+[data-theme="dark"] .docusaurus-mermaid-container .node rect,
+[data-theme="dark"] .docusaurus-mermaid-container .node polygon,
+[data-theme="dark"] .docusaurus-mermaid-container .node circle,
+[data-theme="dark"] .docusaurus-mermaid-container .node ellipse,
+[data-theme="dark"] .docusaurus-mermaid-container .node path {
+  fill: var(--mm-bg) !important;
+  stroke: var(--mm-border) !important;
+}
+
+[data-theme="dark"] .docusaurus-mermaid-container .node .label,
+[data-theme="dark"] .docusaurus-mermaid-container .nodeLabel,
+[data-theme="dark"] .docusaurus-mermaid-container .edgeLabel,
+[data-theme="dark"] .docusaurus-mermaid-container .cluster-label,
+[data-theme="dark"] .docusaurus-mermaid-container text {
+  color: var(--mm-text) !important;
+  fill: var(--mm-text) !important;
+}
+
+[data-theme="dark"] .docusaurus-mermaid-container .edgePath path,
+[data-theme="dark"] .docusaurus-mermaid-container .flowchart-link,
+[data-theme="dark"] .docusaurus-mermaid-container .arrowMarkerPath {
+  stroke: var(--mm-line) !important;
+}
+
+[data-theme="dark"] .docusaurus-mermaid-container .marker {
+  fill: var(--mm-line) !important;
+  stroke: var(--mm-line) !important;
+}
+
+[data-theme="dark"] .docusaurus-mermaid-container .edgeLabel {
+  background-color: var(--mm-cluster-bg) !important;
+}
+
+[data-theme="dark"] .docusaurus-mermaid-container .cluster rect {
+  fill: var(--mm-cluster-bg) !important;
+  stroke: var(--mm-cluster-border) !important;
+}
+
+/* Sequence diagrams */
+[data-theme="dark"] .docusaurus-mermaid-container .actor {
+  fill: var(--mm-bg) !important;
+  stroke: var(--mm-border) !important;
+}
+
+[data-theme="dark"] .docusaurus-mermaid-container .messageText,
+[data-theme="dark"] .docusaurus-mermaid-container .labelText {
+  fill: var(--mm-text) !important;
+  stroke: none !important;
+}
+
+[data-theme="dark"] .docusaurus-mermaid-container .actor-line {
+  stroke: var(--mm-line) !important;
+}
+
+[data-theme="dark"] .docusaurus-mermaid-container .note {
+  fill: var(--mm-note-bg) !important;
+  stroke: var(--mm-note-border) !important;
+}
+
+[data-theme="dark"] .docusaurus-mermaid-container .noteText {
+  fill: var(--mm-note-text) !important;
+}

@@ -22,16 +22,18 @@ A single plugin can combine multiple types.
 
 ```mermaid
 flowchart TD
-    Startup["Server Startup"] --> Scan["Scan plugin directories"]
+    Startup["Server Startup"] --> Scan["Scan PLUGINS_PATH (+ PLUGINS_DEV_PATH if dev)"]
     Scan --> ReadPkg["Read package.json"]
-    ReadPkg --> RegFn["Register functions"]
+    ReadPkg --> RegFn["Register function routes"]
     ReadPkg --> RegUI["Register UI routes"]
-    ReadPkg --> RegFlow["Register flows"]
+    ReadPkg --> RegFlow["Register Prefect flows"]
     ReadPkg --> RegMig["Register migrations"]
-    ReadPkg --> RegTx["Register transforms"]
-    RegMig --> RunMig["Run pending migrations"]
-    RegFn --> Roles["Ensure roles & scopes"]
-    Roles --> Ready["Server ready"]
+    ReadPkg --> RegTx["Register transforms (recover endpoints from trex.transform_deployment)"]
+    RegMig --> RunMig["Run pending migrations against DATABASE_URL"]
+    RegFn --> EnsureRoles["ensureRolesExist — upsert into trex.role"]
+    EnsureRoles --> CliLogin["Mount cliLoginRouter"]
+    CliLogin --> AuthCtx["authContext middleware"]
+    AuthCtx --> Ready["Server ready"]
     RunMig --> Ready
     RegUI --> Ready
     RegFlow --> Ready

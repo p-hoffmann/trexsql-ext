@@ -24,9 +24,18 @@ duckdb = { git = "https://github.com/p-hoffmann/trexsql-rs", tag = "v1.4.4-trex"
 duckdb-loadable-macros = { git = "https://github.com/p-hoffmann/trexsql-rs", tag = "v1.4.4-trex" }
 libduckdb-sys = { git = "https://github.com/p-hoffmann/trexsql-rs", tag = "v1.4.4-trex", features = ["loadable-extension"] }
 pgwire = { version = "0.37.3", features = ["server-api-aws-lc-rs"] }
+# Pinned to control feature set: rustls 0.23+ requires explicit CryptoProvider
+# selection when multiple providers are pulled in transitively. The pgwire
+# `server-api-aws-lc-rs` feature pulls aws-lc-rs while other transitive deps
+# pull `ring`, so auto-selection panics on first TLS handshake. We install
+# the `ring` provider explicitly via `ensure_crypto_provider()` in
+# pgwire_server.rs (call it from any future TLS-enabling code path before
+# the first handshake).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tokio = { version = "1.19", features = ["rt-multi-thread", "net", "macros", "time"] }
 arrow-pg = "0.11.0"
 async-trait = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 futures = "0.3"
 serde_json = "1.0"
 base64 = "0.22"

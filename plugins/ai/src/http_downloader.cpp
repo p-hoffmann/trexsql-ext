@@ -3,6 +3,7 @@
 #include <regex>
 #include <fstream>
 #include <cstring>
+#include <cstdlib>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -142,7 +143,18 @@ HttpDownloader::DownloadResult HttpDownloader::download_unix(const std::string& 
     DownloadResult result;
     
     if (is_https) {
-        result.error_message = "HTTPS not supported in this simple implementation. Use HTTP or install curl.";
+        // Fall back to /usr/bin/curl for HTTPS — the in-process socket path is
+        // plain HTTP only. Most images we ship in have curl.
+        std::string url = "https://" + host + (port == 443 ? "" : ":" + std::to_string(port)) + path;
+        std::string cmd = "curl -fsSL --max-time 600 -o '" +
+                          output_path.string() + "' '" + url + "'";
+        int rc = std::system(cmd.c_str());
+        if (rc == 0 && std::filesystem::exists(output_path)) {
+            result.bytes_downloaded = std::filesystem::file_size(output_path);
+            result.success = true;
+            return result;
+        }
+        result.error_message = "curl HTTPS download failed (rc=" + std::to_string(rc) + ") for " + url;
         return result;
     }
     

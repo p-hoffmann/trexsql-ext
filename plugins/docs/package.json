@@ -2,7 +2,9 @@
   "name": "@trex/docs",
   "version": "1.0.0",
   "description": "trexsql documentation site",
-  "files": ["build/"],
+  "files": [
+    "build/"
+  ],
   "scripts": {
     "docusaurus": "docusaurus",
     "start": "docusaurus start --port 3003",
@@ -12,12 +14,16 @@
   "trex": {
     "ui": {
       "routes": [
-        { "path": "/docs", "dir": "build" }
+        {
+          "path": "/docs",
+          "dir": "build"
+        }
       ]
     }
   },
   "dependencies": {
     "@docusaurus/core": "^3.10.0",
+    "@docusaurus/plugin-client-redirects": "^3.10.0",
     "@docusaurus/preset-classic": "^3.10.0",
     "@docusaurus/theme-mermaid": "^3.10.0",
     "@mdx-js/react": "^3.0.0",
@@ -37,8 +43,16 @@
     "brace-expansion": "^2.0.2"
   },
   "browserslist": {
-    "production": [">0.5%", "not dead", "not op_mini all"],
-    "development": ["last 3 chrome version", "last 3 firefox version", "last 5 safari version"]
+    "production": [
+      ">0.5%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 3 chrome version",
+      "last 3 firefox version",
+      "last 5 safari version"
+    ]
   },
   "engines": {
     "node": ">=18.0"

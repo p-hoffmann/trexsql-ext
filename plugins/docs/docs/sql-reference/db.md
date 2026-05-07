@@ -4,7 +4,149 @@ sidebar_position: 1
 
 # db — Distributed Engine
 
-The `db` extension provides distributed clustering, Arrow Flight SQL transport, federated queries via DataFusion, shuffle-based data redistribution, admission control, and metrics.
+The `db` extension is the cluster control plane. It owns gossip-based
+membership, Arrow Flight SQL transport, distributed query planning,
+table partitioning, admission control, and the metrics surface for the
+whole cluster. Every function is a SQL entry point into one of those
+subsystems.
+
+This page is dense — 32 functions across seven groups. Use the structure
+below to navigate; for the conceptual model see
+[Concepts → Architecture → Cluster Topology](../concepts/architecture#cluster-topology)
+and [Concepts → Query Pipeline](../concepts/query-pipeline).
+
+## What `db` does
+
+```mermaid
+flowchart TD
+    subgraph Lifecycle["Cluster lifecycle"]
+        Start["trex_db_start*"]
+        Set["trex_db_set / set_key"]
+        Stop["trex_db_stop"]
+    end
+    subgraph Query["Distributed query"]
+        Enable["trex_db_set_distributed"]
+        Run["trex_db_query"]
+        Admit["trex_db_set_priority<br/>trex_db_set_user_quota<br/>trex_db_cancel_query"]
+    end
+    subgraph Partition["Partitioning"]
+        Create["trex_db_create_table"]
+        Part["trex_db_partition_table"]
+        Repart["trex_db_repartition_table"]
+    end
+    subgraph Service["Service mgmt"]
+        StartSvc["trex_db_start_service<br/>trex_db_stop_service"]
+        Load["trex_db_load"]
+        Reg["trex_db_register_service"]
+    end
+    subgraph Flight["Arrow Flight"]
+        FStart["trex_db_flight_start*"]
+        FStop["trex_db_flight_stop"]
+        FVer["trex_db_flight_version"]
+    end
+    subgraph Observe["Observability"]
+        Nodes["trex_db_nodes / config / cluster_status"]
+        Tables["trex_db_tables / partitions / services"]
+        Status["trex_db_query_status / metrics / flight_status"]
+    end
+```
+
+## Three cluster lifecycles
+
+The function set covers three different deployment shapes:
+
+1. **Single node, services only.** You don't need gossip or Flight. Just
+   start `trexas` and `pgwire` from `SWARM_CONFIG`. The default Docker
+   compose works this way; nothing in this extension is involved.
+2. **Multi-node cluster.** Each node calls `trex_db_start_seeds` (referencing
+   peers) so gossip can converge. Each node starts a `flight` service. Set
+   `trex_db_set_distributed(true)` on at least one coordinator. Now
+   distributed queries work — see
+   [Quickstart: Run a distributed cluster](../quickstarts/distributed-cluster).
+3. **Cluster managed entirely by `SWARM_CONFIG`.** In production, you usually
+   don't call `trex_db_start*` from SQL — the Trex binary does it for you at
+   startup based on the JSON in `SWARM_CONFIG`. The functions here are then
+   only for runtime adjustment (toggling distributed mode, partitioning new
+   tables, querying status).
+
+## Typical workflows
+
+### Bring up a two-node cluster from SQL
+
+```sql
+-- On node-1
+SELECT trex_db_start('0.0.0.0', 4200, 'my-cluster');
+SELECT trex_db_flight_start('0.0.0.0', 8815);
+SELECT trex_db_set('data_node', 'true');
+
+-- On node-2
+SELECT trex_db_start_seeds(
+  '0.0.0.0', 4200, 'my-cluster',
+  'node-1.internal:4200'
+);
+SELECT trex_db_flight_start('0.0.0.0', 8815);
+SELECT trex_db_set('data_node', 'true');
+
+-- On either node, verify
+SELECT * FROM trex_db_nodes();
+
+-- Enable distributed query planning
+SELECT trex_db_set_distributed(true);
+```
+
+### Partition an existing table for cluster execution
+
+```sql
+-- Hash-partition a table by user_id into 4 partitions
+SELECT trex_db_partition_table(
+  'memory.main.events',
+  '{"strategy":"hash","column":"user_id","num_partitions":4}'
+);
+
+-- Or create a new partitioned table from scratch
+SELECT trex_db_create_table(
+  'CREATE TABLE events (id BIGINT, user_id BIGINT, ts TIMESTAMP)',
+  '{"strategy":"hash","column":"user_id","num_partitions":4}'
+);
+
+-- Inspect placement
+SELECT * FROM trex_db_partitions();
+```
+
+Supported strategies:
+
+| Strategy | Config |
+|----------|--------|
+| `hash` | `{"strategy":"hash","column":"<col>","num_partitions":N}` |
+| `range` | `{"strategy":"range","column":"<col>","ranges":["v1","v2",...]}` |
+
+### Manage workload concurrency
+
+```sql
+-- Throttle a noisy user to 5 concurrent queries
+SELECT trex_db_set_user_quota('user-123', 5);
+
+-- Mark this session as low-priority (yields to interactive traffic)
+SELECT trex_db_set_priority('batch');
+
+-- Find a runaway query and cancel it
+SELECT * FROM trex_db_query_status() WHERE status = 'running';
+SELECT trex_db_cancel_query('q-abc-123');
+```
+
+Priority values: `batch` (lowest) | `interactive` (default) | `system` (highest).
+
+### Observe what's happening
+
+```sql
+SELECT * FROM trex_db_cluster_status();   -- one-row summary
+SELECT * FROM trex_db_nodes();            -- gossip view
+SELECT * FROM trex_db_services();         -- per-node running services
+SELECT * FROM trex_db_metrics();          -- Prometheus-style metric stream
+SELECT * FROM trex_db_query_status();     -- queue + active queries
+```
+
+`trex_db_metrics` is the function to plumb into your monitoring stack.
 
 ## Cluster Management
 
@@ -498,3 +640,36 @@ Show status of all running Arrow Flight servers.
 ```sql
 SELECT * FROM trex_db_flight_status();
 ```
+
+## Operational notes
+
+- **Gossip detection latency** is ~10s. A node that crashes shows as
+  `suspect` for that long, then `dead`. Plan rolling restarts accordingly.
+- **The `data_node` flag controls scheduling.** A node with `data_node =
+  false` (set via `trex_db_set('data_node', 'false')`) won't be assigned
+  new partitions. Use this to drain a node before stopping it.
+- **Distributed mode is per-cluster, not per-query.** `trex_db_set_distributed(true)`
+  enables it for every subsequent statement on this node. There's no
+  per-statement override — design for one mode at a time.
+- **Partitioning requires a stable column.** Hash partitioning fixes a
+  partition assignment at insert time. Repartitioning is online but rewrites
+  data — expect IO load proportional to table size.
+- **Flight TLS for production.** The `trex_db_flight_start` function (no
+  TLS) is fine for dev but exposes query data in plaintext. Use
+  `trex_db_flight_start_tls` with managed certificates for any non-trusted
+  network.
+- **Admission control vs. pool exhaustion.** `trex_db_set_user_quota` and
+  the `priority` knob feed into the admission controller, which queues work
+  *before* it hits the connection pool. Tune these before adding more pool
+  capacity.
+
+## Next steps
+
+- [Concepts → Architecture → Cluster Topology](../concepts/architecture#cluster-topology)
+  for the static layout.
+- [Concepts → Query Pipeline](../concepts/query-pipeline) for how a query
+  actually flows across nodes.
+- [Quickstart: Run a distributed cluster](../quickstarts/distributed-cluster)
+  for a hands-on two-node setup.
+- [Deployment → Distributed Mode](../deployment/distributed) for production
+  guidance: TLS, persistent catalogs, rolling restarts, sizing.
