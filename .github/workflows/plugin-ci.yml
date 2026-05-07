@@ -45,6 +45,8 @@ on:
     branches:
       - develop
       - main
+    tags:
+      - 'v*'
 
 permissions: read-all
 
@@ -57,7 +59,7 @@ jobs:
 
   pick_runner:
     runs-on: ubuntu-latest
-    if: (github.ref_name == 'develop' || github.ref_name == 'main' || contains('release/', github.ref_name) || github.event_name == 'workflow_dispatch') || ( github.event_name == 'pull_request' && !github.event.pull_request.draft ) # Should run if branch is develop/main/release/workflow_dispatch and doesnt have a PR
+    if: (github.ref_name == 'develop' || github.ref_name == 'main' || contains('release/', github.ref_name) || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')) || ( github.event_name == 'pull_request' && !github.event.pull_request.draft ) # Should run if branch is develop/main/release/workflow_dispatch/tag and doesnt have a PR
     outputs:
       random_runner: ${{ steps.shuffle.outputs.random_runner }}
     steps:
@@ -70,7 +72,7 @@ jobs:
     # untrusted code (via the `repository:` input below), which runs prepack/prepublish lifecycle
     # scripts during `npm pack` and compiles attacker-controlled Rust/TS during the build.
     if: |
-      (github.ref_name == 'develop' || github.ref_name == 'main' || contains('release', github.ref_name) || github.event_name == 'workflow_dispatch')
+      (github.ref_name == 'develop' || github.ref_name == 'main' || contains('release', github.ref_name) || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v'))
       || (github.event_name == 'pull_request' && !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
 
     strategy:
@@ -124,6 +126,9 @@ jobs:
           if [[ $GITHUB_EVENT_NAME == 'workflow_dispatch' ]]; then
             RELEASE_VERSION=${{ github.event.inputs.tag }}
             jq --arg v $RELEASE_VERSION '.version=$v' package.json > tmppkg; mv tmppkg package.json
+          elif [[ $GITHUB_REF == refs/tags/v* ]]; then
+            RELEASE_VERSION="${GITHUB_REF#refs/tags/v}"
+            jq --arg v "$RELEASE_VERSION" '.version=$v' package.json > tmppkg; mv tmppkg package.json
           else
             jq --arg v "-$(date +%s)-$GITHUB_SHA" '.version+=$v' package.json > tmppkg; mv tmppkg package.json
           fi
@@ -247,7 +252,7 @@ jobs:
 
   build-arm:
     needs: [pick_runner]
-    if: github.ref_name == 'develop' || github.ref_name == 'main' || contains('release', github.ref_name) || github.event_name == 'workflow_dispatch'
+    if: github.ref_name == 'develop' || github.ref_name == 'main' || contains('release', github.ref_name) || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
 
     strategy:
       fail-fast: false
@@ -323,12 +328,13 @@ jobs:
 
   create-release:
     needs: [build, build-arm]
-    # Releases only from canonical repo on develop or main.
+    # Releases only from canonical repo: workflow_dispatch on develop/main, or any pushed v* tag.
     if: |
       github.repository == 'OHDSI/trex'
-      && github.event_name == 'workflow_dispatch'
-      && github.event.inputs.tag != ''
-      && (github.ref_name == 'develop' || github.ref_name == 'main')
+      && (
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && (github.ref_name == 'develop' || github.ref_name == 'main'))
+        || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -360,12 +366,30 @@ jobs:
             [ -f "$f" ] && cp "$f" "release-assets/final/$(basename "${f%.trex}")-linux-arm64.trex"
           done
           ls -la release-assets/final/
+      - name: Resolve release metadata
+        id: relmeta
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == 'workflow_dispatch' ]]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "name=${{ github.event.inputs.release }}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=${{ github.event.inputs.prerelease }}" >> "$GITHUB_OUTPUT"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "name=$TAG" >> "$GITHUB_OUTPUT"
+            # Tags containing a hyphen (e.g. v1.0.0-beta.1) are treated as prereleases.
+            if [[ "$TAG" == *-* ]]; then
+              echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag }}
-          name: ${{ github.event.inputs.release }}
-          prerelease: ${{ github.event.inputs.prerelease }}
+          tag_name: ${{ steps.relmeta.outputs.tag }}
+          name: ${{ steps.relmeta.outputs.name }}
+          prerelease: ${{ steps.relmeta.outputs.prerelease }}
           files: release-assets/final/*.trex
           fail_on_unmatched_files: false
         env:
