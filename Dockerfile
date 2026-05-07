@@ -117,13 +117,6 @@ RUN if [ -d "/tmp/all-extensions/${TARGETARCH}" ]; then \
       cp -f /tmp/all-extensions/*.duckdb_extension /usr/lib/trexsql/extensions/ 2>/dev/null || true; \
     fi && rm -rf /tmp/all-extensions
 
-# Download and extract Shinylive assets for analytics dashboards
-ARG SHINYLIVE_VERSION=0.10.7
-RUN curl -sLO https://github.com/posit-dev/shinylive/releases/download/v${SHINYLIVE_VERSION}/shinylive-${SHINYLIVE_VERSION}.tar.gz && \
-    tar -xzf shinylive-${SHINYLIVE_VERSION}.tar.gz && \
-    mv shinylive-${SHINYLIVE_VERSION} shinylive && \
-    rm shinylive-${SHINYLIVE_VERSION}.tar.gz
-
 # Create plugins directory and symlink @trex npm packages for plugin scanner
 RUN mkdir -p ./plugins && \
     ln -sf $(pwd)/node_modules/@trex ./plugins/@trex
@@ -136,21 +129,6 @@ RUN cd /usr/src/core/server && npm install --omit=dev && \
 
 # Copy remaining core source
 COPY core/ ./core/
-
-# Install Playwright with headless Chromium only for QA/design review tools
-ENV PLAYWRIGHT_BROWSERS_PATH=/usr/lib/playwright-browsers
-ENV NODE_PATH=/usr/lib/node_modules
-RUN npm install -g playwright@latest && \
-    npx playwright install --with-deps chromium && \
-    rm -rf /tmp/* /root/.cache/ms-playwright-*
-
-# Install Claude Code CLI for subscription-based AI usage
-RUN npm install -g @anthropic-ai/claude-code
-
-# Install GitHub CLI with Copilot extension for subscription-based AI usage
-ARG GH_VERSION=2.65.0
-RUN curl -fsSL https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${TARGETARCH}.deb -o /tmp/gh.deb && \
-    dpkg -i /tmp/gh.deb && rm /tmp/gh.deb
 
 # Copy functions
 COPY functions/ ./functions/
@@ -167,20 +145,25 @@ COPY plugins/docs/ ./plugins-dev/docs/
 COPY --from=docs-builder /build/build/ ./plugins-dev/docs/build/
 COPY plugins/storage/ ./plugins-dev/storage/
 
-# Generate self-signed TLS cert for HTTPS
-RUN openssl req -new -x509 -days 3650 -nodes \
-      -out /usr/src/server.crt -keyout /usr/src/server.key \
-      -subj '/CN=localhost' && \
-    chown node:node /usr/src/server.crt /usr/src/server.key && \
-    chmod 644 /usr/src/server.crt && chmod 600 /usr/src/server.key
+# TLS cert is generated at container start by /usr/src/entrypoint.sh
+# (per-container, NOT for production — see comments in that script).
+# Install openssl so the entrypoint can generate the cert when needed.
+RUN apt-get update && apt-get install -y --no-install-recommends openssl && \
+    rm -rf /var/lib/apt/lists/*
 
 ENV SCHEMA_DIR=/usr/src/core/schema
 ENV DUCKDB_EXTENSION_DIRECTORY=/usr/share/trexsql/extensions
 
 # Ensure config directories exist for OAuth token persistence
 RUN mkdir -p /home/node/.claude /home/node/.config/gh && \
-    chown -R node:node /home/node/.claude /home/node/.config/gh
+    chown -R node:node /home/node/.claude /home/node/.config/gh && \
+    chown node:node /usr/src
+
+# Install entrypoint script that generates per-container TLS cert and
+# rotates known-default placeholder secrets on startup.
+COPY docker/entrypoint.sh /usr/src/entrypoint.sh
+RUN chmod 755 /usr/src/entrypoint.sh
 
 EXPOSE 8001 8000
 USER node
-ENTRYPOINT ["trex"]
+ENTRYPOINT ["/usr/src/entrypoint.sh"]

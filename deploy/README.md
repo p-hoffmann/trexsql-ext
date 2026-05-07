@@ -86,14 +86,36 @@ Stack config files (`Pulumi.<stack>.yaml`) contain:
 
 ### Secrets
 
-Set secrets via Pulumi config (encrypted):
+**Required pre-deploy step.** The AWS stack will refuse to deploy if these
+secrets are not set — there are no placeholder fallbacks. Generate strong
+random values and store them encrypted in Pulumi config:
 
 ```bash
-pulumi config set --secret deploy:dbPassword "your-secure-password"
-pulumi config set --secret deploy:authSecret "your-auth-secret-32chars"
+pulumi config set --secret deploy:authSecret $(openssl rand -base64 48)
+pulumi config set --secret deploy:dbPassword $(openssl rand -base64 32)
 ```
 
-If not set, default development values are used (not suitable for production).
+If you run `pulumi up` without setting these, Pulumi will fail with a
+`Missing required configuration variable 'deploy:authSecret'` (or
+`deploy:dbPassword`) error naming the exact key that needs to be set.
+
+### Secret recovery window
+
+AWS Secrets Manager supports a soft-delete recovery window. The deploy stack
+defaults to **7 days** (the AWS-recommended minimum for production), so a
+`pulumi destroy` schedules deletion rather than immediately wiping the secret.
+
+Override via:
+
+```bash
+pulumi config set deploy:secretRecoveryWindowDays 7
+```
+
+Trade-off: `0` means immediate, irrecoverable deletion on `pulumi destroy` —
+fine for short-lived dev environments where you want clean teardown, but
+dangerous in production where an accidental destroy followed by an immediate
+re-create would lose any secret history. Use `7` or higher for any stack you
+care about.
 
 ## Outputs
 

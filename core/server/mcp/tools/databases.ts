@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { pool } from "../../db.ts";
+import { decryptSecret, encryptSecret } from "../../auth/crypto.ts";
 
 declare const Deno: any;
 
@@ -138,20 +139,23 @@ export function registerDatabaseTools(server: McpServer) {
         const db = dbResult.rows[0];
 
         const credResult = await pool.query(
-          `SELECT username, password FROM trex.database_credential WHERE "databaseId" = $1 LIMIT 1`,
+          `SELECT username, password, password_encrypted FROM trex.database_credential WHERE "databaseId" = $1 LIMIT 1`,
           [databaseId],
         );
         if (credResult.rows.length === 0) {
           return { content: [{ type: "text", text: "No credentials configured" }], isError: true };
         }
         const cred = credResult.rows[0];
+        const credPassword = cred.password_encrypted
+          ? await decryptSecret(cred.password_encrypted)
+          : cred.password;
 
         const testPool = new pg.Pool({
           host: db.host,
           port: db.port,
           database: db.databaseName,
           user: cred.username,
-          password: cred.password,
+          password: credPassword,
           connectionTimeoutMillis: 5000,
           max: 1,
         });
@@ -184,9 +188,17 @@ export function registerDatabaseTools(server: McpServer) {
     },
     async ({ databaseId, username, password, userScope, serviceScope }) => {
       try {
-        const result = await pool.query(
-          `SELECT trex.save_database_credential($1, $2, $3, $4, $5)`,
-          [databaseId, username, password, userScope || null, serviceScope || null],
+        const encrypted = await encryptSecret(password);
+        await pool.query(
+          `INSERT INTO trex.database_credential ("databaseId", username, password, password_encrypted, "userScope", "serviceScope")
+           VALUES ($1, $2, NULL, $3, $4, $5)
+           ON CONFLICT ("databaseId", username) DO UPDATE SET
+             password = NULL,
+             password_encrypted = EXCLUDED.password_encrypted,
+             "userScope" = EXCLUDED."userScope",
+             "serviceScope" = EXCLUDED."serviceScope",
+             "updatedAt" = NOW()`,
+          [databaseId, username, encrypted, userScope || null, serviceScope || null],
         );
         return { content: [{ type: "text", text: `Credentials saved for database '${databaseId}'` }] };
       } catch (err: any) {

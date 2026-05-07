@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { pool } from "../../db.ts";
+import { decryptSecret } from "../../auth/crypto.ts";
 
 declare const Trex: any;
 declare const Deno: any;
@@ -65,20 +66,23 @@ export function registerEtlTools(server: McpServer) {
         const db = dbResult.rows[0];
 
         const credResult = await pool.query(
-          `SELECT username, password FROM trex.database_credential WHERE "databaseId" = $1 LIMIT 1`,
+          `SELECT username, password, password_encrypted FROM trex.database_credential WHERE "databaseId" = $1 LIMIT 1`,
           [databaseId],
         );
         if (credResult.rows.length === 0) {
           return { content: [{ type: "text", text: "Error: No credentials configured for this database" }], isError: true };
         }
         const cred = credResult.rows[0];
+        const credPassword = cred.password_encrypted
+          ? await decryptSecret(cred.password_encrypted)
+          : cred.password;
 
         const parts: string[] = [
           `host='${escapeSql(db.host)}'`,
           `port='${escapeSql(String(db.port))}'`,
           `dbname='${escapeSql(db.databaseName)}'`,
           `user='${escapeSql(cred.username)}'`,
-          `password='${escapeSql(cred.password)}'`,
+          `password='${escapeSql(credPassword)}'`,
         ];
         if (mode === "copy_and_cdc" || mode === "cdc_only") {
           parts.push(`publication='${escapeSql(publication!)}'`);

@@ -1,3 +1,14 @@
+# ---------------------------------------------------------------------------
+# WARNING: the default credentials in this file are for local development
+# only. Override via a .env file (POSTGRES_PASSWORD, BETTER_AUTH_SECRET,
+# PGRST_JWT_SECRET) before exposing this stack to anything outside your
+# laptop. The trex container will, on startup, replace any known-default
+# placeholder values with random ones and print them to stdout — but those
+# random values do NOT survive a container restart unless persisted via
+# the env. Set TREX_PRODUCTION_MODE=1 to make the container refuse to start
+# when default placeholders are still in effect.
+# ---------------------------------------------------------------------------
+
 volumes:
   core-pgdata:
   claude-config:
@@ -11,7 +22,7 @@ services:
       - 65433:5432
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: mypass
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mypass}
       POSTGRES_DB: testdb
     volumes:
       - core-pgdata:/var/lib/postgresql/data
@@ -24,7 +35,10 @@ services:
       retries: 10
 
   trex:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: ghcr.io/p-hoffmann/trexsql:dev
     ports:
       - 8000:8000
       - 8001:8001
@@ -43,8 +57,10 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://postgres:mypass@postgres:5432/testdb
-      BETTER_AUTH_SECRET: dev-secret-at-least-32-characters-long!!
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-mypass}@postgres:5432/testdb
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-dev-secret-at-least-32-characters-long!!}
+      PGRST_JWT_SECRET: ${PGRST_JWT_SECRET:-${BETTER_AUTH_SECRET:-dev-secret-at-least-32-characters-long!!}}
+      TREX_PRODUCTION_MODE: ${TREX_PRODUCTION_MODE:-0}
       BASE_PATH: /trex
       BETTER_AUTH_URL: http://localhost:8001/trex
       PLUGINS_INFORMATION_URL: "https://feeds.dev.azure.com/data2experience/d2e/_apis/packaging/Feeds/d2e/packages?api-version=7.1&includeDescription=true"
@@ -67,7 +83,7 @@ services:
       PGRST_DB_URI: postgres://authenticator:authenticator_pass@postgres:5432/testdb
       PGRST_DB_SCHEMAS: public
       PGRST_DB_ANON_ROLE: anon
-      PGRST_JWT_SECRET: dev-secret-at-least-32-characters-long!!
+      PGRST_JWT_SECRET: ${PGRST_JWT_SECRET:-${BETTER_AUTH_SECRET:-dev-secret-at-least-32-characters-long!!}}
       PGRST_DB_PRE_REQUEST: public.postgrest_pre_request
       PGRST_DB_USE_LEGACY_GUCS: "false"
       PGRST_OPENAPI_SERVER_PROXY_URI: http://localhost:8001/trex/rest/v1

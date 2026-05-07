@@ -1,0 +1,54 @@
+name: license-notices
+
+# Apache-2.0 §4(b) compliance check.
+#
+# For every Supabase fork vendored as a submodule, verify that all files which
+# differ from the upstream baseline carry a "Modified by Trex contributors"
+# notice. Fails the build if any modified file is missing the header.
+#
+# To regenerate the notices locally, run:
+#   scripts/add-modification-notices.sh <fork-dir> <upstream-ref>
+
+on:
+  pull_request:
+    paths:
+      - "plugins/storage/supabase-storage/**"
+      - "plugins/pg-meta/postgres-meta/**"
+      - "plugins/runtime/trex-runtime/**"
+      - "scripts/add-modification-notices.sh"
+      - ".github/workflows/license-notices.yml"
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  check-notices:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Fetch upstream baselines
+        run: |
+          git -C plugins/storage/supabase-storage remote add upstream https://github.com/supabase/storage.git || true
+          git -C plugins/storage/supabase-storage fetch upstream master --depth=1
+
+          git -C plugins/pg-meta/postgres-meta remote add upstream https://github.com/supabase/postgres-meta.git || true
+          git -C plugins/pg-meta/postgres-meta fetch upstream master --depth=1
+
+          git -C plugins/runtime/trex-runtime remote add upstream https://github.com/supabase/edge-runtime.git || true
+          git -C plugins/runtime/trex-runtime fetch upstream main --depth=1
+
+      - name: Verify storage fork notices (Apache-2.0)
+        run: scripts/add-modification-notices.sh plugins/storage/supabase-storage upstream/master --check
+
+      - name: Verify pg-meta fork notices (Apache-2.0)
+        run: scripts/add-modification-notices.sh plugins/pg-meta/postgres-meta upstream/master --check
+
+      - name: Verify runtime fork notices (MIT)
+        run: scripts/add-modification-notices.sh plugins/runtime/trex-runtime upstream/main --license MIT --check

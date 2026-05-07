@@ -374,19 +374,40 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build amd64 image for testing
+      - name: Build amd64 prod image for testing
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: Dockerfile
           platforms: linux/amd64
           load: true
-          tags: trexsql-test
+          tags: trexsql-test:prod
+
+      - name: Build amd64 dev image for testing
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.dev
+          platforms: linux/amd64
+          load: true
+          tags: trexsql-test:dev
+          build-args: |
+            BASE_IMAGE=trexsql-test:prod
 
       - name: Test extensions load (amd64 only)
         run: |
-          OUTPUT=$(docker run --rm trexsql-test --check 2>&1) || true
+          OUTPUT=$(docker run --rm trexsql-test:prod --check 2>&1) || true
           echo "$OUTPUT"
           echo "$OUTPUT" | grep -q "extension(s) loaded successfully"
+
+      - name: Verify dev tooling absent from prod image
+        run: |
+          # gh CLI / claude / playwright must NOT be in the prod image
+          ! docker run --rm --entrypoint sh trexsql-test:prod -c 'command -v gh' >/dev/null 2>&1
+          ! docker run --rm --entrypoint sh trexsql-test:prod -c 'command -v claude' >/dev/null 2>&1
+          # And SHOULD be in the dev image
+          docker run --rm --entrypoint sh trexsql-test:dev -c 'command -v gh' >/dev/null
+          docker run --rm --entrypoint sh trexsql-test:dev -c 'command -v claude' >/dev/null
 
       - name: Login to GHCR
         if: github.ref_name == 'develop' || github.ref_name == 'main' || github.event_name == 'workflow_dispatch'
@@ -396,16 +417,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push multi-arch image
+      - name: Build and push prod image
         if: github.ref_name == 'develop' || github.ref_name == 'main' || github.event_name == 'workflow_dispatch'
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: Dockerfile
           platforms: linux/amd64
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/trexsql:latest
             ghcr.io/${{ github.repository_owner }}/trexsql:sha-${{ github.sha }}
+
+      - name: Build and push dev image
+        if: github.ref_name == 'develop' || github.ref_name == 'main' || github.event_name == 'workflow_dispatch'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.dev
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/trexsql:sha-${{ github.sha }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/trexsql:dev
+            ghcr.io/${{ github.repository_owner }}/trexsql:dev-sha-${{ github.sha }}
 
   build-pg-trex:
     needs: [build]
