@@ -31,7 +31,29 @@ export class Plugins {
         );
         return;
       }
-      for (const [key, value] of Object.entries(pkg.trex)) {
+      // Express matches handlers in registration order. UI static routes must
+      // register BEFORE function `app.all(...)` catch-alls so that when a UI
+      // and a function share the same URL prefix (e.g. `/plugins/<scope>/notes`
+      // for the UI and `/plugins/<scope>/notes/list` for a function), the UI's
+      // express.static handler gets a chance to serve real files first and
+      // falls through (via next()) for paths that don't exist on disk — letting
+      // the function handle them. If functions registered first, the catch-all
+      // would shadow every UI request and the static assets would never serve.
+      const trexEntries = Object.entries(pkg.trex);
+      const orderRank = (k: string): number => {
+        switch (k) {
+          case "ui": return 0;
+          case "transform": return 1;
+          case "functions": return 2;
+          case "flow": return 3;
+          case "migrations": return 4;
+          default: return 5;
+        }
+      };
+      const sortedEntries = trexEntries.slice().sort(
+        (a, b) => orderRank(a[0]) - orderRank(b[0])
+      );
+      for (const [key, value] of sortedEntries) {
         switch (key) {
           case "functions":
             addFunctionPlugin(app, value, dir, fullName);

@@ -5,6 +5,8 @@ use std::any::Any;
 use std::fmt;
 use std::sync::Arc;
 
+use std::collections::HashMap;
+
 use arrow::array::{Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use async_trait::async_trait;
@@ -50,7 +52,16 @@ fn duckdb_type_to_arrow(type_str: &str) -> DataType {
             DataType::Timestamp(TimeUnit::Microsecond, None)
         }
         "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => {
-            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into()))
+            // Declared without timezone metadata to avoid a schema mismatch
+            // against postgres_scanner, which emits the session timezone
+            // (e.g. "Etc/UTC") rather than a static "UTC". A schema mismatch
+            // between the declared schema and the streamed RecordBatches
+            // crashes the engine on any TIMESTAMPTZ scan. DuckDB still stores
+            // values as UTC microseconds so the underlying buffer is
+            // unchanged; only the Arrow tz metadata is dropped at the
+            // federation boundary. The `probe_actual_arrow_schema` call below
+            // will re-attach the real tz string if the actual scan emits one.
+            DataType::Timestamp(TimeUnit::Microsecond, None)
         }
 
         "INTERVAL" => DataType::Interval(arrow::datatypes::IntervalUnit::MonthDayNano),
@@ -93,6 +104,20 @@ fn notnull_value(col: &dyn Array, row: usize) -> bool {
     s != "0" && !s.is_empty() && s.to_lowercase() != "false"
 }
 
+/// Probe the actual Arrow schema produced when scanning a table. Used to
+/// recover the real TIMESTAMP-with-tz metadata emitted by extensions like
+/// postgres_scanner, which depend on the session timezone and cannot be
+/// inferred from the textual `PRAGMA table_info` output. Errors are swallowed
+/// because this is best-effort enrichment on top of the PRAGMA mapping.
+fn probe_actual_arrow_schema(table_name: &str) -> Option<SchemaRef> {
+    let sql = format!(
+        "SELECT * FROM \"{}\" LIMIT 0",
+        crate::catalog::escape_identifier(table_name)
+    );
+    let (schema, _batches) = crate::pool::read_arrow(&sql).ok()?;
+    Some(schema)
+}
+
 pub struct DuckDBTableProvider {
     table_name: String,
     schema: SchemaRef,
@@ -111,6 +136,18 @@ impl DuckDBTableProvider {
     }
 
     /// Resolve schema via `PRAGMA table_info`: name (col 1), type (col 2), notnull (col 3).
+    ///
+    /// For TIMESTAMP WITH TIME ZONE columns the textual mapping is unreliable when
+    /// the table is backed by the postgres_scanner extension: the scanner emits the
+    /// session timezone string (e.g. `Etc/UTC` or `Asia/Singapore`) as the Arrow
+    /// timezone metadata, which does not always match the static `UTC` we declare
+    /// from `PRAGMA table_info`. A schema mismatch between the declared schema and
+    /// the streamed RecordBatches crashes the DataFusion runtime (SIGTERM in the
+    /// host trex process). To avoid this, after building the candidate schema we
+    /// probe the actual Arrow types via `SELECT * FROM "table" LIMIT 0` and let the
+    /// probe's timestamp metadata override the static mapping. PRAGMA still wins
+    /// for nullability because `LIMIT 0` always reports `nullable=true` across the
+    /// federation boundary.
     fn resolve_schema(table_name: &str) -> DFResult<Schema> {
         let sql = format!("PRAGMA table_info(\"{}\")", crate::catalog::escape_identifier(table_name));
         let (_schema, batches) = crate::pool::read_arrow(&sql)
@@ -162,6 +199,33 @@ impl DuckDBTableProvider {
                 "Table '{}' not found or has no columns",
                 table_name
             )));
+        }
+
+        // Probe the real Arrow schema and copy ANY column whose data_type
+        // differs from the declared static-mapping type. Originally this was
+        // limited to Timestamp(_,_) columns to dodge the "UTC" vs "Etc/UTC"
+        // mismatch from postgres_scanner, but the same class of crash applies
+        // to any future or unknown drift (Time64 unit, Decimal128 precision,
+        // Interval kind, ...). A schema mismatch between the declared schema
+        // and streamed RecordBatches crashes the DataFusion runtime (SIGTERM
+        // in the host trex process), so widening the rescue here is strictly
+        // safer than relying on the static mapping. Nullability is preserved
+        // from PRAGMA because the probe's `LIMIT 0` always reports
+        // nullable=true across the federation boundary.
+        if let Some(actual) = probe_actual_arrow_schema(table_name) {
+            let mut by_name: HashMap<&str, &Field> = HashMap::new();
+            for f in actual.fields() {
+                by_name.insert(f.name().as_str(), f.as_ref());
+            }
+            fields = fields
+                .into_iter()
+                .map(|f| match by_name.get(f.name().as_str()) {
+                    Some(actual_field) if actual_field.data_type() != f.data_type() => {
+                        Field::new(f.name(), actual_field.data_type().clone(), f.is_nullable())
+                    }
+                    _ => f,
+                })
+                .collect();
         }
 
         Ok(Schema::new(fields))
@@ -388,13 +452,16 @@ mod tests {
             duckdb_type_to_arrow("DATETIME"),
             DataType::Timestamp(TimeUnit::Microsecond, None)
         );
+        // TIMESTAMPTZ is declared without a timezone in the static mapping;
+        // the actual tz string is filled in by `probe_actual_arrow_schema`
+        // when the table is registered. See `duckdb_type_to_arrow`.
         assert_eq!(
             duckdb_type_to_arrow("TIMESTAMP WITH TIME ZONE"),
-            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into()))
+            DataType::Timestamp(TimeUnit::Microsecond, None)
         );
         assert_eq!(
             duckdb_type_to_arrow("TIMESTAMPTZ"),
-            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into()))
+            DataType::Timestamp(TimeUnit::Microsecond, None)
         );
     }
 

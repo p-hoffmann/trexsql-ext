@@ -3,8 +3,6 @@ import { z } from "zod";
 
 declare const Trex: any;
 
-import { escapeSql } from "../../lib/sql.ts";
-
 export function registerTrexdbTools(server: McpServer) {
   server.tool(
     "trexdb-list-databases",
@@ -58,21 +56,15 @@ export function registerTrexdbTools(server: McpServer) {
     "trexdb-list-tables",
     "List tables in the trexsql engine, optionally filtered by database and/or schema. Returns table name, OID, primary key status, estimated size, column count, index count, and whether the table is temporary.",
     {
-      database: z.string().optional().describe("Filter by database name"),
-      schema: z.string().optional().describe("Filter by schema name"),
+      databaseName: z.string().optional().describe("Filter by database name"),
+      schemaName: z.string().optional().describe("Filter by schema name"),
     },
-    async ({ database, schema }) => {
+    async ({ databaseName, schemaName }) => {
       try {
         const conn = new Trex.TrexDB("memory");
-        let sql = "SELECT * FROM duckdb_tables()";
-        const conditions: string[] = [];
-        if (database) conditions.push(`database_name = '${escapeSql(database)}'`);
-        if (schema) conditions.push(`schema_name = '${escapeSql(schema)}'`);
-        if (conditions.length > 0) sql += " WHERE " + conditions.join(" AND ");
-
-        const result = await conn.execute(sql, []);
+        const result = await conn.execute("SELECT * FROM duckdb_tables()", []);
         const rows = result?.rows || result || [];
-        const tables = rows.map((r: any) => ({
+        let tables = rows.map((r: any) => ({
           databaseName: r.database_name || r[0] || "",
           schemaName: r.schema_name || r[1] || "",
           tableName: r.table_name || r[2] || "",
@@ -84,6 +76,14 @@ export function registerTrexdbTools(server: McpServer) {
           indexCount: String(r.index_count ?? r[8] ?? ""),
           temporary: r.temporary ?? r[9] ?? false,
         }));
+        // Apply filters in JS so callers can pass either arg form and we get
+        // exact-match semantics regardless of how duckdb_tables() reports.
+        if (databaseName && databaseName.length > 0) {
+          tables = tables.filter((t: any) => t.databaseName === databaseName);
+        }
+        if (schemaName && schemaName.length > 0) {
+          tables = tables.filter((t: any) => t.schemaName === schemaName);
+        }
         return { content: [{ type: "text", text: JSON.stringify(tables, null, 2) }] };
       } catch (err: any) {
         return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };

@@ -2,278 +2,267 @@
 sidebar_position: 9
 ---
 
-# ai — LLM Inference
+# ai — In-Process LLM Inference
 
-The `ai` extension provides local LLM inference via llama.cpp with GPU acceleration (CUDA, Vulkan, Metal). Supports text generation, chat, embeddings, and batch processing.
+The `ai` extension runs LLM inference inside the Trex process via
+[llama.cpp](https://github.com/ggml-org/llama.cpp). It supports text
+generation, chat-format prompting, and embeddings, with optional GPU
+acceleration (CUDA, Vulkan, Metal). Models are loaded once and held in
+memory; subsequent calls reuse the loaded weights.
 
-## Model Management
+Use it when you want LLM output to appear *inside* a SQL pipeline — alongside
+analytical queries, transform models, or batch jobs — without round-tripping
+to an external API. For interactive chat or production-scale traffic to a
+managed model, prefer a dedicated inference server.
 
-### `trex_ai_list_models(path)`
+## How it works
 
-List available model files in a directory.
+```mermaid
+flowchart TD
+    SQL["SQL caller"]
+    SQL -->|trex_ai_load_model| Mgr["Model manager"]
+    Mgr -->|loads .gguf into RAM/VRAM| Mem["Loaded model"]
+    SQL -->|trex_ai_generate / chat / embed| Ctx["Inference context"]
+    Mem --> Ctx
+    Ctx -->|tokens| SQL
+```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| path | VARCHAR | Directory containing GGUF model files |
+Models are GGUF format — quantized weights compatible with llama.cpp. Smaller
+quantizations (Q4_K_M) trade quality for speed and memory; Q8_0 sits in
+between. The extension auto-selects CPU or GPU based on the build (CUDA,
+Vulkan, or Metal) and what's available at runtime.
 
-**Returns:** VARCHAR — JSON list of models
+A pool of inference contexts is shared across concurrent calls — see
+`trex_ai_context_pool_status()`. Long prompts hold a context for the
+duration of the call; short prompts complete fast and free the context.
+
+## Typical workflow
+
+```sql
+-- One-time: download a model from Hugging Face
+SELECT trex_ai_download_model(
+  'TheBloke/Llama-2-7B-Chat-GGUF',
+  'llama-2-7b-chat.Q4_K_M.gguf',
+  '/models'
+);
+
+-- Load into memory under an alias
+SELECT trex_ai_load_model('chat', '/models/llama-2-7b-chat.Q4_K_M.gguf');
+
+-- Generate text
+SELECT trex_ai_generate(
+  'chat',
+  'Summarize the OMOP CDM in two sentences.',
+  '{"temperature": 0.7, "max_tokens": 256}'
+);
+
+-- For embeddings, load a separate embedding-optimized model
+SELECT trex_ai_load_model_for_embeddings('embed', '/models/nomic-embed.gguf');
+
+-- Use it in a vector search pipeline
+SELECT trex_ai_embed('embed', 'patient note about diabetes diagnosis');
+
+-- Watch resource usage
+SELECT trex_ai_status();
+SELECT trex_ai_gpu_info();
+```
+
+## Functions
+
+### Model management
+
+#### `trex_ai_list_models(path)`
+
+Enumerate `.gguf` files under a directory along with size and metadata.
 
 ```sql
 SELECT trex_ai_list_models('/models');
 ```
 
-### `trex_ai_download_model(repo, model_name, output_dir)`
+#### `trex_ai_download_model(repo, model_name, output_dir)`
 
-Download a model from a Hugging Face repository.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| repo | VARCHAR | Hugging Face repo ID |
-| model_name | VARCHAR | Model filename |
-| output_dir | VARCHAR | Local download directory |
-
-**Returns:** VARCHAR
+Download a model file from a Hugging Face repository. Resumable; no-op if
+the file already exists at the target path with matching size.
 
 ```sql
-SELECT trex_ai_download_model('TheBloke/Llama-2-7B-GGUF', 'llama-2-7b.Q4_K_M.gguf', '/models');
+SELECT trex_ai_download_model(
+  'TheBloke/Llama-2-7B-GGUF',
+  'llama-2-7b.Q4_K_M.gguf',
+  '/models'
+);
 ```
 
-### `trex_ai_load_model(model_name, model_path)`
+#### `trex_ai_load_model(model_name, model_path)`
 
-Load a model into memory for text generation.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| model_name | VARCHAR | Alias for the loaded model |
-| model_path | VARCHAR | Path to the GGUF file |
-
-**Returns:** VARCHAR
+Load a model into memory under an alias. The alias is what subsequent
+inference calls reference. Loading is synchronous and can take seconds for
+large models.
 
 ```sql
 SELECT trex_ai_load_model('llama2', '/models/llama-2-7b.Q4_K_M.gguf');
 ```
 
-### `trex_ai_load_model_for_embeddings(model_name, model_path)`
+#### `trex_ai_load_model_for_embeddings(model_name, model_path)`
 
-Load a model optimized for embedding generation.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| model_name | VARCHAR | Alias for the loaded model |
-| model_path | VARCHAR | Path to the GGUF file |
-
-**Returns:** VARCHAR
+Same as `load_model` but configures the model for embedding output (causal
+attention disabled, last hidden state exposed). Use with embedding models
+like `nomic-embed-text` or `bge-large-en`.
 
 ```sql
-SELECT trex_ai_load_model_for_embeddings('embed-model', '/models/nomic-embed-text.Q4_K_M.gguf');
+SELECT trex_ai_load_model_for_embeddings('embed-model', '/models/nomic-embed.gguf');
 ```
 
-### `trex_ai_unload_model(model_name)`
+A model loaded for embeddings cannot also be used for generation — load
+twice under different aliases if you need both.
 
-Unload a model from memory.
+#### `trex_ai_unload_model(model_name)`
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| model_name | VARCHAR | Model alias to unload |
-
-**Returns:** VARCHAR
+Free the model's memory.
 
 ```sql
 SELECT trex_ai_unload_model('llama2');
 ```
 
-### `trex_ai_list_loaded()`
+#### `trex_ai_list_loaded()`
 
-List all currently loaded models.
-
-**Returns:** VARCHAR — JSON
+Report every loaded model with its alias, size, and whether it's the
+generation or embedding variant.
 
 ```sql
 SELECT trex_ai_list_loaded();
 ```
 
-### `trex_ai_model_info(model_name)`
+#### `trex_ai_model_info(model_name)`
 
-Get detailed information about a loaded model.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| model_name | VARCHAR | Model alias |
-
-**Returns:** VARCHAR — JSON
+Return architecture metadata for a loaded model: parameter count, context
+length, vocabulary size, quantization type.
 
 ```sql
 SELECT trex_ai_model_info('llama2');
 ```
 
-## Inference
+### Inference
 
-### `trex_ai_generate(model_name, prompt, options)`
+#### `trex_ai_generate(model_name, prompt, options)`
 
-Generate text from a prompt.
+Single-prompt text completion. `options` is a JSON object — common keys:
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| model_name | VARCHAR | Model alias |
-| prompt | VARCHAR | Input prompt |
-| options | VARCHAR | JSON generation options (temperature, max_tokens, etc.) |
-
-**Returns:** VARCHAR
-
-```sql
-SELECT trex_ai_generate('llama2', 'Explain SQL joins in one paragraph', '{"temperature": 0.7, "max_tokens": 256}');
-```
-
-### `trex_ai_chat(model_name, messages, options)`
-
-Chat completion with message history.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| model_name | VARCHAR | Model alias |
-| messages | VARCHAR | JSON array of chat messages |
-| options | VARCHAR | JSON generation options |
-
-**Returns:** VARCHAR
+| Option | Default | Description |
+|--------|---------|-------------|
+| `temperature` | 0.7 | Sampling temperature. Lower = more deterministic. |
+| `top_p` | 0.9 | Nucleus sampling cutoff. |
+| `top_k` | 40 | Top-k sampling. |
+| `max_tokens` | 256 | Output length cap. |
+| `stop` | — | Array of stop sequences. |
+| `seed` | random | Reproducibility seed. |
 
 ```sql
-SELECT trex_ai_chat('llama2',
-  '[{"role": "user", "content": "What is trexsql?"}]',
-  '{"temperature": 0.7}'
+SELECT trex_ai_generate(
+  'llama2',
+  'Explain SQL joins in one paragraph.',
+  '{"temperature": 0.3, "max_tokens": 200, "stop": ["\n\n"]}'
 );
 ```
 
-### `trex_ai_embed(model_name, text)`
+#### `trex_ai_chat(model_name, messages, options)`
 
-Generate an embedding vector for input text.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| model_name | VARCHAR | Embedding model alias |
-| text | VARCHAR | Input text |
-
-**Returns:** VARCHAR — JSON array of floats
+Chat-format inference. `messages` is a JSON array of `{role, content}`
+objects (`system`, `user`, `assistant`). The extension applies the model's
+chat template if available.
 
 ```sql
-SELECT trex_ai_embed('embed-model', 'patient diagnosis record');
+SELECT trex_ai_chat(
+  'llama2',
+  '[
+    {"role":"system","content":"You are a SQL expert."},
+    {"role":"user","content":"What is trexsql?"}
+  ]',
+  '{"temperature": 0.5}'
+);
 ```
 
-### `trex_ai(query)`
+#### `trex_ai_embed(model_name, text)`
 
-Shorthand inference function.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| query | VARCHAR | Query text |
-
-**Returns:** VARCHAR
+Generate an embedding vector for the input text. Returns a JSON array of
+floats. Pair with the engine's HNSW vector index for similarity search.
 
 ```sql
-SELECT trex_ai('Summarize this SQL query: SELECT ...');
+SELECT trex_ai_embed('embed-model', 'patient diagnosis note');
 ```
 
-## Batch Processing
+#### `trex_ai(query)`
 
-### `trex_ai_batch_process(batch_json)`
-
-Submit a batch of inference requests for asynchronous processing.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| batch_json | VARCHAR | JSON batch specification |
-
-**Returns:** VARCHAR — batch ID
+Convenience shorthand using a default loaded model. Useful in interactive
+sessions; prefer `trex_ai_generate` in code so the model is explicit.
 
 ```sql
-SELECT trex_ai_batch_process('[{"prompt": "Query 1"}, {"prompt": "Query 2"}]');
+SELECT trex_ai('Summarize: SELECT * FROM users');
 ```
 
-### `trex_ai_batch_result(batch_id)`
+### Batch processing
 
-Retrieve results of a completed batch.
+For high-throughput pipelines, submit many prompts asynchronously and
+collect results when they complete.
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| batch_id | VARCHAR | Batch identifier |
+#### `trex_ai_batch_process(batch_json)`
 
-**Returns:** VARCHAR — JSON results
+Submit a batch and get a batch ID back. Workers process the batch in
+parallel using the inference context pool.
 
 ```sql
-SELECT trex_ai_batch_result('batch-123');
+SELECT trex_ai_batch_process(
+  '{"model":"llama2","prompts":[
+     {"id":"p1","prompt":"hello"},
+     {"id":"p2","prompt":"world"}
+   ],"options":{"temperature":0.7}}'
+);
+-- → "batch-abc-123"
 ```
 
-## System Status
+#### `trex_ai_batch_result(batch_id)`
 
-### `trex_ai_status()`
-
-Get overall AI engine status.
-
-**Returns:** VARCHAR — JSON
+Retrieve completed results. Returns null fields for prompts still in flight.
 
 ```sql
-SELECT trex_ai_status();
+SELECT trex_ai_batch_result('batch-abc-123');
 ```
 
-### `trex_ai_gpu_info()`
+### System status
 
-Get GPU device information and acceleration status.
+The status functions return JSON strings; cast to `JSON` for ergonomics in
+SQL.
 
-**Returns:** VARCHAR — JSON
+| Function | What it tells you |
+|----------|-------------------|
+| `trex_ai_status()` | Overall: model count, GPU on/off, queue depth. |
+| `trex_ai_gpu_info()` | Per-GPU: name, total VRAM, used VRAM, compute capability. |
+| `trex_ai_metrics()` | Tokens/sec, request latency p50/p95/p99, queue wait. |
+| `trex_ai_memory_status()` | Per-loaded-model RAM and VRAM usage. |
+| `trex_ai_context_pool_status()` | Active vs idle inference contexts. |
+| `trex_ai_cleanup_contexts()` | Force release of idle contexts. |
+| `trex_ai_openssl_version(version_type)` | Linked OpenSSL version. Diagnostic only. |
 
-```sql
-SELECT trex_ai_gpu_info();
-```
+## Operational notes
 
-### `trex_ai_metrics()`
+- **Pick the right quantization.** Q4_K_M is the sweet spot for most
+  consumer GPUs and CPU inference. Q8_0 doubles memory but tightens
+  generation quality. F16 is generally not worth it on CPU.
+- **GPU detection at startup.** The extension picks CUDA → Vulkan → Metal →
+  CPU based on the build flags. To verify what's active in production,
+  call `trex_ai_gpu_info()` after the first generation.
+- **Memory accounting.** Loaded models consume RAM (or VRAM) outside the
+  Trex catalog allocator. Account for this in pod sizing — a 7B Q4_K_M model
+  is ~4 GB on disk and ~5 GB resident.
+- **Context length matters.** Generation cost scales with context — if you
+  paste 8 KB of prior conversation into every call, latency follows. Trim
+  history aggressively in chat workflows.
+- **Concurrency**: each in-flight call holds one inference context. Batch
+  for throughput; long prompts under high concurrency will queue.
 
-Get performance metrics (tokens/sec, latency, etc.).
+## Next steps
 
-**Returns:** VARCHAR — JSON
-
-```sql
-SELECT trex_ai_metrics();
-```
-
-### `trex_ai_memory_status()`
-
-Get memory usage of loaded models.
-
-**Returns:** VARCHAR — JSON
-
-```sql
-SELECT trex_ai_memory_status();
-```
-
-### `trex_ai_context_pool_status()`
-
-Get inference context pool utilization.
-
-**Returns:** VARCHAR — JSON
-
-```sql
-SELECT trex_ai_context_pool_status();
-```
-
-### `trex_ai_cleanup_contexts()`
-
-Release unused inference contexts to free memory.
-
-**Returns:** VARCHAR
-
-```sql
-SELECT trex_ai_cleanup_contexts();
-```
-
-### `trex_ai_openssl_version(version_type)`
-
-Return the OpenSSL version linked by the extension.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| version_type | VARCHAR | Version string type |
-
-**Returns:** VARCHAR
-
-```sql
-SELECT trex_ai_openssl_version('full');
-```
+- [SQL Reference → fhir](fhir) — common pairing: pull clinical text out of
+  FHIR resources, embed with `trex_ai_embed`, semantic-search.
+- [Concepts → Query Pipeline](../concepts/query-pipeline) — how `ai`
+  inference sits in a query plan (it's a regular scalar/table function — the
+  planner doesn't reorder around it).

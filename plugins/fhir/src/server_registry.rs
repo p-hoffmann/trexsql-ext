@@ -54,16 +54,42 @@ impl ServerRegistry {
         Ok(())
     }
 
-    pub fn stop_server(&self, host: &str, port: u16) -> Result<String, String> {
+    /// Remove a registry entry without joining the thread. Used by the
+    /// spawned server thread itself to clean up its own entry on exit
+    /// (Ok or Err). This prevents phantom entries when the thread fails
+    /// internally (bind error, definition load error, etc.) after the
+    /// outer fn already registered the handle.
+    pub fn deregister_server(&self, host: &str, port: u16) {
         let mut servers = self.servers.lock().unwrap();
         let key = Self::server_key(host, port);
+        servers.remove(&key);
+    }
 
-        if let Some(handle) = servers.remove(&key) {
-            let _ = handle.shutdown_tx.send(());
-            Ok(format!("Shutdown signal sent to server {}:{}", host, port))
-        } else {
-            Err(format!("No server running on {}:{}", host, port))
+    pub fn stop_server(&self, host: &str, port: u16) -> Result<String, String> {
+        // Remove the handle while holding the lock briefly so that a
+        // concurrent caller can't observe a half-stopped server, then drop
+        // the lock before joining the thread (joining can block).
+        let handle = {
+            let mut servers = self.servers.lock().unwrap();
+            let key = Self::server_key(host, port);
+            match servers.remove(&key) {
+                Some(h) => h,
+                None => return Err(format!("No server running on {}:{}", host, port)),
+            }
+        };
+
+        // Send shutdown signal — graceful shutdown of axum::serve.
+        let _ = handle.shutdown_tx.send(());
+
+        // Wait for the server thread to actually exit so that the port is
+        // released before we return. Without this, an immediate restart on
+        // the same port can race with the previous bind.
+        match handle.thread_handle.join() {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => eprintln!("[fhir] server thread exited with error: {}", e),
+            Err(_) => eprintln!("[fhir] server thread panicked during shutdown"),
         }
+        Ok(format!("Stopped FHIR server on {}:{}", host, port))
     }
 
     pub fn get_servers_info(&self) -> Vec<(String, u16, u64)> {

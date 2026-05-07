@@ -1,5 +1,19 @@
 use std::sync::Arc;
+use std::sync::Once;
 use std::thread;
+
+/// rustls 0.23+ requires a CryptoProvider be installed before any TLS handshake.
+/// Both `ring` and `aws-lc-rs` features can be linked transitively, so the
+/// auto-selection panics with "Could not automatically determine the
+/// process-level CryptoProvider". We install `ring` explicitly. Mirrors the
+/// pattern in plugins/etl/src/etl_start.rs.
+static CRYPTO_INIT: Once = Once::new();
+
+fn ensure_crypto_provider() {
+    CRYPTO_INIT.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
 
 use arrow::array::{Array, RecordBatch};
 use arrow::ipc::writer::IpcWriteOptions;
@@ -549,6 +563,28 @@ impl FlightService for DuckDBFlightService {
     }
 }
 
+/// RAII guard that deregisters a server entry from the ServerRegistry when
+/// dropped. Used inside spawned server threads so that any early return —
+/// runtime build failure, addr parse error, bind error, or serve() returning
+/// Err — cleans up the reserved registry slot. Without this the registry can
+/// report a phantom server forever after a failed start.
+struct DeregisterOnDrop {
+    host: String,
+    port: u16,
+}
+
+impl DeregisterOnDrop {
+    fn new(host: String, port: u16) -> Self {
+        Self { host, port }
+    }
+}
+
+impl Drop for DeregisterOnDrop {
+    fn drop(&mut self) {
+        ServerRegistry::instance().deregister(&self.host, self.port);
+    }
+}
+
 /// Start an Arrow Flight gRPC server on a dedicated thread.
 pub fn start_flight_server(
     host: String,
@@ -556,6 +592,8 @@ pub fn start_flight_server(
     tls_enabled: bool,
 ) -> Result<String, String> {
     SwarmLogger::info("server", &format!("Starting flight server on {host}:{port} (tls={tls_enabled})"));
+
+    ensure_crypto_provider();
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
@@ -567,6 +605,11 @@ pub fn start_flight_server(
     let thread_result = thread::Builder::new()
         .name(format!("flight-server-{}:{}", host, port))
         .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            // Deregister on any thread exit (Ok or Err) so the registry never
+            // reports a phantom server when the spawned thread fails to bind,
+            // parses an invalid addr, or returns early from serve().
+            let _guard = DeregisterOnDrop::new(server_host.clone(), server_port);
+
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?;
@@ -633,6 +676,8 @@ pub fn start_flight_server_with_tls(
 ) -> Result<String, String> {
     SwarmLogger::info("server", &format!("Starting flight server with mTLS on {host}:{port}"));
 
+    ensure_crypto_provider();
+
     let cert = std::fs::read(cert_path)
         .map_err(|e| format!("Failed to read certificate file {cert_path}: {e}"))?;
     let key = std::fs::read(key_path)
@@ -661,6 +706,10 @@ pub fn start_flight_server_with_tls(
     let thread_result = thread::Builder::new()
         .name(format!("flight-tls-server-{}:{}", host, port))
         .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            // Deregister on any thread exit (Ok or Err) so the registry never
+            // reports a phantom server when the spawned thread fails.
+            let _guard = DeregisterOnDrop::new(server_host.clone(), server_port);
+
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?;

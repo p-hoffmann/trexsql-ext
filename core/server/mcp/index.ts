@@ -70,10 +70,34 @@ async function authenticateRequest(req: Request): Promise<ValidatedUser | null> 
   return validateApiKey(key);
 }
 
+function requireMcpAccept(req: Request, res: Response, next: () => void) {
+  // The MCP streamable HTTP transport returns either application/json or
+  // text/event-stream. Clients that omit Accept (or send something else) used
+  // to cause the underlying transport to abort the connection — surface a
+  // clear 415 instead.
+  const accept = (req.headers["accept"] as string | undefined) || "";
+  const tokens = accept.split(",").map((s) => s.split(";")[0].trim().toLowerCase()).filter(Boolean);
+  const ok = tokens.some((t) =>
+    t === "*/*" ||
+    t === "application/*" ||
+    t === "application/json" ||
+    t === "text/*" ||
+    t === "text/event-stream"
+  );
+  if (!ok) {
+    res.status(415).json({
+      error: "Unsupported Accept header",
+      message: "MCP requires Accept: application/json or text/event-stream",
+    });
+    return;
+  }
+  next();
+}
+
 export function mountMcpServer(app: Express) {
   const mcpPath = `${BASE_PATH}/mcp`;
 
-  app.post(mcpPath, apiLimiter, express.json(), async (req: Request, res: Response) => {
+  app.post(mcpPath, apiLimiter, requireMcpAccept, express.json(), async (req: Request, res: Response) => {
     const user = await authenticateRequest(req);
     if (!user) {
       res.status(401).json({ error: "Invalid or missing API key" });
@@ -111,7 +135,7 @@ export function mountMcpServer(app: Express) {
     await transport.handleRequest(req, res, req.body);
   });
 
-  app.get(mcpPath, apiLimiter, async (req: Request, res: Response) => {
+  app.get(mcpPath, apiLimiter, requireMcpAccept, async (req: Request, res: Response) => {
     const user = await authenticateRequest(req);
     if (!user) {
       res.status(401).json({ error: "Invalid or missing API key" });

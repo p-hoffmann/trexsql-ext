@@ -1,7 +1,26 @@
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use std::thread;
 use std::time::SystemTime;
+
+/// rustls 0.23+ requires a CryptoProvider be installed before any TLS handshake.
+/// The pgwire crate's `server-api-aws-lc-rs` feature pulls in `aws-lc-rs`, while
+/// other transitive deps pull `ring` — both providers are linked, so auto-selection
+/// panics. We install `ring` explicitly (matches etl/db plugins for consistency).
+///
+/// Currently no TLS path in this crate exercises pgwire's TLS handshake. If a future
+/// change enables the pgwire `ssl/tls` feature or adds a tokio-rustls listener,
+/// call `ensure_crypto_provider()` from the TLS-enabling entry point — for example,
+/// at the top of `start_pgwire_server_capi` (or any new `start_pgwire_server_tls`
+/// variant) before binding the listener.
+static CRYPTO_INIT: Once = Once::new();
+
+#[allow(dead_code)]
+pub(crate) fn ensure_crypto_provider() {
+    CRYPTO_INIT.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
 
 use duckdb::arrow::datatypes::Schema;
 use duckdb::arrow::record_batch::RecordBatch;
@@ -343,10 +362,13 @@ fn is_duckdb_non_query_schema(schema: &duckdb::arrow::datatypes::Schema) -> bool
     )
 }
 
-/// Convert Arrow schema to pgwire field info
+/// Convert Arrow schema to pgwire field info.
+///
+/// The pg type is derived from the *original* Arrow data type (so TIMESTAMPTZ
+/// columns advertise OID 1184 to the client) even when the column is later
+/// cast to Utf8 by `rebuild_record_batch_for_pg` for safe text encoding.
 fn schema_to_field_info(schema: &duckdb::arrow::datatypes::Schema, format: &Format) -> PgWireResult<Vec<FieldInfo>> {
-    let effective = rebuild_schema_for_pg(schema);
-    effective.fields().iter().enumerate().map(|(idx, field)| {
+    schema.fields().iter().enumerate().map(|(idx, field)| {
         let pg_type = arrow_type_to_pg_type(field.data_type());
         Ok(FieldInfo::new(
             field.name().clone(),
@@ -374,7 +396,17 @@ fn arrow_type_to_pg_type(arrow_type: &duckdb::arrow::datatypes::DataType) -> Typ
         DataType::Decimal128(_, _) | DataType::Decimal256(_, _) => Type::NUMERIC,
         DataType::Utf8 | DataType::LargeUtf8 => Type::TEXT,
         DataType::Date32 | DataType::Date64 => Type::DATE,
-        DataType::Timestamp(_, _) => Type::TIMESTAMP,
+        // Timestamp WITH timezone -> TIMESTAMPTZ (OID 1184).
+        // Timestamp WITHOUT timezone -> TIMESTAMP (OID 1114).
+        // arrow-pg's encoder relies on this distinction to format the value
+        // (it formats DateTime<FixedOffset> for TIMESTAMPTZ, NaiveDateTime
+        // for TIMESTAMP). Returning TIMESTAMP for a tz-aware column makes
+        // text-mode encoding produce a value with no offset, but more
+        // importantly the column is also pre-cast to Utf8 below to avoid
+        // arrow-pg's Tz::from_str path, which panics on DuckDB's UTC offset
+        // tz strings (e.g. "+00:00") that chrono-tz cannot parse as IANA.
+        DataType::Timestamp(_, Some(_)) => Type::TIMESTAMPTZ,
+        DataType::Timestamp(_, None) => Type::TIMESTAMP,
         DataType::Time32(_) | DataType::Time64(_) => Type::TIME,
         DataType::Binary | DataType::LargeBinary => Type::BYTEA,
         _ => Type::TEXT,
@@ -393,6 +425,16 @@ fn extract_panic_message(err: Box<dyn std::any::Any + Send>) -> String {
 
 /// True when arrow-pg's encoder cannot natively encode this Arrow type and
 /// we must pre-cast the column to Utf8 so the row encodes as TEXT.
+///
+/// `Timestamp(unit, Some(tz))` (TIMESTAMPTZ) is included here because
+/// arrow-pg's encoder produces a `chrono::DateTime<FixedOffset>` value but
+/// pgwire's `to_sql_text` path for that value rejects any pg_type other
+/// than `TIMESTAMPTZ` — and arrow-pg's earlier tz parsing layer also chokes
+/// on DuckDB's UTC-offset strings ("+00:00", "UTC+08:00") in some chrono-tz
+/// builds. The simplest, panic-free fix is to pre-cast the column to Utf8
+/// using DuckDB's own ISO-8601 formatter; the wire field still advertises
+/// OID 1184 (TIMESTAMPTZ) via `arrow_type_to_pg_type`, so clients see the
+/// correct column type while we ship the bytes as text.
 fn needs_string_cast(dt: &duckdb::arrow::datatypes::DataType) -> bool {
     use duckdb::arrow::datatypes::DataType;
     match dt {
@@ -402,11 +444,249 @@ fn needs_string_cast(dt: &duckdb::arrow::datatypes::DataType) -> bool {
         | DataType::Map(_, _)
         | DataType::Union(_, _)
         | DataType::RunEndEncoded(_, _) => true,
+        DataType::Timestamp(_, Some(_)) => true,
+        // Decimal128 at any precision is routed through our own i128
+        // formatter because arrow-pg's encoder calls
+        // `rust_decimal::Decimal::try_from_i128_with_scale`, which aborts
+        // (SIGTERM) when the underlying i128 exceeds rust_decimal's 96-bit
+        // mantissa — i.e. on full-width DECIMAL(38, *) values. We pre-format
+        // every Decimal128 so the column reaches arrow-pg as Utf8; the wire
+        // type is still NUMERIC because `arrow_type_to_pg_type` keys off the
+        // *original* schema in `schema_to_field_info`.
+        DataType::Decimal128(_, _) => true,
+        // Interval columns are routed through our own formatter because
+        // arrow-pg's encoder for `DataType::Interval(_)` reads `value(idx)`
+        // from the underlying buffer without first checking the validity
+        // bitmap — so a SQL NULL row leaks the stale buffer slot to the wire
+        // (e.g. "62206777 years 4 mons 31872 days"). Our formatter honours
+        // the bitmap and emits a wire NULL instead.
+        DataType::Interval(_) => true,
         DataType::Dictionary(_, value_type) => !matches!(
             value_type.as_ref(),
             DataType::Utf8 | DataType::LargeUtf8
         ),
         _ => false,
+    }
+}
+
+/// Format a DuckDB TIMESTAMPTZ column as a Utf8 array of ISO-8601 strings.
+///
+/// DuckDB stores TIMESTAMPTZ as an i64 count of microseconds since the UNIX
+/// epoch in UTC, regardless of the Arrow field's `tz` metadata (which can be
+/// an IANA name like "Etc/UTC" or a fixed offset like "+00:00"). We avoid
+/// arrow's generic `cast` here because arrow-array's `Tz::from_str` rejects
+/// IANA names when the crate is built without the `chrono-tz` feature
+/// (which is the case in this build). Parsing UTC microseconds with chrono
+/// directly sidesteps the timezone-string parsing entirely.
+///
+/// The output values include a `+00` offset so the string is unambiguous on
+/// the wire as a TIMESTAMPTZ literal.
+fn format_timestamptz_as_utf8(
+    arr: &dyn duckdb::arrow::array::Array,
+    unit: &duckdb::arrow::datatypes::TimeUnit,
+) -> duckdb::arrow::array::ArrayRef {
+    use chrono::{DateTime, Utc};
+    use duckdb::arrow::array::{ArrayRef, PrimitiveArray, StringArray};
+    use duckdb::arrow::datatypes::{
+        TimeUnit, TimestampMicrosecondType, TimestampMillisecondType,
+        TimestampNanosecondType, TimestampSecondType,
+    };
+
+    let len = arr.len();
+    let mut out: Vec<Option<String>> = Vec::with_capacity(len);
+    for i in 0..len {
+        if arr.is_null(i) {
+            out.push(None);
+            continue;
+        }
+        let micros: i64 = match unit {
+            TimeUnit::Second => arr
+                .as_any()
+                .downcast_ref::<PrimitiveArray<TimestampSecondType>>()
+                .map(|a| a.value(i).saturating_mul(1_000_000))
+                .unwrap_or(0),
+            TimeUnit::Millisecond => arr
+                .as_any()
+                .downcast_ref::<PrimitiveArray<TimestampMillisecondType>>()
+                .map(|a| a.value(i).saturating_mul(1_000))
+                .unwrap_or(0),
+            TimeUnit::Microsecond => arr
+                .as_any()
+                .downcast_ref::<PrimitiveArray<TimestampMicrosecondType>>()
+                .map(|a| a.value(i))
+                .unwrap_or(0),
+            TimeUnit::Nanosecond => arr
+                .as_any()
+                .downcast_ref::<PrimitiveArray<TimestampNanosecondType>>()
+                .map(|a| a.value(i) / 1_000)
+                .unwrap_or(0),
+        };
+        let secs = micros.div_euclid(1_000_000);
+        let nsecs = (micros.rem_euclid(1_000_000) as u32) * 1_000;
+        let dt = DateTime::<Utc>::from_timestamp(secs, nsecs).unwrap_or_else(|| {
+            DateTime::<Utc>::from_timestamp(0, 0).expect("epoch is valid")
+        });
+        // Postgres TIMESTAMPTZ wire text is e.g. "2026-01-01 00:00:00.123456+00".
+        out.push(Some(dt.format("%Y-%m-%d %H:%M:%S%.6f+00").to_string()));
+    }
+    let arr: ArrayRef = std::sync::Arc::new(StringArray::from(out));
+    arr
+}
+
+/// Format an Arrow `Decimal128Array` as a Utf8 array of decimal strings.
+///
+/// arrow-pg's encoder routes `Decimal128(p, s)` through
+/// `rust_decimal::Decimal::try_from_i128_with_scale`, which aborts on the
+/// full 38-digit mantissa (rust_decimal only supports a 96-bit / ~28-digit
+/// significand). We bypass that path entirely by formatting the underlying
+/// i128 ourselves, honouring the column scale, sign, and validity bitmap.
+///
+/// The wire field type stays NUMERIC because `arrow_type_to_pg_type` is
+/// driven by the *original* schema in `schema_to_field_info`; psycopg2
+/// parses NUMERIC text as `decimal.Decimal`, which round-trips losslessly.
+fn format_decimal128_as_utf8(
+    arr: &dyn duckdb::arrow::array::Array,
+    scale: i8,
+) -> duckdb::arrow::array::ArrayRef {
+    use duckdb::arrow::array::{Array, ArrayRef, Decimal128Array, StringArray};
+
+    let dec = arr
+        .as_any()
+        .downcast_ref::<Decimal128Array>()
+        .expect("array must be Decimal128Array");
+    let len = dec.len();
+    let mut out: Vec<Option<String>> = Vec::with_capacity(len);
+    for i in 0..len {
+        if dec.is_null(i) {
+            out.push(None);
+            continue;
+        }
+        let v: i128 = dec.value(i);
+        out.push(Some(format_i128_with_scale(v, scale)));
+    }
+    let arr: ArrayRef = std::sync::Arc::new(StringArray::from(out));
+    arr
+}
+
+/// Format an i128 as a fixed-point decimal string with `scale` fractional
+/// digits. Negative scales are treated as zero-scale (DuckDB rejects them
+/// at parse time, but we handle defensively).
+fn format_i128_with_scale(v: i128, scale: i8) -> String {
+    let scale = if scale < 0 { 0 } else { scale as usize };
+    if scale == 0 {
+        return v.to_string();
+    }
+    let negative = v < 0;
+    // Use unsigned magnitude to avoid issues at i128::MIN.
+    let mag: u128 = v.unsigned_abs();
+    let digits = mag.to_string();
+    let formatted = if digits.len() <= scale {
+        // Need leading "0." and zero-padding before the significant digits.
+        let mut s = String::with_capacity(scale + 2);
+        s.push_str("0.");
+        for _ in 0..(scale - digits.len()) {
+            s.push('0');
+        }
+        s.push_str(&digits);
+        s
+    } else {
+        let split = digits.len() - scale;
+        let mut s = String::with_capacity(digits.len() + 1);
+        s.push_str(&digits[..split]);
+        s.push('.');
+        s.push_str(&digits[split..]);
+        s
+    };
+    if negative {
+        format!("-{}", formatted)
+    } else {
+        formatted
+    }
+}
+
+/// Format an Arrow `Interval*Array` as a Utf8 array of Postgres-style
+/// interval strings, honouring the validity bitmap.
+///
+/// arrow-pg's encoder for `DataType::Interval(_)` reads `value(idx)` from
+/// the array without checking the null bitmap first, then constructs a
+/// `pg_interval::Interval` from whatever bytes happened to occupy the slot
+/// — so a SQL NULL row ships e.g. "62206777 years 4 mons 31872 days" on
+/// the wire. We avoid that by checking `is_null` ourselves and emitting a
+/// wire NULL (as `Option<String>::None` in the StringArray).
+fn format_interval_as_utf8(
+    arr: &dyn duckdb::arrow::array::Array,
+    unit: &duckdb::arrow::datatypes::IntervalUnit,
+) -> duckdb::arrow::array::ArrayRef {
+    use duckdb::arrow::array::{
+        Array, ArrayRef, IntervalDayTimeArray, IntervalMonthDayNanoArray,
+        IntervalYearMonthArray, StringArray,
+    };
+    use duckdb::arrow::datatypes::{
+        IntervalDayTimeType, IntervalMonthDayNanoType, IntervalUnit,
+        IntervalYearMonthType,
+    };
+
+    let len = arr.len();
+    let mut out: Vec<Option<String>> = Vec::with_capacity(len);
+    for i in 0..len {
+        if arr.is_null(i) {
+            out.push(None);
+            continue;
+        }
+        let s = match unit {
+            IntervalUnit::YearMonth => {
+                let a = arr
+                    .as_any()
+                    .downcast_ref::<IntervalYearMonthArray>()
+                    .expect("IntervalYearMonthArray downcast");
+                let months = IntervalYearMonthType::to_months(a.value(i));
+                let years = months / 12;
+                let mons = months % 12;
+                format!("{} years {} mons", years, mons)
+            }
+            IntervalUnit::DayTime => {
+                let a = arr
+                    .as_any()
+                    .downcast_ref::<IntervalDayTimeArray>()
+                    .expect("IntervalDayTimeArray downcast");
+                let (days, millis) = IntervalDayTimeType::to_parts(a.value(i));
+                format_interval_day_micros(0, days, (millis as i64) * 1_000)
+            }
+            IntervalUnit::MonthDayNano => {
+                let a = arr
+                    .as_any()
+                    .downcast_ref::<IntervalMonthDayNanoArray>()
+                    .expect("IntervalMonthDayNanoArray downcast");
+                let (months, days, nanos) = IntervalMonthDayNanoType::to_parts(a.value(i));
+                format_interval_day_micros(months, days, nanos / 1_000)
+            }
+        };
+        out.push(Some(s));
+    }
+    let arr: ArrayRef = std::sync::Arc::new(StringArray::from(out));
+    arr
+}
+
+fn format_interval_day_micros(months: i32, days: i32, micros: i64) -> String {
+    let years = months / 12;
+    let mons = months % 12;
+    let total_secs = micros.div_euclid(1_000_000);
+    let usec = micros.rem_euclid(1_000_000);
+    let abs_secs = total_secs.unsigned_abs();
+    let sign = if total_secs < 0 { "-" } else { "" };
+    let h = abs_secs / 3600;
+    let m = (abs_secs / 60) % 60;
+    let s = abs_secs % 60;
+    if usec == 0 {
+        format!(
+            "{} years {} mons {} days {}{:02}:{:02}:{:02}",
+            years, mons, days, sign, h, m, s
+        )
+    } else {
+        format!(
+            "{} years {} mons {} days {}{:02}:{:02}:{:02}.{:06}",
+            years, mons, days, sign, h, m, s, usec
+        )
     }
 }
 
@@ -423,6 +703,45 @@ fn rebuild_record_batch_for_pg(rb: RecordBatch) -> RecordBatch {
     let mut new_fields = Vec::with_capacity(schema.fields().len());
     let mut new_columns: Vec<ArrayRef> = Vec::with_capacity(rb.num_columns());
     for (i, field) in schema.fields().iter().enumerate() {
+        // TIMESTAMPTZ takes a dedicated path because arrow's generic `cast`
+        // routes through `Tz::from_str`, which fails on IANA names like
+        // "Etc/UTC" in builds without `chrono-tz` and would otherwise leave
+        // the array un-converted — sending it back through arrow-pg's
+        // encoder, which trips the same parse on the encoding path.
+        if let DataType::Timestamp(unit, Some(_)) = field.data_type() {
+            let casted = format_timestamptz_as_utf8(rb.column(i).as_ref(), unit);
+            new_columns.push(casted);
+            new_fields.push(Field::new(
+                field.name(),
+                DataType::Utf8,
+                field.is_nullable(),
+            ));
+            continue;
+        }
+        // Decimal128 — bypass arrow-pg + rust_decimal (which aborts on
+        // full-width DECIMAL(38, *) values) by formatting i128 ourselves.
+        if let DataType::Decimal128(_, scale) = field.data_type() {
+            let casted = format_decimal128_as_utf8(rb.column(i).as_ref(), *scale);
+            new_columns.push(casted);
+            new_fields.push(Field::new(
+                field.name(),
+                DataType::Utf8,
+                field.is_nullable(),
+            ));
+            continue;
+        }
+        // Interval — bypass arrow-pg's encoder, which leaks the stale buffer
+        // slot for SQL NULL rows because it skips the validity bitmap check.
+        if let DataType::Interval(unit) = field.data_type() {
+            let casted = format_interval_as_utf8(rb.column(i).as_ref(), unit);
+            new_columns.push(casted);
+            new_fields.push(Field::new(
+                field.name(),
+                DataType::Utf8,
+                field.is_nullable(),
+            ));
+            continue;
+        }
         if needs_string_cast(field.data_type()) {
             match cast(rb.column(i), &DataType::Utf8) {
                 Ok(casted) => {
@@ -1051,10 +1370,25 @@ mod tests {
 
     #[test]
     fn needs_string_cast_unsupported() {
-        use duckdb::arrow::datatypes::{DataType, Field};
+        use duckdb::arrow::datatypes::{DataType, Field, TimeUnit};
         assert!(needs_string_cast(&DataType::Float16));
         assert!(needs_string_cast(&DataType::Decimal256(76, 4)));
         assert!(needs_string_cast(&DataType::FixedSizeBinary(16)));
+        // TIMESTAMPTZ (Timestamp with timezone) must be cast to Utf8 to avoid
+        // the arrow-pg Tz::from_str panic on non-IANA tz strings.
+        assert!(needs_string_cast(&DataType::Timestamp(
+            TimeUnit::Microsecond,
+            Some("UTC".into()),
+        )));
+        assert!(needs_string_cast(&DataType::Timestamp(
+            TimeUnit::Microsecond,
+            Some("+00:00".into()),
+        )));
+        // TIMESTAMP without tz stays native — arrow-pg encodes it fine.
+        assert!(!needs_string_cast(&DataType::Timestamp(
+            TimeUnit::Microsecond,
+            None,
+        )));
         assert!(needs_string_cast(&DataType::Map(
             Arc::new(Field::new(
                 "entries",

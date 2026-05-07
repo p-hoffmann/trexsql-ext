@@ -30,6 +30,11 @@ etl-config = { git = "https://github.com/supabase/etl", rev = "e692ead6e5f5818b2
 etl-postgres = { git = "https://github.com/supabase/etl", rev = "e692ead6e5f5818b2d905ff5c8598246c4c1302b" }
 
 tokio = { version = "1", features = ["rt", "sync"] }
+# Pinned to control feature set: rustls 0.23+ requires explicit CryptoProvider
+# selection when multiple providers are pulled in transitively. Both `ring` and
+# `aws-lc-rs` are enabled by upstream deps (reqwest, etl-lib), so we install
+# the `ring` provider explicitly at pipeline start (see etl_start.rs).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0"

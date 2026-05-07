@@ -222,28 +222,39 @@ pub fn generate_create_table_sql(table_name: &str, schema: &SchemaRef) -> String
     )
 }
 
-fn arrow_type_to_sql(dt: &DataType) -> &'static str {
+fn arrow_type_to_sql(dt: &DataType) -> String {
     match dt {
-        DataType::Boolean => "BOOLEAN",
-        DataType::Int8 => "TINYINT",
-        DataType::Int16 => "SMALLINT",
-        DataType::Int32 => "INTEGER",
-        DataType::Int64 => "BIGINT",
-        DataType::UInt8 => "UTINYINT",
-        DataType::UInt16 => "USMALLINT",
-        DataType::UInt32 => "UINTEGER",
-        DataType::UInt64 => "UBIGINT",
-        DataType::Float16 => "FLOAT",
-        DataType::Float32 => "FLOAT",
-        DataType::Float64 => "DOUBLE",
-        DataType::Utf8 | DataType::LargeUtf8 => "VARCHAR",
-        DataType::Binary | DataType::LargeBinary => "BLOB",
-        DataType::Date32 | DataType::Date64 => "DATE",
-        DataType::Time32(_) | DataType::Time64(_) => "TIME",
-        DataType::Timestamp(_, _) => "TIMESTAMP",
-        DataType::Decimal128(_, _) | DataType::Decimal256(_, _) => "DECIMAL",
-        DataType::Interval(_) => "INTERVAL",
-        _ => "VARCHAR",
+        DataType::Boolean => "BOOLEAN".to_string(),
+        DataType::Int8 => "TINYINT".to_string(),
+        DataType::Int16 => "SMALLINT".to_string(),
+        DataType::Int32 => "INTEGER".to_string(),
+        DataType::Int64 => "BIGINT".to_string(),
+        DataType::UInt8 => "UTINYINT".to_string(),
+        DataType::UInt16 => "USMALLINT".to_string(),
+        DataType::UInt32 => "UINTEGER".to_string(),
+        DataType::UInt64 => "UBIGINT".to_string(),
+        DataType::Float16 => "FLOAT".to_string(),
+        DataType::Float32 => "FLOAT".to_string(),
+        DataType::Float64 => "DOUBLE".to_string(),
+        DataType::Utf8 | DataType::LargeUtf8 => "VARCHAR".to_string(),
+        DataType::Binary | DataType::LargeBinary => "BLOB".to_string(),
+        DataType::Date32 | DataType::Date64 => "DATE".to_string(),
+        // Time32/Time64 unit cannot be expressed in DuckDB's TIME DDL —
+        // DuckDB normalizes to microsecond precision. Best-effort: keep as TIME.
+        DataType::Time32(_) | DataType::Time64(_) => "TIME".to_string(),
+        // Preserve timezone metadata: tz-aware timestamps must round-trip as
+        // TIMESTAMPTZ, not get downgraded to plain TIMESTAMP.
+        DataType::Timestamp(_, Some(_)) => "TIMESTAMPTZ".to_string(),
+        DataType::Timestamp(_, None) => "TIMESTAMP".to_string(),
+        // Preserve precision and scale so DECIMAL(38,10) doesn't collapse to
+        // DuckDB's default DECIMAL(18,3).
+        DataType::Decimal128(p, s) | DataType::Decimal256(p, s) => {
+            format!("DECIMAL({}, {})", p, s)
+        }
+        // Interval unit (MonthDayNano/DayTime/YearMonth) is lossy at the SQL
+        // DDL level — DuckDB has a single INTERVAL type. Documented limitation.
+        DataType::Interval(_) => "INTERVAL".to_string(),
+        _ => "VARCHAR".to_string(),
     }
 }
 
@@ -1170,6 +1181,59 @@ mod tests {
                 None
             )),
             "TIMESTAMP"
+        );
+    }
+
+    #[test]
+    fn arrow_type_to_sql_preserves_timezone() {
+        // TIMESTAMPTZ (tz-aware) must not be downgraded to plain TIMESTAMP.
+        assert_eq!(
+            arrow_type_to_sql(&DataType::Timestamp(
+                arrow::datatypes::TimeUnit::Microsecond,
+                Some("UTC".into())
+            )),
+            "TIMESTAMPTZ"
+        );
+        assert_eq!(
+            arrow_type_to_sql(&DataType::Timestamp(
+                arrow::datatypes::TimeUnit::Nanosecond,
+                Some("America/Los_Angeles".into())
+            )),
+            "TIMESTAMPTZ"
+        );
+    }
+
+    #[test]
+    fn arrow_type_to_sql_preserves_decimal_precision() {
+        assert_eq!(
+            arrow_type_to_sql(&DataType::Decimal128(38, 10)),
+            "DECIMAL(38, 10)"
+        );
+        assert_eq!(
+            arrow_type_to_sql(&DataType::Decimal128(18, 2)),
+            "DECIMAL(18, 2)"
+        );
+        assert_eq!(
+            arrow_type_to_sql(&DataType::Decimal256(76, 20)),
+            "DECIMAL(76, 20)"
+        );
+    }
+
+    #[test]
+    fn arrow_type_to_sql_time_and_interval() {
+        assert_eq!(
+            arrow_type_to_sql(&DataType::Time32(arrow::datatypes::TimeUnit::Second)),
+            "TIME"
+        );
+        assert_eq!(
+            arrow_type_to_sql(&DataType::Time64(arrow::datatypes::TimeUnit::Microsecond)),
+            "TIME"
+        );
+        assert_eq!(
+            arrow_type_to_sql(&DataType::Interval(
+                arrow::datatypes::IntervalUnit::MonthDayNano
+            )),
+            "INTERVAL"
         );
     }
 }

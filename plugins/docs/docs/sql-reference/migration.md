@@ -4,7 +4,24 @@ sidebar_position: 8
 
 # migration — Schema Migrations
 
-The `migration` extension provides SQL schema migration management with version tracking, checksum verification, and multi-database support (trexsql and PostgreSQL).
+The `migration` extension is a versioned schema-migration runner. It scans a
+directory of `V<n>__<name>.sql` files, computes integrity checksums, and
+applies pending migrations in order — both to Trex catalogs and to
+PostgreSQL databases attached to the engine. The Trex binary uses this
+extension at startup to bring the core schema up to the latest version
+(`SCHEMA_DIR` env var → `trex_migration_run_schema`).
+
+It is **distinct** from the plugin migration runner described in
+[Plugins → Migration Plugins](../plugins/migration-plugins). The plugin
+runner is a Deno/Node loader living in `core/server/plugin/migration.ts`
+that handles per-plugin migrations against `DATABASE_URL`. This SQL
+extension is a more general migration tool callable from any context.
+
+| Use this extension when… | Use the plugin runner when… |
+|--------------------------|----------------------------|
+| You want to run migrations from SQL or a Rust binary | You're shipping a plugin with `trex.migrations` config |
+| Targets a Trex catalog or an attached database | Targets only `DATABASE_URL` |
+| Needs `refinery_schema_history` checksum integrity | Tracks versions only (no checksums) |
 
 ## Concepts
 
@@ -54,6 +71,32 @@ The `_schema` variants support both trexsql and PostgreSQL databases:
 ### Transaction Safety
 
 Each migration runs in a transaction where supported. trexsql supports transactional DDL, so failed migrations are rolled back. PostgreSQL migrations also run transactionally.
+
+## Typical workflow
+
+```sql
+-- Inspect what's there before running anything
+SELECT * FROM trex_migration_status('/usr/src/core/schema');
+
+-- Apply pending migrations to the default Trex catalog (memory)
+SELECT * FROM trex_migration_run('/usr/src/core/schema');
+
+-- Or scope to a specific schema/database (typical for plugins or
+-- multi-tenant setups)
+SELECT * FROM trex_migration_run_schema(
+  '/path/to/migrations',
+  'trex',          -- target schema
+  '_config'        -- target database (PostgreSQL when '_config')
+);
+
+-- Check status across all migrations
+SELECT version, name, status, applied_on
+  FROM trex_migration_status_schema('/path/to/migrations', 'trex', '_config');
+```
+
+For the four common error cases (no files, duplicate version, checksum
+mismatch, SQL failure), see [Error Scenarios](#error-scenarios) at the
+bottom of this page.
 
 ## Functions
 

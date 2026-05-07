@@ -7,7 +7,13 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [profile.release]
-lto = true
+# NOTE: lto=true + this dep graph (datafusion + arrow + tonic + ring +
+# aws-lc-sys) OOM-kills the linker on memory-constrained machines. The
+# federated TIMESTAMPTZ fix agent dropped to lto=false / codegen-units=16
+# for the same reason. Restore lto=true once we have a build host with
+# enough RAM headroom.
+lto = false
+codegen-units = 16
 strip = true
 
 [[example]]
@@ -32,7 +38,10 @@ arrow-ipc = "57"
 tonic = { version = "0.14", features = ["tls-ring"] }
 prost = "0.14"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "time"] }
-rustls = "0.23"
+# Pinned to control feature set: rustls 0.23+ requires explicit CryptoProvider.
+# Pin to `ring` only (not aws-lc-rs) to match the explicit ring install in
+# flight_server.rs and flight_client.rs and avoid auto-selection panics.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-pemfile = "2"
 tokio-rustls = "0.26"
 serde = { version = "1", features = ["derive"] }

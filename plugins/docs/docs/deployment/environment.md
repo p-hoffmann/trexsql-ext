@@ -4,59 +4,83 @@ sidebar_position: 2
 
 # Environment Variables
 
-## trex Binary
+## `trex` Binary
+
+Read by `src/main.rs` when starting the analytical engine.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DATABASE_PATH` | `:memory:` | trexsql database file path |
-| `EXTENSION_DIR` | `/usr/lib/trexsql/extensions` | Directory to scan for `.trex` and `.duckdb_extension` files |
-| `STARTUP_SQL` | — | SQL to execute after loading extensions |
+| `DATABASE_PATH` | `:memory:` | Path to the on-disk Trex catalog. `:memory:` for ephemeral. |
+| `EXTENSION_DIR` | `/usr/lib/trexsql/extensions` | Directory scanned for `*.trex` and `*.duckdb_extension` files. The `pool` extension is loaded first; the rest in lexical order. |
+| `DATABASE_URL` | — | Postgres URL attached as `_config` so plugins can read configuration. Also consumed by the core server. |
+| `SCHEMA_DIR` | — | Directory of core SQL schema migrations applied on startup via `trex_migration_run_schema`. |
+| `SWARM_CONFIG` | — | JSON describing services to start after extensions load. See below. |
+| `SWARM_NODE` | — | Key into `SWARM_CONFIG.nodes` identifying this node. |
+
+`STARTUP_SQL` is **no longer used** — service startup is driven by `SWARM_CONFIG`.
 
 ## Core Server
 
+Read by `core/server/config.ts`, `core/server/index.ts`, `core/server/db.ts`, and the
+plugin loaders.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DATABASE_URL` | — | PostgreSQL connection string |
-| `BASE_PATH` | `/trex` | URL base path for all routes |
-| `SCHEMA_DIR` | — | Path to PostgreSQL schema migration files |
-| `PORT` | `8000` | Server listen port |
+| `BASE_PATH` | `/trex` | URL prefix for every server-side route. Trailing slashes are stripped. |
+| `PLUGINS_BASE_PATH` | `/plugins` | URL prefix for plugin-mounted routes. |
+| `BETTER_AUTH_URL` | `http://localhost:8000` | Public URL used for auth callbacks and CLI login. |
+| `BETTER_AUTH_SECRET` | — | JWT signing secret. Must be ≥ 32 chars. |
+| `BETTER_AUTH_TRUSTED_ORIGINS` | `http://localhost:5173` | Comma-separated CORS-trusted origins. |
+| `EXTERNAL_DB_URL` | — | Externally-reachable Postgres URL. Preferred when generating CLI/pooler config. |
+| `POOLER_URL` | — | Connection-pooler URL (Supavisor / pgBouncer). Falls back to `DATABASE_URL`. |
+| `DB_TLS_CA_PATH` | — | PEM CA bundle for Postgres TLS (sets `ssl.ca`). |
+| `DB_TLS_INSECURE` | `false` | When `true`, sets `rejectUnauthorized: false` on the Postgres TLS connection. |
+| `PG_SCHEMA` | `trex` | Comma-separated list of schemas exposed via PostGraphile. |
+| `ENABLE_GRAPHIQL` | `false` | Enables `${BASE_PATH}/graphiql`. |
+| `FUNCTIONS_DIR` | `./functions` | Directory scanned for built-in edge functions. |
+| `DEVX_WORKSPACE_DIR` | `/tmp/devx-workspaces` | Workspace root for the devx plugin. |
+| `TREX_WEB_NAV_EXTRA` | — | JSON array of extra nav entries injected into the web UI. |
+| `ADMIN_EMAIL` | — | Email auto-promoted to `admin` on registration. |
+| `TREX_INITIAL_API_KEY_NAME` | — | Bootstrap API key issued on first start. |
 
 ## Authentication
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BETTER_AUTH_SECRET` | — | Session signing secret (min 32 characters) |
-| `BETTER_AUTH_URL` | `http://localhost:8000` | Public URL for auth callbacks |
-| `BETTER_AUTH_TRUSTED_ORIGINS` | `http://localhost:5173` | Comma-separated trusted origins for CORS |
-| `ADMIN_EMAIL` | — | Email address auto-promoted to admin |
-| `TREX_INITIAL_API_KEY_NAME` | — | Bootstrap API key name for initial setup |
-
-## Social Providers
-
 | Variable | Description |
 |----------|-------------|
-| `GOOGLE_CLIENT_ID` | Google OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
-| `GITHUB_CLIENT_ID` | GitHub OAuth client ID |
-| `GITHUB_CLIENT_SECRET` | GitHub OAuth client secret |
-| `MICROSOFT_CLIENT_ID` | Microsoft OAuth client ID |
-| `MICROSOFT_CLIENT_SECRET` | Microsoft OAuth client secret |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth. |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub OAuth. |
+| `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` | Microsoft OAuth. |
+
+Database-driven SSO providers configured via `trex.sso_provider` take precedence
+over env vars. Apple is supported via DB-driven config only.
 
 ## Plugins
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PLUGINS_PATH` | `./plugins` | Plugin installation directory |
-| `PLUGINS_DEV_PATH` | `./plugins-dev` | Development plugins (NODE_ENV=development only) |
-| `PLUGINS_BASE_PATH` | `/plugins` | URL path prefix for plugin routes |
-| `PLUGINS_INFORMATION_URL` | — | Package feed URL for plugin discovery |
-| `TPM_REGISTRY_URL` | — | NPM registry URL for plugin installation |
-| `PLUGINS_IMAGE_TAG` | — | Docker image tag appended to flow plugins |
-| `PUBLIC_FQDN` | — | Public FQDN for `$$FQDN$$` substitution in UI plugins |
+| `PLUGINS_PATH` | `./plugins` | Production plugin directory. |
+| `PLUGINS_DEV_PATH` | `./plugins-dev` | Dev plugin directory. Active only when `NODE_ENV=development`. |
+| `PLUGINS_BASE_PATH` | `/plugins` | URL prefix for plugin routes. |
+| `PLUGINS_INFORMATION_URL` | — | Package feed URL for plugin discovery (Azure Artifacts feed in the default compose). |
+| `TPM_REGISTRY_URL` | — | NPM registry URL for plugin install via `tpm`. |
+| `PLUGINS_PULL_POLICY` | `IfNotPresent` | Container image pull policy for flow plugins (Prefect deployments). |
+| `PLUGINS_FLOW_CUSTOM_REPO_IMAGE_CONFIG` | `{}` | JSON `{ current, new }` for rewriting flow image registry hosts. |
+| `PLUGINS_IMAGE_TAG` | `latest` | Tag appended to flow plugin images. |
+| `PUBLIC_FQDN` | — | Substituted for `$$FQDN$$` in UI plugin config. |
 
-## Cluster (SWARM_CONFIG)
+## PostgREST Proxy
 
-The `SWARM_CONFIG` environment variable is a JSON object controlling cluster initialization:
+| Variable | Description |
+|----------|-------------|
+| `POSTGREST_HOST` | Internal hostname of the PostgREST service. |
+| `POSTGREST_PORT` | PostgREST port (typically `3000`). |
+
+These configure the reverse proxy at `${BASE_PATH}/rest/v1/*`.
+
+## Cluster (`SWARM_CONFIG`)
+
+`SWARM_CONFIG` is a JSON object that drives service startup. The default compose
+runs only `trexas` (the HTTP server) and `pgwire`:
 
 ```json
 {
@@ -65,22 +89,51 @@ The `SWARM_CONFIG` environment variable is a JSON object controlling cluster ini
     "local": {
       "gossip_addr": "0.0.0.0:4200",
       "extensions": [
-        { "name": "trexas", "config": { "host": "0.0.0.0", "port": 8001 } },
-        { "name": "flight", "config": { "host": "0.0.0.0", "port": 8815 } },
-        { "name": "pgwire", "config": { "host": "0.0.0.0", "port": 5432 } }
+        {
+          "name": "trexas",
+          "config": {
+            "host": "0.0.0.0",
+            "port": 8001,
+            "main_service_path": "/usr/src/core/server",
+            "event_worker_path": "/usr/src/core/event",
+            "tls_port": 8000,
+            "tls_cert_path": "/usr/src/server.crt",
+            "tls_key_path": "/usr/src/server.key"
+          }
+        },
+        {
+          "name": "pgwire",
+          "config": { "host": "0.0.0.0", "port": 5432 }
+        }
       ]
     }
   }
 }
 ```
 
+Add a `flight` extension entry to enable Arrow Flight SQL on multi-node deployments.
+
 | Variable | Description |
 |----------|-------------|
-| `SWARM_CONFIG` | JSON cluster configuration |
-| `SWARM_NODE` | Node name within the cluster config |
+| `SWARM_CONFIG` | Cluster JSON (above). |
+| `SWARM_NODE` | Selects the node within `SWARM_CONFIG.nodes`. |
 
 ## Flows (Prefect)
 
-| Variable | Description |
-|----------|-------------|
-| `PREFECT_API_URL` | Prefect API URL for flow deployments |
+Read by `core/server/plugin/flow.ts` when registering flow-plugin deployments.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PREFECT_API_URL` | — | Prefect API base URL. |
+| `PREFECT_POOL` | `default` | Worker pool name to deploy into. |
+| `PREFECT_DOCKER_NETWORK` | — | Docker network injected into deployment job variables. |
+| `PREFECT_DOCKER_VOLUMES` | `[]` | JSON array of volume mounts for deployment workers. |
+| `PREFECT_HEALTH_CHECK` | — | Optional readiness probe URL polled before flow registration. |
+
+## Cloud Deployments
+
+The `deploy/` directory contains Pulumi stacks for AWS ECS Fargate and Azure
+Container Apps. Stack-level configuration (image tag, DB URL, TLS certificates,
+auth secrets) lives in the `Pulumi.<stack>.yaml` files; runtime env vars listed
+above are still required and are populated by Pulumi into the container task
+definition. See [`deploy/README.md`](https://github.com/p-hoffmann/trexsql/tree/main/deploy).

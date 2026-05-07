@@ -32,6 +32,13 @@ fn active_session() -> Option<u64> {
     ACTIVE_SESSION.with(|c| c.get())
 }
 
+/// Read-only public accessor for the thread-local active session id.
+/// Used by sibling modules (e.g. `freshness`) that need to know whether
+/// to lease their own pool session or piggy-back on an existing one.
+pub fn active_session_public() -> Option<u64> {
+    active_session()
+}
+
 pub fn execute_sql(sql: &str) -> Result<(), Box<dyn Error>> {
     if let Some(sid) = active_session() {
         trex_pool_client::session_execute(sid, sql)

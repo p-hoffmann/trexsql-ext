@@ -9,7 +9,7 @@ sudo apt-get install -y build-essential cmake python3 python3-pip pkg-config lib
 export DUCKDB_VERSION=v1.3.2
 echo "Building extension..."
 make configure
-make
+make release
 
 echo "Moving extension binary..."
 mv build/release/extension/*/*.trex .

@@ -32,6 +32,10 @@ struct ModelConfig {
     bool use_mlock = false;
     bool embeddings = false;
     bool memory_f16 = true;
+    // Pooling type for embedding models. -1 = LLAMA_POOLING_TYPE_UNSPECIFIED,
+    // which causes llama.cpp to pick the architecture's default (CLS for BERT,
+    // MEAN for nomic-embed, etc.). 0 = NONE (per-token, used by decoder LLMs).
+    int pooling_type = -1;
 };
 
 struct ChatMessage {

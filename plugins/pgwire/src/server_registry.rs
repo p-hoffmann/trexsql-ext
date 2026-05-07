@@ -4,7 +4,10 @@ use std::thread::JoinHandle;
 use tokio::sync::oneshot;
 
 pub struct ServerHandle {
-    #[allow(dead_code)] // Kept for potential graceful shutdown
+    // Joined in `ServerRegistry::stop_server` to ensure the OS releases the
+    // listener socket before the call returns. Without the join, a subsequent
+    // start on the same host:port races the still-shutting-down thread and
+    // hits EADDRINUSE.
     pub thread_handle: JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>,
     pub shutdown_tx: oneshot::Sender<()>,
     pub start_time: std::time::SystemTime,
@@ -85,15 +88,30 @@ impl ServerRegistry {
     }
 
     pub fn stop_server(&self, host: &str, port: u16) -> Result<String, String> {
-        let mut servers = self.servers.lock().unwrap();
-        let key = Self::server_key(host, port);
-        
-        if let Some(handle) = servers.remove(&key) {
-            let _ = handle.shutdown_tx.send(());
-            Ok(format!("Shutdown signal sent to server {}:{}", host, port))
-        } else {
-            Err(format!("No server running on {}:{}", host, port))
+        // Remove the handle while holding the lock briefly so that a
+        // concurrent caller can't observe a half-stopped server, then drop
+        // the lock before joining the thread (joining can block).
+        let handle = {
+            let mut servers = self.servers.lock().unwrap();
+            let key = Self::server_key(host, port);
+            match servers.remove(&key) {
+                Some(h) => h,
+                None => return Err(format!("No server running on {}:{}", host, port)),
+            }
+        };
+
+        // Send shutdown signal — the server thread breaks its accept loop on this.
+        let _ = handle.shutdown_tx.send(());
+
+        // Wait for the server thread to actually exit so that the port is
+        // released before we return. Without this, an immediate restart on
+        // the same port can race with the previous bind and hit EADDRINUSE.
+        match handle.thread_handle.join() {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => eprintln!("[pgwire] server thread exited with error: {}", e),
+            Err(_) => eprintln!("[pgwire] server thread panicked during shutdown"),
         }
+        Ok(format!("Stopped pgwire server on {}:{}", host, port))
     }
 
     pub fn get_servers_info(&self) -> Vec<(String, u16, u64, bool)> {

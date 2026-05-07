@@ -83,7 +83,13 @@ RUN ldconfig
 WORKDIR /usr/src
 
 # Install extensions via npm
-COPY package.json package-lock.json .npmrc deno.json ./
+COPY package.json package-lock.json .npmrc ./
+# Runtime deno.json without the parent workspace declaration — Deno v2.7+
+# rejects bootstrapping config files inside the workspace tree that aren't
+# declared members, which breaks every function-worker plugin loaded from
+# /usr/src/plugins-dev. The repo-root deno.json keeps the workspace key for
+# local dev/CI builds; only the runtime image strips it.
+RUN echo '{"nodeModulesDir":"auto"}' > deno.json
 RUN npm install
 
 # Collect extension files from node_modules into extensions dir

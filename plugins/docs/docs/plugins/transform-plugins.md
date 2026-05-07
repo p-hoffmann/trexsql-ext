@@ -58,11 +58,16 @@ sequenceDiagram
 
 ## HTTP Endpoints
 
-After a successful `transformRun`, each model with an `endpoint_path` is available at:
+After a successful `transformRun`, each model with an `endpoint_path` is mounted at:
 
 ```
-GET /trex/api/plugins/transform/{pluginName}/{path}?format=json|csv|arrow
+GET ${PLUGINS_BASE_PATH}/transform/{pluginName}{endpoint_path}?format=json|csv|arrow
 ```
+
+`PLUGINS_BASE_PATH` defaults to `/plugins`, so with the default config a model with
+`endpoint_path = "/orders"` in plugin `@trex/analytics` is reachable at
+`/plugins/transform/analytics/orders`. Endpoints are registered via the parent
+Express app — they are not namespaced under `${BASE_PATH}` (`/trex`).
 
 ### Output Formats
 
