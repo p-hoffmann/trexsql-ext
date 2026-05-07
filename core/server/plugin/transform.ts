@@ -5,6 +5,7 @@ import { pluginAuthz } from "../middleware/plugin-authz.ts";
 import { ROLE_SCOPES, REQUIRED_URL_SCOPES } from "./function.ts";
 import { PLUGINS_BASE_PATH } from "../config.ts";
 import { apiLimiter } from "../middleware/rate-limit.ts";
+import { poolSsl } from "../lib/db-ssl.ts";
 import { tableFromJSON, tableToIPC } from "npm:apache-arrow@^21.1.0";
 
 declare const Trex: any;
@@ -37,8 +38,7 @@ function getPgPool(): InstanceType<typeof Pool> | null {
   if (!pgPool) {
     const databaseUrl = Deno.env.get("DATABASE_URL");
     if (!databaseUrl) return null;
-    const sslRequired = databaseUrl.includes("sslmode=require") || databaseUrl.includes("sslmode=prefer");
-    pgPool = new Pool({ connectionString: databaseUrl, ...(sslRequired && { ssl: { rejectUnauthorized: false } }) });
+    pgPool = new Pool({ connectionString: databaseUrl, ...poolSsl(databaseUrl) });
   }
   return pgPool;
 }

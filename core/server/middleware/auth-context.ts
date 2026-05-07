@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { Pool } from "pg";
 import { verifyAccessToken } from "../auth/jwt.ts";
+import { poolSsl } from "../lib/db-ssl.ts";
 
 let pool: InstanceType<typeof Pool> | null = null;
 
@@ -8,11 +9,10 @@ function getPool(): InstanceType<typeof Pool> {
   if (!pool) {
     const databaseUrl = Deno.env.get("DATABASE_URL");
     if (databaseUrl) {
-      const needsSsl = databaseUrl.includes("sslmode=require") || databaseUrl.includes("sslmode=prefer");
       pool = new Pool({
         connectionString: databaseUrl,
         options: "-c search_path=trex,public",
-        ...(needsSsl && { ssl: { rejectUnauthorized: false } }),
+        ...poolSsl(databaseUrl),
       });
     }
   }
@@ -25,9 +25,12 @@ export async function authContext(
   next: NextFunction,
 ) {
   try {
-    // 1. Check Bearer token, ?token= query param, or sb-access-token cookie
+    // 1. Check Bearer token (Authorization header) or sb-access-token cookie.
+    // The ?token= query parameter is intentionally NOT accepted: URLs leak
+    // through access logs, browser history, and Referer headers, so any
+    // bearer credential in the query string is a credential disclosure
+    // vector. Use the Authorization header or the sb-access-token cookie.
     const authHeader = req.headers.authorization;
-    const queryToken = req.query?.token as string | undefined;
     const cookieToken = req.headers.cookie
       ?.split(";")
       .map((c) => c.trim())
@@ -35,13 +38,13 @@ export async function authContext(
       ?.split("=")
       .slice(1)
       .join("=");
-    const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : (queryToken || cookieToken);
+    const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : cookieToken;
     if (bearerToken) {
       const token = bearerToken;
       const claims = await verifyAccessToken(token);
       // Long-lived service_role / anon keys must only be sent via the `apikey`
       // header. Accepting them in the user-bearer channels (Authorization
-      // Bearer, ?token, sb-access-token cookie) would let any holder of the
+      // Bearer, sb-access-token cookie) would let any holder of the
       // service_role key impersonate admin from a browser context or via a
       // leaked URL. Fall through to the apikey-header branch instead.
       if (claims && claims.role !== "service_role" && claims.role !== "anon") {

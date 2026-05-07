@@ -2,6 +2,7 @@ import { betterAuth } from "better-auth";
 import { admin, jwt, oidcProvider } from "better-auth/plugins";
 import { Pool } from "pg";
 import { BASE_PATH } from "./config.ts";
+import { poolSsl } from "./lib/db-ssl.ts";
 
 const databaseUrl = Deno.env.get("DATABASE_URL");
 if (!databaseUrl) {
@@ -13,12 +14,10 @@ if (!authSecret) {
   throw new Error("BETTER_AUTH_SECRET environment variable is required");
 }
 
-const needsSsl = databaseUrl.includes("sslmode=require") || databaseUrl.includes("sslmode=prefer");
-
 export const pool = new Pool({
   connectionString: databaseUrl,
   options: "-c search_path=trex,public",
-  ...(needsSsl && { ssl: { rejectUnauthorized: false } }),
+  ...poolSsl(databaseUrl),
 });
 
 function getBaseConfig() {

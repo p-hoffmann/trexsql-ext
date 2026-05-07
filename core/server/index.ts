@@ -487,8 +487,8 @@ try {
   const databaseUrl = Deno.env.get("DATABASE_URL");
   if (schemaDir && databaseUrl) {
     const { Pool } = await import("pg");
-    const sslRequired = databaseUrl.includes("sslmode=require") || databaseUrl.includes("sslmode=prefer");
-    const migrationPool = new Pool({ connectionString: databaseUrl, ...(sslRequired && { ssl: { rejectUnauthorized: false } }) });
+    const { poolSsl } = await import("./lib/db-ssl.ts");
+    const migrationPool = new Pool({ connectionString: databaseUrl, ...poolSsl(databaseUrl) });
     try {
       // Ensure trex schema exists
       await migrationPool.query("CREATE SCHEMA IF NOT EXISTS trex");
@@ -547,12 +547,73 @@ try {
 }
 
 
+// One-shot bootstrap: encrypt any database_credential rows that still hold a
+// plaintext password. Runs after core migrations so password_encrypted exists.
+try {
+  const tableCheck = await pool.query(
+    `SELECT column_name FROM information_schema.columns
+     WHERE table_schema = 'trex' AND table_name = 'database_credential'
+       AND column_name = 'password_encrypted'`,
+  );
+  if (tableCheck.rows.length > 0) {
+    const stale = await pool.query(
+      `SELECT id, password FROM trex.database_credential
+       WHERE password_encrypted IS NULL AND password IS NOT NULL`,
+    );
+    if (stale.rows.length > 0) {
+      const { encryptSecret } = await import("./auth/crypto.ts");
+      let migrated = 0;
+      for (const row of stale.rows) {
+        try {
+          const ct = await encryptSecret(row.password);
+          await pool.query(
+            `UPDATE trex.database_credential
+             SET password_encrypted = $1, password = NULL, "updatedAt" = NOW()
+             WHERE id = $2`,
+            [ct, row.id],
+          );
+          migrated++;
+        } catch (rowErr) {
+          console.error(`[bootstrap] failed to encrypt credential ${row.id}:`, rowErr);
+        }
+      }
+      console.log(`[bootstrap] Encrypted ${migrated}/${stale.rows.length} legacy database_credential password(s)`);
+    }
+  }
+} catch (err) {
+  console.error("[bootstrap] database_credential encryption migration failed:", err);
+}
+
 // Run plugin migrations after plugin discovery
 try {
   const { runAllPluginMigrations } = await import("./plugin/migration.ts");
   await runAllPluginMigrations();
 } catch (err) {
   console.error("Plugin migration execution failed:", err);
+}
+
+// Admin bootstrap banner — warn if no admin user and no ADMIN_EMAIL is set.
+try {
+  const adminCount = await pool.query(
+    `SELECT COUNT(*)::INTEGER AS n FROM trex."user" WHERE role = 'admin' AND ("deletedAt" IS NULL)`,
+  );
+  const hasAdmin = (adminCount.rows[0]?.n ?? 0) > 0;
+  const adminEmail = Deno.env.get("ADMIN_EMAIL");
+  if (!hasAdmin && !adminEmail) {
+    const banner = [
+      "",
+      "================================================================================",
+      "  TREX BOOTSTRAP NOTICE: no admin user is configured.",
+      "  Either set ADMIN_EMAIL=<your@email> in the environment so the next sign-up",
+      "  is promoted to admin, or sign up the first account to bootstrap admin",
+      "  via the first-user-promotion hook.",
+      "================================================================================",
+      "",
+    ].join("\n");
+    console.warn(banner);
+  }
+} catch (err) {
+  console.error("[bootstrap] admin presence check failed:", err);
 }
 
 // Auto-create roles declared by plugins in the PostgreSQL role table

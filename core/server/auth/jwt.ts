@@ -56,12 +56,42 @@ async function hmacVerify(
   return crypto.subtle.verify("HMAC", key, signature, encoder.encode(data));
 }
 
-export function getJwtSecret(): string {
-  return (
+/**
+ * Return all JWT signing keys, in priority order.
+ * The first entry is the active key (used for signing); all entries are
+ * accepted for verification.
+ *
+ * Keys are sourced from:
+ *   - BETTER_AUTH_SECRETS (comma-separated; first entry is active)
+ *   - BETTER_AUTH_SECRET / AUTH_JWT_SECRET (single secret, current behavior)
+ *
+ * If both are set, BETTER_AUTH_SECRETS entries come first, then any
+ * single-secret value not already present. This lets operators define a
+ * rotation list without having to also clear the legacy single-secret env
+ * var. See plugins/docs/docs/operations/secret-rotation.md.
+ */
+export function getJwtSecrets(): string[] {
+  const list = (Deno.env.get("BETTER_AUTH_SECRETS") || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  const single =
     Deno.env.get("AUTH_JWT_SECRET") ||
     Deno.env.get("BETTER_AUTH_SECRET") ||
-    ""
-  );
+    "";
+  if (single && !list.includes(single)) {
+    list.push(single);
+  }
+  return list;
+}
+
+/**
+ * Return the active signing key (first in BETTER_AUTH_SECRETS, or
+ * BETTER_AUTH_SECRET if the list is unset). Empty string if neither is set.
+ */
+export function getJwtSecret(): string {
+  const secrets = getJwtSecrets();
+  return secrets[0] || "";
 }
 
 export interface AccessTokenClaims {
@@ -125,8 +155,8 @@ export async function signAccessToken(
 export async function verifyAccessToken(
   token: string,
 ): Promise<AccessTokenClaims | null> {
-  const secret = getJwtSecret();
-  if (!secret || !token) return null;
+  const secrets = getJwtSecrets();
+  if (secrets.length === 0 || !token) return null;
 
   const parts = token.split(".");
   if (parts.length !== 3) return null;
@@ -135,7 +165,18 @@ export async function verifyAccessToken(
   const data = `${header}.${body}`;
 
   try {
-    const valid = await hmacVerify(data, base64urlDecodeBytes(sig), secret);
+    const sigBytes = base64urlDecodeBytes(sig);
+
+    // Try the active key first, then each older key in turn. Any successful
+    // verification accepts the token. This supports overlap windows during
+    // signing-key rotation. See operations/secret-rotation.md.
+    let valid = false;
+    for (const secret of secrets) {
+      if (await hmacVerify(data, sigBytes, secret)) {
+        valid = true;
+        break;
+      }
+    }
     if (!valid) return null;
 
     const payload = JSON.parse(base64urlDecode(body));
@@ -192,4 +233,44 @@ export async function generateServiceRoleKey(): Promise<string> {
   const data = `${header}.${body}`;
   const sig = await hmacSign(data, secret);
   return `${data}.${base64url(sig)}`;
+}
+
+// Lazy import inside the function bodies to avoid a circular import via
+// ../db.ts (which imports config); we want jwt.ts to stay leaf-level.
+
+/**
+ * Generate a new anon key signed with the active signing key, persist it
+ * to trex.setting under 'auth.anonKey', and return the new value.
+ *
+ * All clients holding the previous anon key will be rejected on next use.
+ * See plugins/docs/docs/operations/secret-rotation.md.
+ */
+export async function rotateAnonKey(): Promise<string> {
+  const { pool } = await import("../db.ts");
+  const newKey = await generateAnonKey();
+  await pool.query(
+    `INSERT INTO trex.setting (key, value) VALUES ('auth.anonKey', $1::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+    [JSON.stringify(newKey)],
+  );
+  return newKey;
+}
+
+/**
+ * Generate a new service_role key signed with the active signing key,
+ * persist it to trex.setting under 'auth.serviceRoleKey', and return the
+ * new value.
+ *
+ * All clients holding the previous service_role key will be rejected on
+ * next use. See plugins/docs/docs/operations/secret-rotation.md.
+ */
+export async function rotateServiceRoleKey(): Promise<string> {
+  const { pool } = await import("../db.ts");
+  const newKey = await generateServiceRoleKey();
+  await pool.query(
+    `INSERT INTO trex.setting (key, value) VALUES ('auth.serviceRoleKey', $1::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+    [JSON.stringify(newKey)],
+  );
+  return newKey;
 }

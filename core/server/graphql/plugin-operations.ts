@@ -7,6 +7,7 @@ import { pool as authPool } from "../db.ts";
 import { REGISTERED_FUNCTIONS, ROLE_SCOPES, REQUIRED_URL_SCOPES } from "../plugin/function.ts";
 import { REGISTERED_UI_ROUTES, getPluginsJson } from "../plugin/ui.ts";
 import { REGISTERED_FLOWS } from "../plugin/flow.ts";
+import { rotateAnonKey, rotateServiceRoleKey } from "../auth/jwt.ts";
 
 declare const Trex: any;
 declare const Deno: any;
@@ -292,6 +293,8 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
         transformSeed(pluginName: String!, destDb: String!, destSchema: String!): [TransformSeedResult!]!
         transformTest(pluginName: String!, destDb: String!, destSchema: String!, sourceDb: String!, sourceSchema: String!): [TransformTestResult!]!
         loadExtension(extensionName: String!): ServiceActionResult!
+        rotateAnonKey: String!
+        rotateServiceRoleKey: String!
       }
     `,
     resolvers: {
@@ -1309,6 +1312,22 @@ export const pluginOperationsPlugin = makeExtendSchemaPlugin(() => ({
             console.error("loadExtension error:", err);
             return { success: false, message: null, error: err.message || String(err) };
           }
+        },
+
+        async rotateAnonKey(_parent: any, _args: any, context: any) {
+          assertAdmin(context);
+          // Returns the freshly issued anon key, signed with the active JWT
+          // signing key. Holders of the previous anon key are immediately
+          // invalidated. See operations/secret-rotation.md.
+          return await rotateAnonKey();
+        },
+
+        async rotateServiceRoleKey(_parent: any, _args: any, context: any) {
+          assertAdmin(context);
+          // Returns the freshly issued service_role key, signed with the
+          // active JWT signing key. Holders of the previous service_role
+          // key are immediately invalidated.
+          return await rotateServiceRoleKey();
         },
       },
     },
