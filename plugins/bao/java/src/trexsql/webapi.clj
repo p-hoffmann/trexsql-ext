@@ -627,6 +627,96 @@
               (log/error e "Failed to count patients")
               (internal-error (.getMessage e)))))))))
 
+(defn- count-inclusion-handler
+  [{:keys [db path-params body-params trex-config]}]
+  (let [source-key (:source-key path-params)
+        source (find-source-by-key source-key)]
+    (if-not source
+      (not-found (str "Source not found: " source-key))
+      (let [{:keys [expression]} body-params
+            expression-str (if (string? expression) expression (json/write-str expression))
+            cdm-schema (get-cdm-schema source)
+            cache-path (or (:cache-path trex-config) (get-cache-path-from-config))
+            start-time (System/currentTimeMillis)]
+        (cond
+          (or (nil? expression) (and (string? expression) (str/blank? expression)))
+          (bad-request "expression is required")
+
+          (str/blank? cdm-schema)
+          (bad-request "CDM schema not configured for this source")
+
+          :else
+          (try
+            (when-not (db/is-attached? db source-key)
+              (log/info (format "Attaching cache for %s from %s" source-key cache-path))
+              (db/attach-cache-file! db source-key cache-path))
+            (let [qualified-cdm (str source-key "." cdm-schema)
+                  qualified-results (str source-key "." cdm-schema)
+                  cohort-id 999999
+                  cohort-tbl (str qualified-results ".temp_inc_cohort")
+                  inc-tbl (str qualified-results ".temp_inc_inclusion")
+                  inc-result-tbl (str qualified-results ".temp_inc_inclusion_result")
+                  inc-stats-tbl (str qualified-results ".temp_inc_inclusion_stats")
+                  summary-tbl (str qualified-results ".temp_inc_summary_stats")
+                  options-map (build-circe-options qualified-cdm qualified-results cohort-id cohort-tbl true)
+                  clj-options (circe/java-map->circe-options options-map)
+                  temp-tables [cohort-tbl inc-tbl inc-result-tbl inc-stats-tbl summary-tbl]]
+              (try
+                (doseq [t temp-tables]
+                  (db/execute! db (format "DROP TABLE IF EXISTS %s" t)))
+                (db/execute! db (format "CREATE TABLE %s (cohort_definition_id INT, subject_id BIGINT, cohort_start_date DATE, cohort_end_date DATE)" cohort-tbl))
+                (db/execute! db (format "CREATE TABLE %s (cohort_definition_id INT, rule_sequence INT, name VARCHAR, description VARCHAR)" inc-tbl))
+                (db/execute! db (format "CREATE TABLE %s (cohort_definition_id INT, inclusion_rule_mask BIGINT, person_count BIGINT, mode_id INT)" inc-result-tbl))
+                (db/execute! db (format "CREATE TABLE %s (cohort_definition_id INT, rule_sequence INT, person_count BIGINT, gain_count BIGINT, person_total BIGINT, mode_id INT)" inc-stats-tbl))
+                (db/execute! db (format "CREATE TABLE %s (cohort_definition_id INT, base_count BIGINT, final_count BIGINT, mode_id INT)" summary-tbl))
+
+                (circe/execute-circe db expression-str clj-options)
+
+                (let [rule-rows (db/query db (format "SELECT rule_sequence, name FROM %s WHERE cohort_definition_id = %d ORDER BY rule_sequence"
+                                                     inc-tbl cohort-id))
+                      mask-rows (db/query db (format "SELECT inclusion_rule_mask AS mask, person_count AS n FROM %s WHERE cohort_definition_id = %d AND mode_id = 1"
+                                                     inc-result-tbl cohort-id))
+                      summary-rows (db/query db (format "SELECT base_count, final_count FROM %s WHERE cohort_definition_id = %d AND mode_id = 1"
+                                                        summary-tbl cohort-id))
+                      total-rows (db/query db (format "SELECT COUNT(DISTINCT person_id) AS cnt FROM %s.person" qualified-cdm))
+                      total-count (or (some-> total-rows first (.get "cnt")) 0)
+                      base-count (or (some-> summary-rows first (.get "base_count")) 0)
+                      final-count (or (some-> summary-rows first (.get "final_count")) 0)
+                      rule-count (count rule-rows)
+                      cumulative
+                      (mapv
+                        (fn [i]
+                          (reduce
+                            (fn [acc row]
+                              (let [mask (long (.get ^java.util.Map row "mask"))
+                                    n (long (.get ^java.util.Map row "n"))
+                                    bits-required (dec (bit-shift-left 1 (inc i)))]
+                                (if (= bits-required (bit-and mask bits-required))
+                                  (+ acc n)
+                                  acc)))
+                            0
+                            mask-rows))
+                        (range rule-count))
+                      rule-counts (vec (map-indexed
+                                         (fn [i row]
+                                           {:ruleIndex i
+                                            :ruleName (.get ^java.util.Map row "name")
+                                            :cumulativeCount (nth cumulative i 0)})
+                                         rule-rows))
+                      exec-time (- (System/currentTimeMillis) start-time)]
+                  (ok {:entryEventCount base-count
+                       :totalPatientCount total-count
+                       :finalCount final-count
+                       :ruleCounts rule-counts
+                       :executionTimeMs exec-time}))
+                (finally
+                  (doseq [t temp-tables]
+                    (try (db/execute! db (format "DROP TABLE IF EXISTS %s" t))
+                         (catch Exception _))))))
+            (catch Exception e
+              (log/error e "Failed to compute inclusion stats")
+              (internal-error (.getMessage e)))))))))
+
 (defn- pg-query
   "Execute a SQL query against PostgreSQL and return results as a vector of maps.
    Each map has string keys matching column names."
@@ -825,6 +915,7 @@
                :delete {:handler delete-cache-handler}}]
     ["/cache/status" {:get {:handler get-cache-status-handler}}]
     ["/cache/count" {:post {:handler count-patients-handler}}]
+    ["/cache/inclusion" {:post {:handler count-inclusion-handler}}]
     ["/cache/table1" {:post {:handler table1-handler}}]
     ["/cache/job" {:delete {:handler cancel-cache-job-handler}}]
     ["/circe/execute" {:post {:handler execute-circe-handler}}]
