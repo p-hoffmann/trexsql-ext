@@ -21,3 +21,10 @@
 	path = plugins/cli
 	url = https://github.com/p-hoffmann/cli.git
 	branch = develop
+[submodule "plugins/bao/phenotype-library"]
+	path = plugins/bao/phenotype-library
+	url = https://github.com/OHDSI/PhenotypeLibrary.git
+	branch = main
+[submodule "plugins/bao/book-of-ohdsi"]
+	path = plugins/bao/book-of-ohdsi
+	url = https://github.com/OHDSI/BookOfOHDSI-2ndEdition.git

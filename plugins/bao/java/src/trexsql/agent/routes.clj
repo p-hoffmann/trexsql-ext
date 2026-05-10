@@ -198,14 +198,22 @@
             ;; don't auto-stub anymore — the client's onToolCall will
             ;; addToolResult and the next POST drives the next turn.
             (when (= stop-reason :tool-use)
-              (doseq [{:keys [id name args]} tool-uses]
-                (when-not (tools/client-side-tool? name)
-                  (let [res (tools/dispatch-server-tool name args
-                                                       {:source-key (:sourceKey body)
-                                                        :request request})]
-                    (emit {:type "tool-output-available"
-                           :toolCallId id
-                           :output res})))))
+              ;; Server-side tools are independent (search_concepts,
+              ;; search_phenotypes, etc. — pure WebAPI lookups). Models
+              ;; routinely batch 3-6 of these in one assistant turn; running
+              ;; them in parallel cuts a typical turn from ~5 s to ~1 s.
+              (let [server-tools (filter #(not (tools/client-side-tool? (:name %))) tool-uses)
+                    ctx {:source-key (:sourceKey body) :request request}
+                    results (->> server-tools
+                                 (mapv (fn [{:keys [id name args]}]
+                                         (future
+                                           {:id id
+                                            :output (tools/dispatch-server-tool name args ctx)})))
+                                 (mapv deref))]
+                (doseq [{:keys [id output]} results]
+                  (emit {:type "tool-output-available"
+                         :toolCallId id
+                         :output output}))))
 
             (emit-finish emit
                          (case stop-reason

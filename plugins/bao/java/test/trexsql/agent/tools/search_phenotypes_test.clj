@@ -16,12 +16,20 @@
 (deftest local-csv-returns-hits-for-diabetes
   (with-redefs [http/get mock-http]
     (let [res (sp/run {:query "diabetes"} {})
-          hits (:results res)]
+          hits (:results res)
+          lib-hits (filter #(= "OHDSI Phenotype Library" (:source %)) hits)]
       (is (vector? hits))
-      ;; the bundled phenotype-library/Cohorts.csv ships ~1100 cohorts;
+      ;; the bundled phenotype-library/cohorts-index.edn ships ~1100 cohorts;
       ;; "diabetes" is well-represented so we expect at least one local hit
-      (is (some #(= "OHDSI Phenotype Library" (:source %)) hits)
-          (str "expected at least one OHDSI Phenotype Library hit, got: " hits)))))
+      (is (seq lib-hits)
+          (str "expected at least one OHDSI Phenotype Library hit, got: " hits))
+      (testing "library hits carry a circe-summary"
+        (let [h (first lib-hits)]
+          (is (number? (:cohort-id h)))
+          (is (map? (:circe-summary h)))
+          (is (contains? (:circe-summary h) :entry-domains))
+          (is (contains? (:circe-summary h) :n-concept-sets))
+          (is (contains? (:circe-summary h) :exit-strategy)))))))
 
 (deftest merges-three-sources
   (testing "results from all three sources flow through"
