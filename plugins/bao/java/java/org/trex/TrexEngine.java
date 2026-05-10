@@ -42,6 +42,7 @@ public interface TrexEngine extends Library {
     void trexsql_result_close(Pointer r);
 
     Pointer trexsql_appender_create(Pointer db, String schema, String table);
+    Pointer trexsql_appender_create_ext(Pointer db, String catalog, String schema, String table);
     int trexsql_appender_end_row(Pointer a);
     int trexsql_appender_append_null(Pointer a);
     int trexsql_appender_append_string(Pointer a, String val);
