@@ -5,13 +5,16 @@ import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 
 public interface TrexEngine extends Library {
-    // Pre-load libduckdb (transitive dependency of libtrexsql_engine) so the
-    // dynamic linker can resolve it when libtrexsql_engine.so is loaded.
-    // JNA extracts from classpath (linux-x86-64/libduckdb.so) and dlopen
-    // registers the SONAME (libduckdb.so.1.4).
+    // Pre-load libtrexsql (sole NEEDED dep of libtrexsql_engine, per
+    // `readelf -d libtrexsql_engine.so`) so the dynamic linker can
+    // resolve it when libtrexsql_engine.so is loaded. JNA extracts from
+    // classpath (linux-x86-64/libtrexsql.so) and dlopen registers the
+    // SONAME. We deliberately do NOT preload libduckdb — the engine
+    // exposes a libtrexsql ABI now and bao must remain free of any
+    // direct libduckdb dependency.
     class Loader {
         static {
-            Native.load("duckdb", Library.class);
+            Native.load("trexsql", Library.class);
         }
         static void ensure() {}
     }

@@ -32,6 +32,73 @@
    :standard    (or (:STANDARD_CONCEPT row) (:standardConcept row) (get row "STANDARD_CONCEPT"))
    :source      "webapi"})
 
+(defn- annotate-confidence
+  "Add per-result :confidence (:high|:medium|:low) and :flags vector based
+   on the full hit set. Flags surface concrete reasons Pythia should
+   verify before proposing — e.g. multiple vocabularies, parent/child
+   ambiguity, non-standard match, ICD↔SNOMED divergence."
+  [results query]
+  (let [n (count results)
+        vocabs (set (map :vocabulary results))
+        domains (set (map :domain results))
+        q (str/lower-case (str query))]
+    (mapv
+      (fn [r idx]
+        (let [name-lower (str/lower-case (str (:conceptName r)))
+              exact? (= name-lower q)
+              prefix? (or exact? (str/starts-with? name-lower q))
+              standard? (= "S" (str (:standard r)))
+              flags (cond-> []
+                      (not standard?)
+                      (conj "non-standard-concept")
+
+                      (and (> n 5) (> (count vocabs) 1))
+                      (conj (str "vocabulary-spread: " (str/join "," vocabs)))
+
+                      (and (> n 5) (> (count domains) 1))
+                      (conj (str "domain-spread: " (str/join "," domains)))
+
+                      (and (= "Condition" (:domain r))
+                           (contains? vocabs "ICD10CM"))
+                      (conj "icd10cm-also-matched: prefer SNOMED for OMOP standard")
+
+                      (and (= "Drug" (:domain r))
+                           (contains? vocabs "NDC"))
+                      (conj "ndc-also-matched: prefer RxNorm Ingredient")
+
+                      (and (= idx 0) (not exact?) (not prefix?) (> n 3))
+                      (conj "weak-name-match: top hit doesn't start with query"))
+              confidence (cond
+                           (and exact? standard?) :high
+                           (and prefix? standard? (empty? flags)) :high
+                           (or (not standard?) (>= (count flags) 2)) :low
+                           :else :medium)]
+          (assoc r
+                 :confidence confidence
+                 :flags flags)))
+      results
+      (range))))
+
+(defn- corpus-ambiguity
+  "Return a top-level summary that helps Pythia decide whether to call
+   verify_concept_mapping on the chosen ID before proposing."
+  [results]
+  (let [vocabs (set (map :vocabulary results))
+        domains (set (map :domain results))
+        n-low (count (filter #(= :low (:confidence %)) results))]
+    (cond-> {:n-results (count results)
+             :vocabularies (vec vocabs)
+             :domains (vec domains)
+             :low-confidence-count n-low}
+
+      (and (contains? vocabs "ICD10CM") (contains? vocabs "SNOMED"))
+      (assoc :icd-snomed-divergence?
+             "Both ICD and SNOMED matched — these only round-trip identically ~25% of the time. Prefer SNOMED for OMOP-standard cohorts.")
+
+      (and (contains? vocabs "NDC") (contains? vocabs "RxNorm"))
+      (assoc :ndc-rxnorm-divergence?
+             "Both NDC and RxNorm matched — prefer RxNorm Ingredient for portable cohorts."))))
+
 (defn- call-webapi [source-key query domain auth]
   (let [url (str webapi-base "/vocabulary/" source-key "/search")
         body {:QUERY query
@@ -68,9 +135,11 @@
                                 (filter standard-concept?)
                                 (take max-results)
                                 (map to-result)
-                                vec)]
-              {:results filtered
-               :note (when (empty? filtered)
+                                vec)
+                  annotated (annotate-confidence filtered (str query))]
+              {:results annotated
+               :ambiguity (corpus-ambiguity annotated)
+               :note (when (empty? annotated)
                        (str "WebAPI returned " (count raw) " row(s) but none matched STANDARD_CONCEPT='S'"
                             (when domain (str " AND DOMAIN_ID=" domain))))})))
         (catch Exception e

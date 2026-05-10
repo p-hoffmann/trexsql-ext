@@ -1,12 +1,15 @@
 (ns trexsql.agent.tools.search-phenotypes
   "search_phenotypes tool — queries PheKB, OHDSI Forums (Discourse), and the
-   bundled OHDSI Phenotype Library CSV in parallel, merges results, returns
-   up to 5 hits per source.
+   bundled OHDSI Phenotype Library (v3.37.0) in parallel, merges results,
+   returns up to 5 hits per source.
 
-   Mirrors AtlasNeo's search-phenotypes tool; ports the three independent
-   data sources verbatim."
+   The Phenotype Library backend now reads a pre-built EDN index built by
+   `scripts/build_phenotype_index.clj` from the OHDSI/PhenotypeLibrary
+   submodule. Each hit carries a `:circe-summary` (entry domains, criteria
+   counts, concept-set list, exit strategy) so Pythia can mimic canonical
+   patterns without a follow-up `get_reference_phenotype` fetch."
   (:require [clj-http.client :as http]
-            [clojure.data.json :as json]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.tools.logging :as log]))
@@ -23,34 +26,61 @@
     (and (seq terms)
          (every? #(str/includes? t %) terms))))
 
+(def ^:private cohorts-index
+  (delay
+    (try
+      (if-let [resource (io/resource "phenotype-library/cohorts-index.edn")]
+        (with-open [r (java.io.PushbackReader. (io/reader resource))]
+          (edn/read r))
+        (do (log/warn "phenotype-library/cohorts-index.edn not found on classpath")
+            []))
+      (catch Exception e
+        (log/warn e "failed to load cohorts-index.edn")
+        []))))
+
+(defn- status-rank
+  "Sort accepted/peer-reviewed cohorts ahead of pending/withdrawn."
+  [status]
+  (case (or status "")
+    "Accepted" 0
+    "Pending peer review" 1
+    "Pending" 2
+    "Prediction" 3
+    "Withdrawn" 9
+    "Deprecated" 9
+    5))
+
 (defn- search-phenotype-library [query]
   (try
-    (let [resource (io/resource "phenotype-library/Cohorts.csv")]
-      (if-not resource
-        []
-        (with-open [rdr (io/reader resource)]
-          (let [lines (vec (line-seq rdr))
-                rows (rest lines) ;; skip header
-                hits (->> rows
-                          (map (fn [line]
-                                 (let [cols (str/split line #",(?=([^\"]*\"[^\"]*\")*[^\"]*$)")
-                                       [cohortId cohortName logicDescription hashTag]
-                                       (mapv #(str/replace (or % "") #"^\"|\"$" "") cols)]
-                                   {:cohortId cohortId
-                                    :cohortName cohortName
-                                    :logicDescription logicDescription
-                                    :hashTag hashTag})))
-                          (filter (fn [r] (or (match-all-terms? query (:cohortName r))
-                                              (match-all-terms? query (:logicDescription r))
-                                              (match-all-terms? query (:hashTag r)))))
-                          (take per-source-limit))]
-            (mapv (fn [r]
-                    {:source "OHDSI Phenotype Library"
-                     :title (:cohortName r)
-                     :description (:logicDescription r)
-                     :url (str "https://raw.githubusercontent.com/OHDSI/PhenotypeLibrary/main/inst/cohorts/"
-                              (:cohortId r) ".json")})
-                  hits)))))
+    (let [hits (->> @cohorts-index
+                    (filter (fn [c]
+                              (or (match-all-terms? query (:name c))
+                                  (match-all-terms? query (:name-long c))
+                                  (match-all-terms? query (:description c))
+                                  (match-all-terms? query (:hashtag c)))))
+                    (sort-by (juxt #(status-rank (:status %)) :id))
+                    (take per-source-limit))]
+      (mapv (fn [c]
+              {:source "OHDSI Phenotype Library"
+               :title (:name c)
+               :description (:description c)
+               :url (str "https://github.com/OHDSI/PhenotypeLibrary/blob/main/inst/cohorts/"
+                         (:id c) ".json")
+               :cohort-id (:id c)
+               :status (:status c)
+               :tags (:tags c)
+               :circe-summary {:entry-domains (:entry-domains c)
+                               :n-primary-criteria (:n-primary-criteria c)
+                               :n-inclusion-rules (:n-inclusion-rules c)
+                               :n-concept-sets (:n-concept-sets c)
+                               :concept-sets (:concept-sets c)
+                               :exit-strategy (:exit-strategy c)
+                               :censor-criteria? (:censor-criteria? c)
+                               :primary-event-limit (:primary-event-limit c)
+                               :expression-limit (:expression-limit c)}
+               :get-full-body-hint (str "Call get_reference_phenotype with cohortId=" (:id c)
+                                        " to fetch the full Circe JSON.")})
+            hits))
     (catch Exception e
       (log/warn e "phenotype-library lookup failed")
       [])))

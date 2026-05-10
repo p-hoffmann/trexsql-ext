@@ -13,11 +13,22 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [clojure.tools.logging :as log]
-            [clj-http.client :as http])
+            [clj-http.client :as http]
+            [clj-http.conn-mgr :as conn-mgr])
   (:import [java.io InputStream]
            [java.nio ByteBuffer]
            [java.util.function Consumer]
            [software.amazon.eventstream HeaderValue Message MessageDecoder]))
+
+;; Reusable TLS-pooled HTTP connection manager so consecutive Converse
+;; turns don't pay a fresh handshake to bedrock-runtime each time. With
+;; ~250 ms RTT to us-east-1 and 5-10 turns per "build a cohort" session,
+;; this saves 1-2 s per session of pure TLS-handshake overhead.
+(defonce ^:private conn-pool
+  (conn-mgr/make-reusable-conn-manager
+    {:timeout 30           ; idle keep-alive in seconds
+     :threads 8            ; max concurrent connections
+     :default-per-route 4}))
 
 (def model-id
   (or (System/getenv "BAO_AGENT_MODEL")
@@ -267,7 +278,8 @@
                              :body body
                              :throw-exceptions false
                              :socket-timeout 120000
-                             :connection-timeout 30000})
+                             :connection-timeout 30000
+                             :connection-manager conn-pool})
             status (:status resp)]
         (when-not (= 200 status)
           (let [err-body (when (instance? InputStream (:body resp))

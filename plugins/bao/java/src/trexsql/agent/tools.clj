@@ -93,10 +93,43 @@
                    :required ["query"]}}
 
    {:name "search_phenotypes"
-    :description "Search PheKB, OHDSI Forums, and the OHDSI Phenotype Library for validated phenotype definitions. Call after search_existing_cohorts when no existing cohort matches."
+    :description "Search PheKB, OHDSI Forums, and the OHDSI Phenotype Library (v3.37.0) for validated phenotype definitions. Call after search_existing_cohorts when no existing cohort matches. Each Phenotype Library hit includes a `:circe-summary` (entry domains, # primary criteria, # inclusion rules, concept-set list, exit strategy) — use it to mimic canonical OHDSI patterns directly. When a hit is the right template and you want the full Circe JSON to copy concept-set IDs, criteria shapes, or temporal logic verbatim, follow up with `get_reference_phenotype(cohortId)`."
     :side :server
     :input-schema {:type "object"
                    :properties {:query {:type "string" :description "Clinical condition or phenotype to search for"}}
+                   :required ["query"]}}
+
+   {:name "get_reference_phenotype"
+    :description "Fetch the full Circe JSON body of a single OHDSI Phenotype Library cohort by id. Use this AFTER search_phenotypes returns a hit you want to study or mirror in detail (concept-set members, criteria shapes, temporal windows). Returns the parsed Circe expression plus the catalog metadata (status, tags, contributors)."
+    :side :server
+    :input-schema {:type "object"
+                   :properties {:cohortId {:type "number" :description "Phenotype Library cohort id (the numeric `:cohort-id` returned in a search_phenotypes hit)."}}
+                   :required ["cohortId"]}}
+
+   {:name "validate_circe"
+    :description "Compile a draft Circe cohort-expression JSON to SQL via WebAPI to confirm it is structurally valid. Call this BEFORE issuing a non-trivial cohort proposal so you can self-correct compile errors. Returns {:ok true :sql \"<rendered SQL>\"} on success or {:ok false :errors [...]} on failure. On error, fix the expression and re-validate (max 2 retries) before proposing. Pass `expression` as either a JSON string or a parsed object."
+    :side :server
+    :input-schema {:type "object"
+                   :properties {:expression {:type ["string" "object"]
+                                             :description "The draft Circe CohortExpression — either a JSON string or the equivalent JSON object. Must contain at minimum a PrimaryCriteria.CriteriaList."}}
+                   :required ["expression"]}}
+
+   {:name "search_ohdsi_book"
+    :description "Search The Book of OHDSI (2nd Edition) for canonical guidance on OMOP CDM, cohort definition, study design, washout/exit/censoring patterns, vocabularies, and methodology. Returns BM25-ranked passages with chapter, section, snippet, and URL. Call this for ANY methodology question (\"how do I handle washout\", \"what's the OHDSI exit-strategy convention\", \"explain incidence rate denominators\") and cite the chapter/section in your reply."
+    :side :server
+    :input-schema {:type "object"
+                   :properties {:query {:type "string" :description "Methodology question or topic, e.g. \"exit strategy continuous drug exposure\" or \"index date washout\"."}
+                                :k     {:type "number" :description "Number of passages to return (default 3, max 10)."}}
+                   :required ["query"]}}
+
+   {:name "web_search"
+    :description "Search the open web (DuckDuckGo) for clinical guidelines, published literature, OHDSI documentation, drug-class definitions, etc. Use sparingly: prefer local lookups (search_concepts, search_phenotypes, search_existing_*) for things in the OMOP vocabulary or already-saved artifacts. Returns top-N results with title, URL, and snippet."
+    :side :server
+    :input-schema {:type "object"
+                   :properties {:query       {:type "string"
+                                              :description "What to search for. Use specific terms; for clinical phenotype validation include 'OHDSI', 'OMOP', 'PheKB', or 'phenotype' to bias toward relevant sources."}
+                                :num_results {:type "number"
+                                              :description "Number of results to return (default 5, max 10)."}}
                    :required ["query"]}}
 
    {:name "get_artifact"
@@ -112,11 +145,65 @@
                    :required ["kind" "id"]}}
 
    {:name "search_concepts"
-    :description "Search OMOP standard concepts in the local vocabulary by query and optional domain filter. Returns up to 15 Standard Concepts."
+    :description "Search OMOP standard concepts in the local vocabulary by query and optional domain filter. Returns up to 15 Standard Concepts. Each result carries a `:confidence` (`:high|:medium|:low`) and optional `:flags` listing concrete concerns (vocabulary-spread, ICD↔SNOMED divergence, weak-name-match). The top-level `:ambiguity` summarizes the hit set and warns about cross-vocabulary divergence. When picking a `:low`-confidence concept or any with flags, call `verify_concept_mapping` to re-check before adding it to a proposal."
     :side :server
     :input-schema {:type "object"
                    :properties {:query  {:type "string"}
                                 :domain {:type "string" :enum domain-enum}}
+                   :required ["query"]}}
+
+   {:name "draft_concept_set_spec"
+    :description "Record a concept-set SPEC (clinical name, list of clinical terms, target vocabulary, descendant policy) BEFORE any concept-id resolution. Use this for any non-trivial concept set as the first step of the two-stage pattern: commit to logic, then resolve IDs. Returns the spec back plus an explicit next_steps list of search_concepts calls to make. Skip for single-concept embeds where there is nothing to disambiguate."
+    :side :server
+    :input-schema {:type "object"
+                   :properties {:name           {:type "string" :description "Clinical name for the concept set, e.g. 'Confirmatory T2DM treatment'."}
+                                :clinical_terms {:type "array" :items {:type "string"}
+                                                 :description "One or more clinical terms (e.g. ['metformin', 'sulfonylurea', 'insulin'])."}
+                                :domain         {:type "string" :enum domain-enum}
+                                :vocabulary     {:type "string" :description "Optional vocabulary hint (SNOMED, RxNorm, LOINC). Inferred from domain if omitted."}
+                                :include_descendants {:type "boolean"}
+                                :rationale      {:type "string" :description "Optional one-line clinical rationale."}}
+                   :required ["name" "clinical_terms"]}}
+
+   {:name "verify_concept_mapping"
+    :description "Look up a single OMOP concept by id and check it against an expected domain and/or vocabulary. Use AFTER picking a concept from search_concepts when its `:confidence` is `:low` or when it carries `:flags`, AND for any concept id you used from your own knowledge (the limited-vocabulary fallback list). Returns {:ok :concept :issues [...]} so you can swap out a wrong pick before proposing."
+    :side :server
+    :input-schema {:type "object"
+                   :properties {:conceptId          {:type "number" :description "OMOP concept id to verify."}
+                                :expectedDomain     {:type "string" :enum domain-enum}
+                                :expectedVocabulary {:type "string" :description "Expected vocabulary (e.g. SNOMED, RxNorm, LOINC). Substring match."}}
+                   :required ["conceptId"]}}
+
+   {:name "get_cohort_generation_summary"
+    :description "Pull a saved cohort's generation status and headline person/record counts on a given source. Use this AFTER the user has generated a cohort, when they ask whether the cohort is sensible, healthy, or as expected. Returns {:summary :interpretation} — the interpretation flags zero-population or very-low-population cases and points at the next diagnostic step. Source key defaults to the agent's session source."
+    :side :server
+    :input-schema {:type "object"
+                   :properties {:cohortId  {:type "number" :description "Saved cohort id from search_existing_cohorts."}
+                                :sourceKey {:type "string" :description "Optional source key (e.g. 'EUNOMIA'). Defaults to the chat session's source."}}
+                   :required ["cohortId"]}}
+
+   {:name "summarise_attrition"
+    :description "Pull per-inclusion-rule person counts and identify rules that drop ≥90% of subjects in one step (likely too restrictive) or eliminate everyone (broken concept set). Use this AFTER get_cohort_generation_summary when the population is lower than expected — surfaces WHICH inclusion rule is the bottleneck."
+    :side :server
+    :input-schema {:type "object"
+                   :properties {:cohortId  {:type "number"}
+                                :sourceKey {:type "string"}}
+                   :required ["cohortId"]}}
+
+   {:name "get_cohort_overlap"
+    :description "Pairwise overlap between 2+ generated cohorts on a source. Use when comparing target vs. comparator populations or checking whether two phenotypes are redundant. Flags near-total overlap (likely redundant) and near-zero overlap (likely too disjoint for a comparator design)."
+    :side :server
+    :input-schema {:type "object"
+                   :properties {:cohortIds {:type "array" :items {:type "number"}
+                                            :description "2+ saved cohort ids."}
+                                :sourceKey {:type "string"}}
+                   :required ["cohortIds"]}}
+
+   {:name "search_ohdsi_studies"
+    :description "On-demand search across the ~187 repos in the public `ohdsi-studies` GitHub organization (network studies, study packages, protocols). Use when the user asks about a published OHDSI study, a network protocol, or wants a template for a new study. Returns repo name, description, URL, stars, and topics. Uses GitHub's search API; set GITHUB_TOKEN to raise rate limits."
+    :side :server
+    :input-schema {:type "object"
+                   :properties {:query {:type "string" :description "Study topic, condition, or method name (e.g. 'covid vaccine safety', 'antidepressant comparative effectiveness')."}}
                    :required ["query"]}}
 
    {:name "add_criterion"
@@ -165,19 +252,11 @@
     :side :client
     :input-schema concept-ref-schema}
 
-   {:name "embed_concept_set_in_cohort"
-    :description "Embed a named concept set INSIDE the currently-open cohort definition (no server-side persistence). Use this for cohort-local concept sets that don't need to be reused outside the cohort. For a reusable, server-persisted concept set the user can open in the editor or reuse from another cohort, call create_standalone_concept_set instead."
-    :side :client
-    :input-schema {:type "object"
-                   :properties {:name  {:type "string"}
-                                :items {:type "array" :items concept-ref-schema}}
-                   :required ["name" "items"]}}
-
    {:name "create_standalone_concept_set"
-    :description "Persist a NEW reusable concept set on the server via WebAPI. After the user accepts, the host navigates to the new concept set's editor. Use this when the user wants a concept set they can keep, share, or reference from multiple cohorts. For cohort-local concept sets, use embed_concept_set_in_cohort instead."
+    :description "Create a NEW reusable concept set on the server via WebAPI. This is the ONLY way pythia creates concept sets. The host persists it, then: if the user has a cohort open, attaches the concept set to that cohort and stays in the cohort builder; otherwise navigates to the concept-set editor. We deliberately do NOT support cohort-local (in-line) concept sets — every set is reusable across cohorts. Use a clinical, descriptive name (e.g. 'Statins', 'Inhaled corticosteroids', 'Type 2 Diabetes diagnoses')."
     :side :client
     :input-schema {:type "object"
-                   :properties {:name        {:type "string" :description "Concept set name (REQUIRED). Pick a clinical, descriptive name like 'Statins' or 'Inhaled corticosteroids'."}
+                   :properties {:name        {:type "string" :description "Concept set name (REQUIRED). Clinical and descriptive."}
                                 :description {:type "string" :description "Optional one-line description"}
                                 :items       {:type "array" :items concept-ref-schema}}
                    :required ["name" "items"]}}
@@ -454,39 +533,41 @@
                                               :description "If true, also show an 'Other…' free-text option (default false)."}}
                    :required ["question" "options"]}}
 
-   ;; ----- Multi-step plans (checklists) -----
+   ;; ----- Plans -----
    ;;
    ;; Resolved entirely in the browser: the frontend mutates module-level
-   ;; reactive state and auto-stubs the tool result. Unlike the other client
-   ;; tools above, these do NOT render an accept/reject card — they apply
-   ;; immediately. They also do NOT terminate the turn (rule #10 in the
-   ;; prompt does not apply); the model should continue with whatever the
-   ;; next step actually is.
+   ;; reactive state and auto-stubs the tool result. Unlike proposal tools,
+   ;; these do NOT render an accept/reject card — they apply immediately.
+   ;; They also do NOT terminate the turn (rule #12 in the prompt does not
+   ;; apply); the model should continue with the first step's tool calls
+   ;; in the same turn after creating the plan.
 
-   {:name "create_checklist"
-    :description "Declare an ordered plan when the user's request requires resources that don't yet exist (e.g. an incidence-rate analysis with no cohort yet, or a characterization with no feature analysis). The plan renders as a pinned checklist at the top of the chat panel; each step shows its status and updates live as proposals are accepted. Call this BEFORE issuing the first proposal so the user sees the full path. Replaces any prior active checklist. Does NOT end your turn — continue with the first step's tool calls in the same turn."
+   {:name "create_plan"
+    :description "Declare a multi-step plan for the user's request: an optional prose `document` describing goal/approach/success criteria, plus an ordered checklist of concrete `steps`. Use this for ANY analysis that needs 3+ artifacts or multiple phases (e.g. cohort + concept set + incidence-rate; phenotype validation across multiple sources; treatment-pattern study). For non-trivial plans pass a `document` field (3-5 sentences of markdown — goal, approach, key constraints, success criteria); the chat panel renders it as a collapsible 'Plan details' section above the steps. Trivial single-step requests skip create_plan and go straight to the proposal. Replaces any prior active plan. Does NOT end your turn — continue with the first step's tool calls in the same turn."
     :side :client
     :input-schema {:type "object"
-                   :properties {:title {:type "string" :description "Short, user-facing title, e.g. 'Run incidence rate for diabetes patients'."}
-                                :steps {:type "array"
-                                        :description "Ordered steps the user must walk through. Set linkedProposalKind on any step that maps to a proposal you will issue — the UI auto-marks the step 'done' when the user accepts that proposal, so you don't need to call update_checklist_step after."
-                                        :items {:type "object"
-                                                :properties {:id    {:type "string" :description "Stable id; pass to update_checklist_step."}
-                                                             :label {:type "string" :description "Short user-visible label, e.g. 'Create concept set for statins'."}
-                                                             :description {:type "string" :description "Optional one-line clarification."}
-                                                             :linkedProposalKind {:type "string"
-                                                                                  :enum ["addEntryEvent" "addInclusionRule" "addConceptSet"
-                                                                                         "setObservationPeriod" "setExitCriteria" "addCensoringCriterion"
-                                                                                         "createStandaloneConceptSet" "createFeatureAnalysis"
-                                                                                         "createCharacterization" "createPathway" "createIncidenceRate"
-                                                                                         "navigate"]
-                                                                                  :description "Optional. AgentProposal kind the host applies. When set, the UI auto-ticks this step the moment a matching proposal is accepted, so you don't need a follow-up update_checklist_step."}
-                                                             :linkedRoute {:type "string" :description "Optional ATLAS route name (matches the navigate_to view enum). Renders an 'Open' button on the step row."}}
-                                                :required ["id" "label"]}}}
+                   :properties {:title    {:type "string" :description "Short, user-facing title, e.g. 'Run incidence rate for diabetes patients'."}
+                                :document {:type "string"
+                                           :description "Optional markdown narrative (3-5 sentences) covering goal, approach, prerequisites, and success criteria. Skip for trivial 1-2 step flows."}
+                                :steps    {:type "array"
+                                           :description "Ordered steps the user must walk through. Set linkedProposalKind on any step that maps to a proposal you will issue — the UI auto-marks the step 'done' when the user accepts that proposal, so you don't need to call update_plan_step after."
+                                           :items {:type "object"
+                                                   :properties {:id    {:type "string" :description "Stable id; pass to update_plan_step."}
+                                                                :label {:type "string" :description "Short user-visible label, e.g. 'Create concept set for statins'."}
+                                                                :description {:type "string" :description "Optional one-line clarification."}
+                                                                :linkedProposalKind {:type "string"
+                                                                                     :enum ["addEntryEvent" "addInclusionRule" "addConceptSet"
+                                                                                            "setObservationPeriod" "setExitCriteria" "addCensoringCriterion"
+                                                                                            "createStandaloneConceptSet" "createFeatureAnalysis"
+                                                                                            "createCharacterization" "createPathway" "createIncidenceRate"
+                                                                                            "navigate"]
+                                                                                     :description "Optional. AgentProposal kind the host applies. When set, the UI auto-ticks this step the moment a matching proposal is accepted, so you don't need a follow-up update_plan_step."}
+                                                                :linkedRoute {:type "string" :description "Optional ATLAS route name (matches the navigate_to view enum). Renders an 'Open' button on the step row."}}
+                                                   :required ["id" "label"]}}}
                    :required ["title" "steps"]}}
 
-   {:name "update_checklist_step"
-    :description "Update the status of one step on the active checklist. Use when reasoning advances a step but you are NOT issuing a linked proposal (e.g. you finished a search-only step, decided a step is blocked, or want to mark a step in_progress before walking the user through it). DO NOT call this after issuing a proposal whose kind is linked to the step — the UI auto-ticks on acceptance, and a redundant call would briefly show 'done' before the proposal is even applied. Does NOT end your turn."
+   {:name "update_plan_step"
+    :description "Update the status of one step on the active plan. Use when reasoning advances a step but you are NOT issuing a linked proposal (e.g. you finished a search-only step, decided a step is blocked, or want to mark a step in_progress before walking the user through it). DO NOT call this after issuing a proposal whose kind is linked to the step — the UI auto-ticks on acceptance, and a redundant call would briefly show 'done' before the proposal is even applied. Does NOT end your turn."
     :side :client
     :input-schema {:type "object"
                    :properties {:stepId {:type "string"}
@@ -511,6 +592,42 @@
 
     "search_phenotypes"
     (let [f (requiring-resolve 'trexsql.agent.tools.search-phenotypes/run)]
+      (f args req))
+
+    "get_reference_phenotype"
+    (let [f (requiring-resolve 'trexsql.agent.tools.get-reference-phenotype/run)]
+      (f args req))
+
+    "validate_circe"
+    (let [f (requiring-resolve 'trexsql.agent.tools.validate-circe/run)]
+      (f args req))
+
+    "search_ohdsi_book"
+    (let [f (requiring-resolve 'trexsql.agent.tools.search-ohdsi-book/run)]
+      (f args req))
+
+    "draft_concept_set_spec"
+    (let [f (requiring-resolve 'trexsql.agent.tools.draft-concept-set-spec/run)]
+      (f args req))
+
+    "verify_concept_mapping"
+    (let [f (requiring-resolve 'trexsql.agent.tools.verify-concept-mapping/run)]
+      (f args req))
+
+    "get_cohort_generation_summary"
+    (let [f (requiring-resolve 'trexsql.agent.tools.get-cohort-generation-summary/run)]
+      (f args req))
+
+    "summarise_attrition"
+    (let [f (requiring-resolve 'trexsql.agent.tools.summarise-attrition/run)]
+      (f args req))
+
+    "get_cohort_overlap"
+    (let [f (requiring-resolve 'trexsql.agent.tools.get-cohort-overlap/run)]
+      (f args req))
+
+    "search_ohdsi_studies"
+    (let [f (requiring-resolve 'trexsql.agent.tools.search-ohdsi-studies/run)]
       (f args req))
 
     "search_existing_cohorts"
@@ -539,6 +656,10 @@
 
     "get_artifact"
     (let [f (requiring-resolve 'trexsql.agent.tools.get-artifact/run)]
+      (f args req))
+
+    "web_search"
+    (let [f (requiring-resolve 'trexsql.agent.tools.web-search/run)]
       (f args req))
 
     {:error (str "unknown server-side tool: " tool-name)}))

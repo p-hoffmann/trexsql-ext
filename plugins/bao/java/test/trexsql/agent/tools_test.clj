@@ -10,7 +10,11 @@
     (is (tools/client-side-tool? "set_observation_window"))
     (is (tools/client-side-tool? "add_exit_criterion"))
     (is (tools/client-side-tool? "set_censor_event"))
-    (is (tools/client-side-tool? "create_concept_set"))
+    ;; embed_concept_set_in_cohort + create_concept_set were removed —
+    ;; create_standalone_concept_set is now the single concept-set tool.
+    (is (tools/client-side-tool? "create_standalone_concept_set"))
+    (is (not (tools/client-side-tool? "embed_concept_set_in_cohort")))
+    (is (not (tools/client-side-tool? "create_concept_set")))
     (is (tools/client-side-tool? "add_inclusion_rule")))
 
   (testing "server-side tools"

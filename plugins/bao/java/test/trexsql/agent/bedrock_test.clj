@@ -86,3 +86,25 @@
       (is (= :client (:side t)))
       (is (= ["question" "options"] (get-in t [:input-schema :required]))))
     (is (tools/client-side-tool? "ask_user"))))
+
+(deftest plan-tools-registered
+  (testing "tool-specs includes create_plan / update_plan_step (renamed from create_checklist / update_checklist_step)"
+    (let [cp (some #(when (= "create_plan" (:name %)) %) tools/tool-specs)
+          up (some #(when (= "update_plan_step" (:name %)) %) tools/tool-specs)]
+      (is (some? cp) "create_plan tool spec missing")
+      (is (some? up) "update_plan_step tool spec missing")
+      (is (= :client (:side cp)))
+      (is (= :client (:side up)))
+      (is (some #{:document} (keys (get-in cp [:input-schema :properties]))) "create_plan should accept a document field"))
+    (is (tools/client-side-tool? "create_plan"))
+    (is (tools/client-side-tool? "update_plan_step"))
+    (is (not (some #(= "create_checklist" (:name %)) tools/tool-specs)) "create_checklist should be removed")
+    (is (not (some #(= "update_checklist_step" (:name %)) tools/tool-specs)) "update_checklist_step should be removed")))
+
+(deftest web-search-tool-registered
+  (testing "tool-specs includes web_search as a server-side tool"
+    (let [t (some #(when (= "web_search" (:name %)) %) tools/tool-specs)]
+      (is (some? t) "web_search tool spec missing")
+      (is (= :server (:side t)))
+      (is (= ["query"] (get-in t [:input-schema :required]))))
+    (is (not (tools/client-side-tool? "web_search")))))
